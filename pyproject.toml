@@ -1,0 +1,25 @@
+[project]
+name = "pixgen"
+version = "0.1.0"
+description = "A command-line tool for generating and managing images."
+readme = "README.md"
+authors = [{ name = "Diego Gamboa", email = "difegam3@gmail.com" }]
+requires-python = ">=3.14"
+dependencies = [
+    "cyclopts>=4.25.2",
+    "httpx2>=2.12.0",
+    "keyring>=25.7.0",
+    "pluggy>=1.6.0",
+    "pydantic>=2.13.5",
+    "pydantic-settings[yaml]>=2.15.0",
+    "rich>=15.0.0",
+    "sqlmodel>=0.0.42",
+    "stamina>=26.1.0",
+]
+
+[project.scripts]
+pixgen = "pixgen:main"
+
+[build-system]
+requires = ["uv_build>=0.11.21,<0.12.24"]
+build-backend = "uv_build"

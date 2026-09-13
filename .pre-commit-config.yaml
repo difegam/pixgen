@@ -1,0 +1,89 @@
+default_language_version:
+  python: python3.14
+exclude: ^(docs|\.venv|\.vscode)/
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: "v6.0.0"
+    hooks:
+      - id: trailing-whitespace
+      - id: mixed-line-ending
+      - id: check-ast
+      - id: check-added-large-files
+        args: ["--maxkb=1000"]
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-case-conflict
+      - id: check-docstring-first
+      - id: check-executables-have-shebangs
+      - id: check-shebang-scripts-are-executable
+
+  # Upgrade syntax to newer versions of Python
+  - repo: https://github.com/asottile/pyupgrade
+    rev: v3.21.2
+    hooks:
+      - id: pyupgrade
+        description: "Upgrade syntax to newer versions"
+        args: [--py314-plus, --keep-runtime-typing]
+
+  # Ruff Python linter and formatter
+  - repo: https://github.com/charliermarsh/ruff-pre-commit
+    rev: "v0.15.0"
+    hooks:
+      - id: ruff-check
+        description: "Ruff Python linter"
+        args: ["--fix", "--config=./ruff.toml"]
+        types_or: [python, pyi, jupyter]
+      - id: ruff-format
+        description: "Ruff Python formatter"
+        types_or: [python, pyi, jupyter]
+
+  # Spelling checker
+  - repo: https://github.com/codespell-project/codespell
+    rev: v2.4.1
+    hooks:
+      - id: codespell
+        description: "Check for common misspellings"
+        files: ^.*\.(py|c|h|md|rst|ya?ml)$
+        additional_dependencies:
+          - tomli
+
+  # Python static type checker (pyrefly)
+  - repo: local
+    hooks:
+      - id: pyrefly
+        name: pyrefly
+        description: "pyrefly static type checker"
+        entry: uv run pyrefly check
+        language: system
+        types: [python]
+        require_serial: true
+
+  # Scan your uv.lock file for dependencies with known vulnerabilities.
+  - repo: https://github.com/owenlamont/uv-secure
+    rev: 0.15.4
+    hooks:
+      - id: uv-secure
+        description: "Scan uv.lock for dependencies with known vulnerabilities"
+
+  # Detect common security issues in Python code.
+  - repo: https://github.com/pycqa/bandit
+    rev: 1.9.3
+    hooks:
+      - id: bandit
+        description: "Detect common security issues"
+        exclude: ^tests/
+        args: [-r, src]
+
+  # Static analysis tool for shell scripts.
+  - repo: https://github.com/koalaman/shellcheck-precommit
+    rev: v0.11.0
+    hooks:
+      - id: shellcheck
+        name: Check Shell Scripts
+        description: "Shell script linter"
+        args: ["--severity=warning"]
+        types_or: [shell, sh]

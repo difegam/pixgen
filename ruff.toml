@@ -1,0 +1,114 @@
+# Ruff configuration file
+
+line-length = 100
+indent-width = 4
+target-version = "py314"
+show-fixes = true
+extend-exclude = [
+    ".venv",
+    "logs",
+    "__pycache__",
+    "build",
+    "dist",
+    ".git",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".vscode",
+    "__init__.py",
+]
+force-exclude = true
+
+src = ["src", "tests"]
+
+[format]
+quote-style = "double"
+indent-style = "space"
+docstring-code-format = true
+docstring-code-line-length = "dynamic"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+
+
+[lint]
+pydocstyle.convention = "google"
+
+# Enable rules https://docs.astral.sh/ruff/rules/
+select = [
+    "A",     # Flake8-builtins – misuse of Python built-in names
+    "ANN",   # annotations
+    "ARG",   # Arguments
+    "ASYNC", # Flake8-async – checks async/await usage
+    "B",     # bugbear
+    "BLE",   # blind-except
+    "C4",    # comprehensions
+    "C90",   # McCabe – complexity metric for functions
+    "DTZ",   # naive datetime
+    "E",     # style errors
+    "ERA",   # commented-out-code
+    "EXE",   # Flake8-executable – executable file checks
+    "F",     # Pyflakes
+    "FA",    # Flake8-future-annotations – future import for annotations
+    "FBT",   # Flake8-boolean-trap – potential pitfalls with booleans
+    "FLY",   # Flynt – f-string conversion suggestions
+    "FURB",  # Refurb – rules for code refurbishment
+    "G010",  # logging-warn
+    "I",     # Isort
+    "ICN",   # import-conventions
+    "INP",   # implicit-namespace-package
+    "ISC",   # string concatenation
+    "LOG",   # logging
+    "N",     # naming
+    "PERF",  # performance
+    "PGH",   # pygrep-hooks
+    "PIE",   # miscellaneous
+    "PL",    # pylint
+    "PT",    # Flake8-pytest-style – pytest best practices
+    "PTH",   # use-pathlib
+    "Q",     # quotes
+    "RET",   # unnecessary-return
+    "RSE",   # raise
+    "RUF",   # Ruff
+    "S",     # security
+    "SIM",   # simplify
+    "T20",   # print statements
+    "TC",    # type-checking
+    "TID",   # tidy imports
+    "UP",    # upgrade
+    "W",     # style warnings
+    "YTT",   # sys.version
+]
+ignore = [
+    "A005",    # allow to shadow stdlib and builtin module names
+    "ANN001",  # exception context manager params
+    "ANN002",  # *args
+    "ANN003",  # **kwargs
+    "ANN204",  # special method return type
+    "ANN401",  # graphql-core types lack stubs, Any is necessary for interop
+    "ARG001",  # unused function argument (false positives in decorators)
+    "COM812",  # trailing comma, conflicts with `ruff format`
+    "COM819",  # prohibited trailing comma, conflicts with `ruff format`
+    "ISC001",  # implicit string concat conflicts with `ruff format`
+    "ISC002",  # multi-line implicit string concat, conflicts with `ruff format`
+    "ISC003",  # prefer explicit string concat over implicit concat
+    "N818",    # exception name suffix: pre-1.0 project can keep current names
+    "PLC0415", # deferred imports prevent circular imports and lazy-load optional deps
+    "Q000",    # bad quotes inline string, conflicts with formatter's quote style
+    "Q001",    # bad quotes multiline string, conflicts with formatter's quote style
+    "Q002",    # bad quotes docstring, conflicts with formatter's quote style
+    "Q003",    # avoidable escaped quote, conflicts with formatter's quote style
+    "RUF012",  # mutable class attributes (too pedantic for Django models)
+    "W191",    # tab indentation, conflicts with formatter's indent style
+    "E111",    # indentation with invalid multiple, conflicts with formatter
+    "E114",    # indentation with invalid multiple comment, conflicts with formatter
+    "E117",    # over-indented, conflicts with formatter
+    "PLR09",   # we have our own complexity rules
+    "PLR2004", # do not report magic numbers
+    "PLR6301", # do not require classmethod / staticmethod when self not used
+]
+external = ["WPS"]
+fixable = ["ALL"]
+unfixable = []
+
+[lint.per-file-ignores]
+"tests/*.py" = ["S101"]     # Use of `assert` detected
+"**/__init__.py" = ["D104"]
