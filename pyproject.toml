@@ -2,7 +2,7 @@
 name = "pixgen"
 version = "0.1.0"
 description = "A command-line tool for generating and managing images."
-readme = "README.md"
+readme = { file = "README.md", content-type = "text/markdown" }
 authors = [{ name = "Diego Gamboa", email = "difegam3@gmail.com" }]
 requires-python = ">=3.14"
 dependencies = [
@@ -17,9 +17,24 @@ dependencies = [
     "stamina>=26.1.0",
 ]
 
+[project.urls]
+Repository = "https://github.com/difegam/pixgen"
+
 [project.scripts]
 pixgen = "pixgen:main"
 
 [build-system]
 requires = ["uv_build>=0.11.21,<0.12.24"]
 build-backend = "uv_build"
+
+[tool.uv]
+default-groups = ["dev"]
+exclude-newer = "P7D"    # "7 days" in RFC 3339 format
+
+[tool.pytest.ini_options]
+addopts = "-vvv"
+testpaths = "tests"
+pythonpath = "src"
+
+[dependency-groups]
+dev = ["prek>=0.5.2", "pyrefly>=1.2.0", "pytest>=9.1.1", "ruff>=0.16.6"]
