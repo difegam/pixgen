@@ -31,7 +31,7 @@ repos:
 
   # Ruff Python linter and formatter
   - repo: https://github.com/charliermarsh/ruff-pre-commit
-    rev: "v0.15.0"
+    rev: "v0.16.7"
     hooks:
       - id: ruff-check
         description: "Ruff Python linter"
@@ -43,7 +43,7 @@ repos:
 
   # Spelling checker
   - repo: https://github.com/codespell-project/codespell
-    rev: v2.4.1
+    rev: v2.4.3
     hooks:
       - id: codespell
         description: "Check for common misspellings"
@@ -64,14 +64,14 @@ repos:
 
   # Scan your uv.lock file for dependencies with known vulnerabilities.
   - repo: https://github.com/owenlamont/uv-secure
-    rev: 0.15.4
+    rev: v0.17.2
     hooks:
       - id: uv-secure
         description: "Scan uv.lock for dependencies with known vulnerabilities"
 
   # Detect common security issues in Python code.
   - repo: https://github.com/pycqa/bandit
-    rev: 1.9.3
+    rev: 1.9.4
     hooks:
       - id: bandit
         description: "Detect common security issues"
