@@ -1,8 +1,6 @@
 # pyrefly.toml
 # Docs: https://pyrefly.org/en/docs/configuration/
 
-# --- Project scope ---
-
 project-includes = ["src", "tests"]
 
 project-excludes = [
@@ -13,50 +11,26 @@ project-excludes = [
 search-path = [".", "src"]
 use-ignore-files = true
 ignore-errors-in-generated-code = true
-
-# --- Python environment ---
-
 python-version = "3.14"
-# python-platform intentionally omitted: pyrefly autoconfigures from the
-# environment it runs in (falling back to linux), which suits a CLI tool
-# that isn't tied to one deployment platform.
-
-# --- Type-checking behavior ---
-
-# Type-check bodies of functions that lack parameter/return annotations
-# (closest equivalent to mypy's check_untyped_defs).
 untyped-def-behavior = "check-and-infer-return-type"
-
-# --- Errors ---
 
 [errors]
 unknown-name = true
 unbound-name = true
-
 import-error = true
 missing-module-attribute = true
-
 missing-attribute = true
-
 bad-assignment = true
-
 invalid-annotation = true
-
 bad-argument-type = true
-
 bad-return = true
-
 missing-argument = true
 bad-argument-count = true
 unexpected-keyword = true
 unexpected-positional-argument = true
-
 index-error = true
-
 redundant-cast = false
 assert-type = true
-
-# --- Tests: dynamic fixtures/mocks, relax strictness ---
 
 [[sub-config]]
 matches = "**/tests/**"
@@ -87,8 +61,6 @@ import-error = false
 bad-assignment = false
 bad-argument-type = false
 bad-return = false
-
-# --- Package __init__.py: conditional re-exports ---
 
 [[sub-config]]
 matches = "**/__init__.py"

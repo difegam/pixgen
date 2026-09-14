@@ -5,13 +5,9 @@ indent-width = 4
 target-version = "py314"
 show-fixes = true
 extend-exclude = [
-    ".venv",
     "logs",
     "__pycache__",
     "build",
-    "dist",
-    ".git",
-    ".mypy_cache",
     ".pytest_cache",
     ".vscode",
     "__init__.py",
