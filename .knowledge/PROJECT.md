@@ -158,10 +158,31 @@ commands, and doctor checks without core edits.
 - A separately installed fixture provider registers through the public
     plugin API.
 
+### Initial model catalog
+
+Canonical identifiers have the form `<provider>/<provider-model-id>`. Display
+names are labels only; PixGen does not route on them.
+
+| Provider | Display name | Canonical identifier |
+| --- | --- | --- |
+| Google | Nano Banana 2 | `google/gemini-3.1-flash-image` |
+| Google | Nano Banana 2 Lite | `google/gemini-3.1-flash-lite-image` |
+| Google | Nano Banana Pro | `google/gemini-3-pro-image` |
+| OpenAI | GPT-Image-2.5 Sunburst | `openai/gpt-image-2.5-sunburst` |
+| OpenAI | GPT-Image-2.5 Flare | `openai/gpt-image-2.5-flare` |
+| OpenAI | GPT-Image-2 | `openai/gpt-image-2` |
+
+The model identities were checked against the official [Google model
+catalog](https://ai.google.dev/gemini-api/docs/models) and [OpenAI model
+catalog](https://developers.openai.com/api/docs/models/all) during planning on
+2026-09-17. Catalog presence does not guarantee access for a particular account.
+Adapters must verify exact endpoint behavior and capability limits during
+implementation; this table does not promise identical parameters across models.
+
 ## Constraints
 
 - Local single-user execution.
-- CPython 3.12+.
+- Python 3.12+.
 - Apache-2.0.
 - Provider policies/availability are external constraints.
 - Model catalogs are high-drift integration data.
