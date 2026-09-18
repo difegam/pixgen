@@ -2,295 +2,187 @@
 
 ## Overview
 
-PixGen is a local Python CLI with no daemon or PixGen server. Cyclopts
-parses commands into typed Pydantic requests. A provider registry
-selects an adapter. The adapter validates model capabilities, resolves
-credentials, uploads references when necessary, and calls the provider
-through HTTPX2. Sanitized generation state is persisted in SQLite;
-completed artifacts stream to local files.
+Pixgen 0.1 is a local Python 3.14 CLI. Cyclopts parses commands into frozen
+Pydantic requests. A small internal registry selects Google or OpenAI from the
+canonical model ID. The adapter validates provider-native options, calls the
+provider, and returns normalized results. Typed SQLAlchemy rows persist
+generation state in SQLite; Alembic owns schema evolution; artifacts are regular
+local files.
 
-Provider extensibility is an MVP requirement, so Python entry points +
-Pluggy form a deliberately small public extension boundary.
-
-``` mermaid
+```mermaid
 flowchart LR
-  A[User/agent] --> B[Cyclopts CLI]
-  B --> C[Typed request + validation]
-  C --> D[Provider registry]
-  D --> E[Provider adapter]
-  E --> F[HTTPX2]
-  F --> G[Provider API]
-  C --> H[(SQLite)]
-  E --> H
-  E --> I[Local artifacts]
-  J[Keyring/env] --> E
-  K[YAML/PlatformDirs] --> B
-  L[Entry-point plugins] --> D
-  L --> M[Root doctor]
+  A[Human or agent] --> B[Cyclopts CLI]
+  B --> C[Pydantic request]
+  C --> D[Core validation]
+  D --> E[Runtime composition]
+  E --> F[Google adapter]
+  E --> G[OpenAI adapter]
+  F --> H[google-genai async SDK]
+  G --> I[HTTPX2]
+  H --> J[Google Interactions API]
+  I --> K[OpenAI Images API]
+  E --> L[(SQLAlchemy + SQLite)]
+  L --> M[Alembic]
+  E --> N[Atomic local artifacts]
+  O[Keyring or provider env] --> E
+  P[TOML + PlatformDirs] --> E
 ```
 
-## System boundaries
+## Boundaries
 
 ### CLI
 
-Owns parsing, human/JSON rendering, exit statuses, and operation
-orchestration. Root namespace belongs to PixGen. Plugins receive only
-`provider <name>` command space.
+`src/pixgen/cli/` owns parsing, help, human rendering, JSON selection, and exit
+status. It does not construct provider payloads or issue SQL.
 
-### Core models
+### Core
 
-Own provider-independent Generation, Artifact, MediaReference,
-ModelSpec/capabilities, request, and stable error concepts. Core does
-not model the union of all vendor parameters.
+`src/pixgen/core/` owns provider-independent request/result types, media roles,
+capabilities, stable errors, and pure validation. It imports neither transport
+nor SQLAlchemy.
 
-### Provider registry and adapters
+### Providers
 
-Registry discovers built-ins/entry points, rejects duplicate provider
-names, and resolves canonical `<provider>/<provider-model-id>`
-identifiers.
+`src/pixgen/providers/base.py` defines an internal async protocol. The built-in
+Google and OpenAI modules own exact model manifests, provider-native typed
+options, request translation, response translation, and error mapping.
 
-An adapter owns model discovery/catalog, capabilities, credential
-environment name, request translation, uploads, submit/poll/cancel,
-error normalization, and safe provider metadata.
+The internal protocol is not a 0.1 public plugin API.
 
-### Plugin manager
+### Runtime
 
-Initial public hooks:
-
-1.  register provider;
-2.  register commands below that provider;
-3.  register checks consumed by root `pixgen doctor`.
-
-Plugins cannot mutate root CLI, core DB schema/migrations, or credential
-storage. Publish a plugin API version before third-party plugin
-documentation.
+`src/pixgen/runtime.py` is the explicit composition root. It lazily creates only
+the settings, credentials, storage, and providers required by the selected
+command. Passive commands therefore avoid database and network side effects.
+Dependencies are injected; provider clients and database sessions are not
+global singletons.
 
 ### Configuration and credentials
 
-Pydantic Settings loads non-secret YAML preferences. PlatformDirs owns
-config/data/cache/state locations.
+Pydantic Settings loads only the PlatformDirs user `config.toml`, or an absolute
+`PIXGEN_CONFIG` override. Nested `PIXGEN_*` variables override TOML. There is no
+project config or `.env` discovery.
 
-Effective config precedence: explicit command value → environment
-override → YAML → default.
-
-Credential precedence: PixGen keyring entry → provider environment
-variable → missing-credentials error. Secrets are not Pydantic persisted
-configuration.
+Credentials resolve from OS keyring and then `GEMINI_API_KEY` or
+`OPENAI_API_KEY`. Secrets never become settings fields or persisted request
+data.
 
 ### Storage
 
-SQLModel maps a core-owned SQLite schema. Enable WAL, foreign keys, and
-finite busy timeout. Plugins may persist only sanitized provider
-metadata through core-owned JSON fields.
+SQLAlchemy 2 typed declarative rows map generations and artifacts. SQLite uses
+WAL, foreign keys, and a finite busy timeout. Alembic migrations ship inside the
+package. Storage-using commands upgrade to head before normal sessions; passive
+diagnostics only inspect the current revision.
 
-### HTTP
+Database transactions are short, synchronous, and never span an async provider
+call.
 
-Use HTTPX2 \>=2.12,\<3 while compatible. Reuse clients within
-operations, set finite connect/read/write/pool timeouts, and stream
-artifact downloads.
+## Core data flow
 
-## Data flow
+### Image
 
-### Submit/wait
-
-Parse → resolve model/provider → validate roles/cardinality → resolve
-secret → upload references if required → submit → persist Generation →
-optionally poll → stream artifacts → persist Artifact → render output.
-
-### Resume
-
-Load Generation → select provider using persisted provider/job ID →
-query/poll → update normalized state → download newly available
-artifact.
-
-### Diagnostics
-
-`pixgen info` is passive. `pixgen doctor` orchestrates core plus
-plugin/provider checks. `--provider` filters the root check set; there
-is no provider-specific doctor command.
-
-## Technology choices
-
--   **Python 3.12+**: modern typed baseline without requiring
-    newest-only syntax.
--   **uv/uvx**: native Python tool execution/installation and `--with`
-    plugin composition.
--   **Cyclopts**: typed nested CLI apps.
--   **Pydantic + Pydantic Settings**: typed external boundaries/config
-    sources.
--   **YAML + PlatformDirs**: editable non-secret config and OS-correct
-    paths.
--   **keyring**: native desktop secret storage; env fallback for
-    headless use.
--   **HTTPX2**: maintained async/sync HTTP, uploads/polling/streaming;
-    patched baseline 2.12+.
--   **SQLModel + SQLite**: local resumable jobs/history without a
-    server.
--   **Pluggy + entry points**: provider extension requirement, following
-    the proven `llm` pattern.
-
-## Data model
-
-### Generation
-
-Fields/concepts: immutable local ID, provider, namespaced model, media
-kind, normalized status, provider job ID, sanitized request/prompt,
-timestamps, safe provider metadata, normalized error, optional
-actor/provenance.
-
-Normalized statuses:
-
-``` text
-submitted
-processing
-completed
-failed
-cancelled
+```text
+parse
+→ resolve model
+→ validate media/parameters/output
+→ resolve credential
+→ insert pending UUIDv7 generation
+→ submit synchronous provider image request
+→ write artifacts atomically
+→ persist artifacts and completed status
+→ render response
 ```
 
-### Artifact
+`--count` requests a native provider batch only when advertised. `--variants`
+creates independent generation records and submits identical requests under an
+async semaphore of four.
 
-Generation relation, media type/kind, local path, safe remote source
-when appropriate, safe metadata. Never persist sensitive signed URLs.
+### Background video
 
-### MediaReference
-
-Source plus role/media type. Initial role vocabulary:
-
-``` text
-image
-reference
-start-frame
-end-frame
-video
-audio
-mask
+```text
+parse and validate
+→ resolve Google credential
+→ insert pending UUIDv7 generation
+→ create background Gemini interaction
+→ persist interaction ID and running status
+→ return for --no-wait OR poll
+→ retrieve output
+→ write artifact atomically
+→ persist completed status
 ```
 
-A model declares allowed roles and cardinality. Data-model support does
-not make every role an MVP CLI feature.
+A later process resumes using the local UUIDv7, which resolves the provider and
+stored interaction ID. Google background interactions require provider-side
+storage; Pixgen documents that retention explicitly.
 
-### ModelSpec
+### Cancellation
 
-Namespaced ID, display name, media kind, capabilities, accepted
-roles/cardinality, generic constraints, and provider-specific parameter
-metadata/schema where useful. Model catalogs are provider data, not DB
-migrations.
+Load the generation, reject terminal states, call the provider's remote cancel
+operation, and update local state only after the provider confirms cancellation.
+Pixgen never marks a remotely running job cancelled only locally.
 
-## Interfaces and integrations
+## Data models
 
-MVP root shape:
+### Core request models
 
-``` text
-pixgen image create
-pixgen video create
-pixgen model list|get
-pixgen generation get|list|wait|cancel
-pixgen provider list|get|<provider> ...
-pixgen keys set|list|delete
-pixgen config get|path
-pixgen plugins
-pixgen info
-pixgen doctor
+- `ImageCreateRequest`: prompt, canonical model, repeated references,
+  normalized image parameters, native parameters, and native count.
+- `ImageEditRequest`: prompt, repeated images, optional mask, normalized image
+  parameters, native parameters, and native count.
+- `VideoCreateRequest`: prompt, canonical model, optional start frame,
+  normalized video parameters, and native parameters.
+
+They form a discriminated union on `operation`.
+
+### Persistence rows
+
+`GenerationRow` stores UUIDv7, timestamps, provider/model/operation, normalized
+status, provider job ID, sanitized request JSON, and safe error JSON.
+
+`ArtifactRow` stores a local generation relation, absolute local path, MIME
+type, byte length, and SHA-256. It does not store remote provider URLs.
+
+## Failure policy
+
+- Invalid capabilities, media, parameters, and paths fail before submission.
+- Paid submissions are not retried after an ambiguous transport failure.
+- Safe polling reads may use bounded retry with jitter and `Retry-After`.
+- Provider errors are translated before leaving the adapter.
+- JSON errors are stable Pydantic models; human strings are not machine state.
+- A failed variant does not discard successful variants.
+- Raw provider responses, credentials, headers, and signed URLs are sanitized
+  before logging or persistence.
+
+## Package layout
+
+```text
+src/pixgen/
+├── __init__.py
+├── __main__.py
+├── runtime.py
+├── cli/{app,image,video,generation,model,system}.py
+├── core/{models,requests,results,errors,validation}.py
+├── providers/{base,google,openai}.py
+├── config/{models,loader,paths}.py
+├── storage/{database,models}.py
+├── storage/migrations/
+├── credentials.py
+└── output.py
 ```
 
-Global machine conventions include `--json`, `--no-color`, `--quiet`,
-`--version`, and `--help`.
+Do not add repositories, DAOs, unit-of-work objects, generic services,
+controllers, factories, plugin loaders, or provider subpackages without a
+concrete pressure demonstrated by implementation.
 
-JSON is versioned. Successful generation output includes schema version,
-local ID, provider, model, status, and artifact paths. Errors include
-schema version, stable code, message, provider when relevant, and
-retryability when known.
+## Verification boundaries
 
-Provider-native parameters use one controlled generic escape hatch
-finalized during the first provider slice. Provider-specific operations
-live under `provider <name>`.
+- Pure unit tests cover core types and validation.
+- Provider contract tests use an injected fake Google SDK client and HTTPX2
+  `MockTransport` for OpenAI.
+- Integration tests use temporary SQLite databases, real Alembic upgrades,
+  subprocess resume, bounded variants, and atomic files.
+- Live provider tests are explicitly marked and never run in ordinary CI.
+- Pyrefly is the sole type checker.
 
-## Security and privacy
-
--   Resolve secrets only at execution.
--   Keep secrets out of serializable history request models.
--   Redact authorization headers/logging.
--   Sanitize provider metadata before persistence.
--   Treat signed URLs as potentially sensitive.
--   Upload local files only when the selected provider requires it.
--   `info`, `doctor`, and `keys list` expose presence/source only.
--   Plugins execute in-process and are trusted installed code; no
-    sandbox is promised.
-
-## Failure handling
-
-Known invalid model/reference combinations fail before submission.
-Provider
-auth/rate-limit/invalid/unavailable/timeout/generation/cancellation
-failures map to stable errors. Wait timeout leaves the job resumable.
-Artifact download failure does not change provider-completed generation
-to failed. DB lock waits are finite. Plugin load failures surface
-through `plugins`/`doctor`.
-
-## Deployment
-
-``` bash
-uvx pixgen --help
-uv tool install pixgen
-uv tool install pixgen --with pixgen-provider-example
-```
-
-No background service.
-
-## Observability
-
-Structured errors, optional redacted verbose logging, persistent
-generation state, `info`, and centralized `doctor`. No
-telemetry/metrics/tracing backend in MVP.
-
-## Architectural decisions
-
-### Decision: normalize capabilities, not complete provider APIs
-
-Normalize stable concepts; preserve the rest through provider
-metadata/native parameters/commands. Avoid both a weak lowest-common
-denominator and an unstable universal superset.
-
-### Decision: typed media references are first-class
-
-Observed current models accept multiple images, start/end frames,
-video/audio references, and model-specific cardinalities. Represent
-those roles directly instead of multiplying request classes.
-
-### Decision: Generation is the local job record
-
-Do not create separate generic Job and Generation entities in MVP.
-
-### Decision: centralized root doctor
-
-Expose only `pixgen doctor`; providers contribute checks.
-
-### Decision: plugins are ordinary Python packages
-
-Use entry points + Pluggy and uv/Python installation. Do not build
-package management.
-
-### Decision: workflows remain deferred
-
-Higgsfield validates workflows as a useful later layer, but MVP first
-validates provider/media/job contracts. Add a workflow extension only
-when implementing the first real P1 workflow.
-
-## References
-
--   https://github.com/higgsfield-ai/skills/blob/main/higgsfield-generate/references/media-inputs.md
-    --- reference-role requirements.
--   https://github.com/higgsfield-ai/skills/blob/main/higgsfield-generate/references/workflows.md
-    --- workflow separation.
--   https://docs.astral.sh/uv/guides/tools/ --- tool/plugin
-    installation.
--   https://github.com/pydantic/httpx2 --- HTTP client.
--   https://github.com/pydantic/httpx2/security/advisories/GHSA-8xx6-hgc6-gc2m
-    --- patched baseline.
--   https://sqlmodel.tiangolo.com/release-notes/ --- persistence
-    dependency.
--   https://cyclopts.readthedocs.io/en/latest/api.html --- nested
-    commands.
--   https://llm.datasette.io/en/stable/plugins/plugin-hooks.html ---
-    plugin pattern.
+See [`pixgen.md`](pixgen.md) for the complete contracts, file examples, test
+group descriptions, and acceptance criteria.
