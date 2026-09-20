@@ -1,35 +1,51 @@
-# PixGen
+# Pixgen
 
-A command-line tool for generating and managing images.
+Pixgen is an open-source, local, bring-your-own-key CLI for generating images
+and video. It gives humans and coding agents one typed command and JSON contract
+across independently authenticated Google and OpenAI accounts.
 
-PixGen is an open-source, local, BYOK (bring-your-own-key) CLI that gives
-developers — and coding agents like Claude Code — one stable interface for
-generative image and video across multiple AI providers. Traffic never
-passes through a PixGen service: the provider you configure owns
-inference, billing, moderation, quotas, and retention.
+Pixgen has no hosted service or proxy. Providers own inference, billing,
+moderation, quotas, and remote retention; Pixgen persists resumable local state
+and writes explicit local artifacts.
 
-## Why
+## Planned 0.1 capabilities
 
-Providers expose incompatible model names, parameters, media roles,
-authentication, uploads, polling, and result formats. PixGen normalizes
-the stable parts of that surface into one CLI and JSON contract, while
-preserving provider-specific capabilities through adapters — without
-locking you into a single aggregator or hosted platform.
+- Google and OpenAI image creation, multi-reference creation, and editing.
+- Google Gemini Omni Flash text-to-video and start-frame-to-video.
+- Capability-gated native image counts and explicit concurrent variants.
+- Curated model discovery with local validation before paid requests.
+- Secure OS-keyring credentials with `GEMINI_API_KEY` and `OPENAI_API_KEY`
+  fallback.
+- UUIDv7 generation history and resumable background video.
+- Atomic local artifacts and versioned JSON for agents and scripts.
+- Passive diagnostics, active health checks, and one provider-neutral Agent
+  Skill.
 
-## Planned features
+External provider plugins, Veo-specific controls, remote input URLs, automatic
+routing, MCP, workflow orchestration, and local inference are deferred.
 
-- Text-to-image, reference-image, text-to-video, and image-to-video
-  generation across built-in Google, OpenAI, Runway, and fal adapters.
-- Model and capability discovery, with local validation of known
-  constraints before a request is submitted.
-- Secure BYOK credentials via the OS keyring, with environment-variable
-  fallback for headless use.
-- Persistent, resumable asynchronous jobs — submit, exit, and resume
-  later using a local generation ID.
-- Explicit local artifacts and sanitized local history (no secrets ever
-  persisted).
-- Stable, versioned JSON output for scripting and agent use.
-- A small provider plugin API for adding providers without touching core.
+## Example interface
+
+```bash
+pixgen image create "A modern cabin beside a Norwegian fjord" \
+  --model google/gemini-3.1-flash-image \
+  --aspect-ratio 16:9 \
+  --output cabin.png
+
+pixgen image create "Combine the product and visual style" \
+  --reference product.png \
+  --reference style.png \
+  --model google/gemini-3.1-flash-image \
+  --output campaign.png
+
+pixgen video create "Slow dolly toward the cabin while snow falls" \
+  --start-frame cabin.png \
+  --model google/gemini-omni-1.1-flash \
+  --no-wait --json
+```
+
+The implementation is under development; the commands above describe the
+approved 0.1 contract rather than the current placeholder executable.
 
 ## Installation
 
@@ -41,29 +57,32 @@ uvx pixgen --help
 uv tool install pixgen
 ```
 
+Pixgen requires Python 3.14 or newer.
+
 ## Development
 
-This project uses [`uv`](https://docs.astral.sh/uv/) and
-[`just`](https://github.com/casey/just):
+The project uses [uv](https://docs.astral.sh/uv/),
+[just](https://github.com/casey/just), Ruff, Pyrefly, pytest, and pre-commit:
 
 ```bash
-just init   # sync deps, install git hooks
-just run    # run the CLI locally
-just test   # run tests
-just lint   # ruff check --fix + format
-just check  # run all pre-commit hooks
+just init
+just lint
+just type-check
+just test
+just check
 ```
 
-## Learn more
+The approved implementation plan includes repairing the current placeholder
+entry point and stale `just run`/type-check recipes before feature work.
 
-Full product intent, specification, and architecture live in
-[`.knowledge/`](.knowledge/):
+## Documentation
 
-- [`IDEA.md`](.knowledge/IDEA.md) — problem and proposed solution
-- [`PROJECT.md`](.knowledge/PROJECT.md) — scope, users, goals
-- [`SPEC.md`](.knowledge/SPEC.md) — functional requirements
-- [`ARCHITECTURE.md`](.knowledge/ARCHITECTURE.md) — system design
+- [Product and implementation plan](.knowledge/pixgen.md)
+- [Project scope](.knowledge/PROJECT.md)
+- [Architecture](.knowledge/ARCHITECTURE.md)
+- [Future ideas](.knowledge/IDEA.md)
 
 ## License
 
-Apache-2.0
+Apache-2.0 is the approved license. Adding the missing package metadata is part
+of the first implementation task.
