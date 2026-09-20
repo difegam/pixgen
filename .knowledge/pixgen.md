@@ -847,13 +847,71 @@ URLs, complete provider responses, or binary media.
 
 ## 9. Machine contract
 
-> Planned file: `src/pixgen/output.py`.
+> Planned public-contract file: `src/pixgen/core/results.py`; output rendering
+> remains in `src/pixgen/output.py`.
 
 Every JSON response is a Pydantic model with:
 
 ```python
 schema_version: Literal[1] = 1
 ```
+
+### Response-model boundary
+
+Pixgen uses separate internal normalized results and public CLI responses.
+Provider SDK and HTTP response types are implementation details and must never
+be exposed by the CLI, persisted as raw payloads, or treated as part of Pixgen's
+public Python API.
+
+The provider/runtime boundary produces an internal `ProviderGeneration`. It
+captures only provider-safe, normalized facts needed to finish a generation:
+the provider job ID when present, normalized lifecycle state, candidate media
+awaiting local persistence, optional usage facts, and safe provider diagnostics.
+It does not contain raw provider responses, credentials, headers, signed URLs,
+or provider-native fields without a Pixgen meaning.
+
+The public contract is built from durable Pixgen facts after artifact handling:
+
+```text
+GenerationResponse
+├── schema_version: 1
+├── id: UUIDv7
+├── operation, provider, model, status
+├── provider_job_id: str | null
+├── artifacts: tuple[ArtifactResponse, ...]
+├── usage: UsageResponse | null
+├── error: ErrorDetail | null
+├── created_at, completed_at
+└── metadata: documented provider-neutral fields only
+```
+
+`ArtifactResponse` reports only final local artifact facts: absolute path,
+media kind and type, byte size, SHA-256, and optional dimensions or duration.
+It never reports remote URLs. `BatchResponse` reports requested, completed, and
+failed totals plus ordered `GenerationResponse` entries, preserving submission
+order and partial successes.
+
+The normalized lifecycle is `pending`, `running`, `completed`, `failed`, and
+`cancelled`. `pending` means Pixgen accepted and recorded the request but has
+not confirmed provider submission; `running` means a resumable or pollable
+provider job exists. The other states are terminal.
+
+All public models are frozen Pydantic models with explicit snake_case
+serialization. Fields whose nullability carries state, such as
+`provider_job_id` for synchronous generations, are serialized as `null` rather
+than silently omitted. Version 1 may add optional fields but cannot rename,
+remove, or change the meaning of existing fields; breaking changes require a
+new schema version.
+
+`ErrorResponse` is the command-level error envelope written to stderr.
+`ErrorDetail` is also embedded in a failed `GenerationResponse` inside a batch.
+Its stable fields are `code`, `message`, `retryable`, optional `provider`, and
+optional field-level errors. Public metadata must be curated and
+provider-neutral; arbitrary provider payload passthrough is prohibited.
+
+Future verification must cover JSON-schema snapshots, serialization of every
+lifecycle state, secret and remote-URL sanitization, ordered partial batches,
+and compatibility of documented version-1 examples.
 
 ### Generation success
 
