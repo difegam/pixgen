@@ -2,7 +2,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field, Json
 
-from pixgen.core.models import MediaReference, ModelId
+from pixgen.core.models import MediaReference, ModelId  # noqa: TC001
 
 
 class Operation(StrEnum):
