@@ -4,7 +4,7 @@ from typing import Annotated
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, StringConstraints
 
-from pixgen.core.utils import file_exists, file_integrity, is_supported_image_extension
+from pixgen.core.validation import file_exists, file_integrity
 
 # Regular expression pattern for validating model IDs
 model_id_regex = r"^[a-z0-9][a-z0-9-]*/.+$"  # namespace/model-name
@@ -35,6 +35,20 @@ class Capability(StrEnum):
     IMAGE_TO_VIDEO = "image-to-video"
 
 
+class Operation(StrEnum):
+    IMAGE_CREATE = "image-create"
+    IMAGE_EDIT = "image-edit"
+    VIDEO_CREATE = "video-create"
+
+
+class GenerationStatus(StrEnum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
 class MediaReference(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -42,6 +56,5 @@ class MediaReference(BaseModel):
     path: Annotated[
         Path,
         AfterValidator(file_exists),
-        AfterValidator(is_supported_image_extension),
         AfterValidator(file_integrity),
     ]

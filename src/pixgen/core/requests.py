@@ -1,42 +1,48 @@
-from enum import StrEnum
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, Json
+from pydantic import BaseModel, ConfigDict, Field
 
-from pixgen.core.models import MediaReference, ModelId  # noqa: TC001
+from pixgen.core.models import MediaReference, ModelId, Operation
 
-
-class Operation(StrEnum):
-    IMAGE_CREATE = "image-create"
-    IMAGE_EDIT = "image-edit"
-    VIDEO_CREATE = "video-create"
+type JsonScalar = str | int | float | bool | None
+type JsonValue = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
 
 
 class RequestBase(BaseModel):
-    prompt: str
+    model_config = ConfigDict(frozen=True)
+
+    prompt: str = Field(min_length=1)
     model: ModelId
+    params: dict[str, JsonValue] = Field(default_factory=dict)
+
+
+class ImageRequestBase(RequestBase):
     aspect_ratio: str | None = None
     resolution: str | None = None
-    count: int = 1
-    params: dict[str, Json] = Field(default_factory=dict)
+    count: int = Field(default=1, ge=1)
 
 
-class ImageCreateRequest(RequestBase):
-    operation: Operation = Operation.IMAGE_CREATE
+class ImageCreateRequest(ImageRequestBase):
+    operation: Literal[Operation.IMAGE_CREATE] = Operation.IMAGE_CREATE
     references: tuple[MediaReference, ...] = ()
 
 
-class ImageEditRequest(RequestBase):
-    operation: Operation = Operation.IMAGE_EDIT
+class ImageEditRequest(ImageRequestBase):
+    operation: Literal[Operation.IMAGE_EDIT] = Operation.IMAGE_EDIT
     images: tuple[MediaReference, ...]
     mask: MediaReference | None = None
 
 
 class VideoCreateRequest(RequestBase):
-    operation: Operation = Operation.VIDEO_CREATE
-    prompt: str
-    model: ModelId
+    operation: Literal[Operation.VIDEO_CREATE] = Operation.VIDEO_CREATE
     start_frame: MediaReference | None = None
+    aspect_ratio: str | None = None
+    resolution: str | None = None
     duration: int | None = None
 
 
-type GenerationRequest = ImageCreateRequest | ImageEditRequest | VideoCreateRequest
+# Discriminated union for generation requests
+type GenerationRequest = Annotated[
+    ImageCreateRequest | ImageEditRequest | VideoCreateRequest,
+    Field(discriminator="operation"),
+]

@@ -5,15 +5,6 @@ from PIL import Image
 if TYPE_CHECKING:
     from pathlib import Path
 
-SUPPORTED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
-
-
-def is_supported_image_extension(file_path: Path) -> Path:
-    """Check if the file has a supported image extension."""
-    if file_path.suffix.lower() not in SUPPORTED_IMAGE_EXTENSIONS:
-        raise ValueError(f"{file_path} is not a supported image extension")
-    return file_path
-
 
 def file_exists(file_path: Path) -> Path:
     """Check if the file exists and is a file."""
