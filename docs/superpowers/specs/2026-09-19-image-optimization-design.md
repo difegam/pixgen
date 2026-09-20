@@ -78,7 +78,7 @@ Core options:
 --output-dir DIR            Destination directory for named output sets
 --dry-run                    Validate and report the plan without side effects
 --force
---create-dirs
+--mkdir
 --json
 --quiet
 --no-color
@@ -167,7 +167,7 @@ outputs use `--output-dir` or Pixgen's standard generated artifact location.
 Existing path rules apply:
 
 - Never overwrite without `--force`.
-- Never create a missing parent directory without `--create-dirs`.
+- Never create a missing parent directory without `--mkdir`.
 - Validate all runnable output collisions and parents before processing.
 - Report absolute artifact paths.
 - Write to temporary sibling files, flush and fsync them, then atomically
@@ -623,7 +623,7 @@ An injected HTTPX2 mock transport verifies:
 
 - Atomic promotion and staged-file cleanup.
 - Preservation of existing destinations after failed replacement.
-- `--force` and `--create-dirs` behavior.
+- `--force` and `--mkdir` behavior.
 - Human output and versioned JSON.
 - Exit codes 0, 2, 3, 4, 5, 6, and 7 where applicable.
 - Partial results preserve completed files.

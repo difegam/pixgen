@@ -33,12 +33,12 @@ APIs.
 
 ## Why this might be useful
 
-An agent should be able to discover providers/models, inspect
-capabilities, generate media, wait for asynchronous work, and consume
-local files without learning every provider API.
+An agent should discover providers and models, inspect capabilities, generate
+media, wait for asynchronous jobs, and use local files without learning each
+provider's API.
 
-The differentiator is not model access. It is a stable local BYOK
-contract across independently authenticated providers.
+The differentiator isn't model access. It's a stable local BYOK contract across
+independently authenticated providers.
 
 ## Initial capabilities
 
@@ -49,23 +49,22 @@ contract across independently authenticated providers.
 - Persistent asynchronous generation state and local artifacts.
 - OS-keyring credentials with environment fallback.
 - Stable JSON output.
-- Provider plugins and provider-scoped commands.
+- Provider plugins and provider-scoped commands. *(Both deferred in 0.1:
+  providers are built-in behind an internal protocol, and there are no
+  provider-scoped commands.)*
 - Central root `pixgen doctor` and passive `pixgen info`.
 - Claude Code Agent Skill.
 
 ## Constraints
 
-- CLI first; no web UI in MVP.
-- Local single-user tool; no PixGen hosted service.
-- Secrets never belong in YAML, SQLite history, logs, or normal
-    output.
-- Provider/model data changes frequently and must stay behind
-    adapters.
-- Both synchronous and asynchronous APIs must fit the contract.
-- Non-interactive operation is required after credentials are
-    configured.
-- Distribution must work through `uvx` and `uv tool install`.
-- Scope must remain practical for one developer.
+- CLI first, no web UI in MVP.
+- Local single-user tool, no PixGen hosted service.
+- Secrets never go in YAML, SQLite history, logs, or output.
+- Provider and model data change frequently and must stay in adapters.
+- Both sync and async APIs fit one contract.
+- Non-interactive operation after credentials are set up.
+- Distribution works through `uvx` and `uv tool install`.
+- Scope stays practical for one developer.
 
 ## Open questions
 

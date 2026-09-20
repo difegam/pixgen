@@ -2,16 +2,27 @@
 
 ## Summary
 
-Pixgen is an open-source, local, bring-your-own-key CLI that gives humans and
-coding agents one typed interface for generative images and video. Pixgen calls
-provider APIs directly, persists resumable local generation state, and writes
-explicit local artifacts.
+Pixgen is an open-source, local, bring-your-own-key CLI for generative images
+and video. Humans and agents get one typed interface. Pixgen calls provider
+APIs directly, persists resumable local generation state, and writes explicit
+local artifacts.
 
-Pixgen has no hosted service, account, proxy, billing layer, required MCP
-server, or background daemon. The provider owns inference, moderation, quotas,
-billing, and remote retention.
+No hosted service, account, proxy, billing layer, MCP server, or daemon. The
+provider owns inference, moderation, quotas, billing, and remote retention.
 
-The detailed source of truth is [`pixgen.md`](pixgen.md).
+## What each document owns
+
+Every fact lives in exactly one file. The others link to it.
+
+| Document | Owns |
+| --- | --- |
+| [`IDEA.md`](IDEA.md) | Why Pixgen exists: the problem, the alternatives, the differentiator. |
+| `PROJECT.md` | Who it is for, what is in and out of 0.1, and when to stop. |
+| [`ARCHITECTURE.md`](ARCHITECTURE.md) | Module boundaries, data flows, and failure policy. |
+| [`pixgen.md`](pixgen.md) | The complete contracts: CLI, core types, providers, storage, machine output, tests, acceptance criteria. |
+
+When a fact appears in two places it drifts. Restating a contract here is how
+this document becomes wrong.
 
 ## Users
 
@@ -28,8 +39,8 @@ The detailed source of truth is [`pixgen.md`](pixgen.md).
   Omni Flash video.
 - OpenAI: image creation, reference-guided creation, and image editing.
 
-There is no external plugin API in 0.1. Google and OpenAI are built-in adapters
-behind an internal provider protocol.
+No external plugin API in 0.1. Google and OpenAI are built-in adapters behind
+an internal protocol.
 
 ### User-visible capabilities
 
@@ -43,9 +54,13 @@ behind an internal provider protocol.
 - Keyring credentials with `GEMINI_API_KEY` and `OPENAI_API_KEY` fallback.
 - UUIDv7 generation history, background video resume, and cancellation.
 - Atomic local files, versioned JSON, stable errors, and stable exit codes.
-- Passive `info`, active `doctor`, and one provider-neutral Agent Skill.
+- Passive `info`, active `doctor`, one provider-neutral Agent Skill.
 
 ## Primary flows
+
+These are the user-visible steps. The module-level flows, including
+cancellation and the async boundary, are in
+[`ARCHITECTURE.md`](ARCHITECTURE.md).
 
 ### Generate or edit an image
 
@@ -65,27 +80,26 @@ behind an internal provider protocol.
 4. Resume later with `generation get` or `generation wait` and the UUIDv7.
 5. Download the completed result atomically and update local history.
 
-Google background execution stores the interaction remotely. See the retention
-notes and source links in [`pixgen.md`](pixgen.md).
+Google background execution stores the interaction remotely. See retention notes
+and source links in [`pixgen.md`](pixgen.md).
 
 ### Diagnose setup
 
 - `pixgen info` reports passive local runtime and path information.
-- `pixgen doctor` checks configuration, paths, Alembic revision, SQLite
-  pragmas, keyring, credential presence, provider authentication, and model
-  manifests.
+- `pixgen doctor` checks configuration, paths, Alembic revision, SQLite pragmas,
+  keyring, credential presence, provider auth, model manifests.
 
 ## Technology constraints
 
-- Python 3.14+.
-- Cyclopts for the CLI.
-- Pydantic v2 and Pydantic Settings for typed boundaries and TOML settings.
-- PlatformDirs user configuration only, with absolute `PIXGEN_CONFIG` override.
-- Synchronous typed SQLAlchemy 2, SQLite, and Alembic.
-- Official async `google-genai` for Google.
-- Direct HTTPX2 for OpenAI images.
-- Rich for human output and Stamina for safe read retries.
-- Pyrefly as the sole type checker.
+Three constraints are scope decisions, not implementation choices:
+
+- **Python 3.14+** for standard-library `uuid.uuid7()` and one baseline.
+- **Local and BYOK.** No hosted service, proxy, daemon, account.
+- **Single developer.** Anything one person can't build and maintain is out of
+  scope, regardless of merit.
+
+The full dependency and tooling decisions are in
+[`pixgen.md`](pixgen.md) section 16.
 
 ## Non-goals and deferred work
 
@@ -96,35 +110,23 @@ installation, workflows, MCP, local inference, audio generation, and 3D.
 
 ## Success criteria
 
-- Google and OpenAI independently create and edit local images.
-- Google creates and resumes local video artifacts through Gemini Omni Flash.
-- A background video survives CLI process termination and resumes by UUIDv7.
-- Native count and independent variants have distinct, tested semantics.
-- Keyring and environment credentials work independently and never leak.
-- Invalid input fails before a billable call.
-- All machine responses validate against versioned Pydantic models.
-- The Agent Skill completes image and video workflows without provider request
-  formats embedded in its instructions.
-- Ruff, Pyrefly, pytest, pre-commit, and dependency security checks pass.
+The single product criterion:
 
-## Current model catalog
+> A human or coding agent can discover a current model, create or edit images
+> through Google or OpenAI, create and resume a Google video, and consume
+> explicit local artifacts using only the CLI's help and structured contracts.
 
-Model manifests in provider code will carry exact capabilities, formats,
-limits, documentation URLs, and verification dates.
+The twelve testable acceptance criteria are in [`pixgen.md`](pixgen.md)
+section 14.
 
-| Provider | Display name | Canonical ID |
-| --- | --- | --- |
-| Google | Nano Banana 2 | `google/gemini-3.1-flash-image` |
-| Google | Nano Banana 2 Lite | `google/gemini-3.1-flash-lite-image` |
-| Google | Nano Banana Pro | `google/gemini-3-pro-image` |
-| Google | Gemini Omni Flash | `google/gemini-omni-1.1-flash` |
-| OpenAI | GPT-Image-2.5 Sunburst | `openai/gpt-image-2.5-sunburst` |
-| OpenAI | GPT-Image-2.5 Flare | `openai/gpt-image-2.5-flare` |
-| OpenAI | GPT-Image-2 | `openai/gpt-image-2` |
+## Model catalog
 
-These identifiers were checked against the official Google and OpenAI model
-catalogs on 2026-09-18. Catalog presence does not guarantee access for a
-particular account.
+The shipped model list with canonical IDs, capabilities, and verification
+dates is in [`pixgen.md`](pixgen.md) section 5. Provider code manifests carry
+exact formats and limits.
+
+IDs were re-verified against official Google and OpenAI catalogs on 2026-09-20.
+Catalog presence doesn't guarantee access for a particular account.
 
 ## Stop conditions
 
