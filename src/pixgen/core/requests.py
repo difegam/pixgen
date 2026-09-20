@@ -29,7 +29,7 @@ class ImageCreateRequest(ImageRequestBase):
 
 class ImageEditRequest(ImageRequestBase):
     operation: Literal[Operation.IMAGE_EDIT] = Operation.IMAGE_EDIT
-images: tuple[MediaReference, ...] = Field(min_length=1)
+    images: tuple[MediaReference, ...] = Field(min_length=1)
     mask: MediaReference | None = None
 
 

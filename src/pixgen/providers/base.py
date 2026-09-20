@@ -1,15 +1,13 @@
-from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol
 
 from pydantic import AnyHttpUrl, BaseModel, ConfigDict
 
-from pixgen.core.errors import ErrorCode
-from pixgen.core.models import GenerationStatus
+from pixgen.core.errors import ErrorCode  # noqa: TC001
+from pixgen.core.models import GenerationStatus  # noqa: TC001
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from pixgen.core.models import ModelSpec, ProviderGeneration
     from pixgen.core.requests import GenerationRequest
 
 
@@ -54,7 +52,7 @@ class Provider(Protocol):
     def validate_params(
         self,
         request: GenerationRequest,
-        spec: ModelSpec,
+        spec: dict,
     ) -> list: ...
 
     async def submit(self, request: GenerationRequest) -> ProviderGeneration: ...

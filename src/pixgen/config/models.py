@@ -56,8 +56,3 @@ class Settings(BaseSettings):
             env_settings,
             TomlConfigSettingsSource(settings_cls),
         )
-
-
-if __name__ == "__main__":
-    settings = Settings()
-    print(settings)

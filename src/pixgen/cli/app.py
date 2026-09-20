@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from cyclopts import App
 
 from pixgen.cli.image import image_app
@@ -9,18 +7,15 @@ app.command(image_app)
 
 
 @app.default
-def main():
-    print("Welcome to Pixgen CLI!")
+def main() -> None: ...
 
 
 @app.command
-def info() -> None:
-    print("pixgen version v0.1.0")
+def info() -> None: ...
 
 
 @app.command
-def doctor() -> None:
-    print("Running doctor checks...")
+def doctor() -> None: ...
 
 
 if __name__ == "__main__":
