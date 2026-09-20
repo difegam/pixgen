@@ -1,5 +1,4 @@
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field, PositiveFloat
 from pydantic_settings import (
@@ -11,9 +10,6 @@ from pydantic_settings import (
 
 from pixgen.config.paths import resolve_config_path
 from pixgen.core.models import ModelId  # noqa: TC001
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 class Defaults(BaseModel):

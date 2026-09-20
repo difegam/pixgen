@@ -1,0 +1,8 @@
+[defaults]
+image_model = "google/gemini-3.1-flash-image"
+video_model = "google/gemini-omni-1.1-flash"
+
+[generation]
+output_dir = "/Users/example/Pictures/pixgen"
+wait_timeout = 700.0
+wait_interval = 5.0
