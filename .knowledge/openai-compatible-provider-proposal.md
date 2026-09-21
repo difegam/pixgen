@@ -63,59 +63,41 @@ the owners of wire formats and native parameters.
 ```text
 src/pixgen/
 ├── core/
-│   ├── media.py                 # media types, facts, limits, asset references
-│   ├── requests.py              # uses MediaAssetReference, not Pillow validators
-│   ├── results.py               # durable public result models
-│   ├── models.py                # roles, operations, capabilities, statuses
+│   ├── requests.py              # retains role-bearing MediaReference inputs
+│   ├── models.py                # media facts, roles, operations, capabilities, statuses
 │   └── validation.py            # manifest-based request validation
-├── media/
-│   ├── inspect.py               # content detection and image/video probing
-│   ├── prepare.py               # explicit, temporary transformations
-│   ├── encode.py                # base64, data URL, multipart helpers
-│   └── artifacts.py             # result decoding, verification, atomic writes
+├── media.py                     # inspect local media and materialize artifacts
 ├── providers/
 │   ├── base.py                  # internal provider protocol and normalized result
 │   ├── manifest.py              # model and compatibility specifications
-│   ├── openai_contract.py       # Images API request/response mapping
-│   ├── openai_transport.py      # configurable HTTP transport and auth
-│   ├── openai.py                # native OpenAI profile and curated models
-│   └── openai_compatible.py     # configured compatible profiles
-├── config/
-│   └── models.py                # provider endpoint/profile configuration
+│   └── openai.py                # native OpenAI adapter and reusable profile
 └── runtime.py                   # selects a profile and composes its client
 ```
 
-`media/` is not an OpenAI helper. Google and every future non-compatible
-provider use it for inspection, preparation, artifact validation, and atomic
-writes. The OpenAI modules use it only to serialize a verified asset into the
-multipart or JSON shape that their endpoint requires.
+`media.py` is not an OpenAI helper. Google and every future non-compatible
+provider use it for inspection and artifact materialization. Provider modules
+serialize an inspected file into their own upload or inline representation.
+Small encoding helpers stay beside their adapter until a second adapter needs
+the exact same behavior.
 
 ## Common media model
 
 ### Types
 
-`MediaAssetReference` is a local input declared by a request. `MediaFacts` is
-the inspected result. `PreparedMedia` is a short-lived derived file. An adapter
-receives one of those objects and never re-reads, re-hashes, or guesses its
-MIME type.
+`MediaReference` remains the role-bearing local input declared by a request.
+`MediaFacts` is the inspected result. `InspectedMedia` joins the two after
+model selection and before validation. An adapter receives `InspectedMedia` and
+does not re-inspect it, re-hash it, or guess its MIME type.
 
 ```python
-# src/pixgen/core/media.py
+# src/pixgen/core/models.py
 from enum import StrEnum
-from pathlib import Path
-
 from pydantic import BaseModel, ConfigDict, Field
 
 
 class MediaKind(StrEnum):
     IMAGE = "image"
     VIDEO = "video"
-
-
-class MediaAssetReference(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    path: Path
 
 
 class ImageFacts(BaseModel):
@@ -145,6 +127,13 @@ class MediaFacts(BaseModel):
     sha256: str
     image: ImageFacts | None = None
     video: VideoFacts | None = None
+
+
+class InspectedMedia(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    reference: MediaReference
+    facts: MediaFacts
 ```
 
 The implementation must validate the invariant that images have `image` facts,
@@ -154,11 +143,12 @@ accepting arbitrary `image/*` or `video/*` values.
 
 ### Inspection
 
-`inspect_media(path)` reads enough of a local regular file to identify the
-format, calculate the hash and byte length, and probe its available facts. A
-Pillow-backed image probe can remain the first implementation for PNG, JPEG,
-WebP, and GIF. Video probing must be a separate optional implementation because
-Pillow is not a video decoder.
+`inspect_media(reference)` in [`src/pixgen/media.py`](../src/pixgen/media.py)
+reads enough of a local regular file to identify the format, calculate the hash
+and byte length, and probe its available facts. A Pillow-backed image probe can
+remain the first implementation for PNG, JPEG, WebP, and GIF. Video inspection
+is deferred until the first supported video provider requires it because Pillow
+is not a video decoder.
 
 The inspector does not transform content. It reports an invalid or unsupported
 file before submission. It replaces the current `AfterValidator` calls in
@@ -171,9 +161,11 @@ the constraints after inspection and before provider submission.
 
 ```python
 # src/pixgen/providers/manifest.py
-from pydantic import BaseModel, Field
+from datetime import date
 
-from pixgen.core.models import Capability, MediaRole
+from pydantic import AnyHttpUrl, BaseModel, Field
+
+from pixgen.core.models import Capability, MediaKind, MediaRole
 
 
 class MediaRoleSpec(BaseModel):
@@ -193,6 +185,8 @@ class ModelSpec(BaseModel):
     media: dict[MediaRole, MediaRoleSpec]
     output_media_types: frozenset[str]
     native_count_max: int = Field(default=1, ge=1)
+    documentation_url: AnyHttpUrl
+    verified_at: date
 ```
 
 The request validator checks role cardinality, file kind, MIME type, byte limit,
@@ -200,60 +194,32 @@ dimensions, animation, request operation, and normalized parameters. The
 adapter then parses its native options. This preserves the existing rule that
 provider-specific parameters do not leak into unrelated core modules.
 
-### Preparation and encoding
-
-Media preparation has a typed input and output. It supports conversions such as
-resize, format conversion, alpha flattening, or first-frame extraction only when
-the caller or a documented model preparation policy permits it.
-
-```python
-# src/pixgen/media/prepare.py
-class MediaTransform(BaseModel):
-    target_media_type: str | None = None
-    max_width: int | None = None
-    max_height: int | None = None
-    flatten_alpha_on: str | None = None
-    extract_first_frame: bool = False
-
-
-async def prepare_media(
-    source: MediaAssetReference,
-    facts: MediaFacts,
-    transform: MediaTransform,
-) -> PreparedMedia: ...
-```
-
-`PreparedMedia` stores a temporary path, facts, source hash, and transform
-record. It has a defined cleanup owner. The provider call must receive only the
-prepared result when preparation occurred.
-
-[`src/pixgen/media/encode.py`](../src/pixgen/media/encode.py) provides
-streaming byte reads, base64 encoding, data-URL construction, and multipart
-part construction. The helper takes verified `MediaFacts`; it never determines a
-content type from the filename.
-
 ### Artifact materialization
 
 Providers return bytes, an approved fetch URL, or a provider-specific pending
-job reference. [`src/pixgen/media/artifacts.py`](../src/pixgen/media/artifacts.py)
-owns download limits, decoding, media inspection, output extension selection,
-and atomic writes. It records final absolute path, inspected media type, bytes,
-and SHA-256.
+job reference. [`src/pixgen/media.py`](../src/pixgen/media.py) owns download
+limits, decoding, media inspection, output extension selection, and atomic
+writes. It records final absolute path, inspected media type, bytes, and
+SHA-256.
+
+The first OpenAI milestone validates the original media and rejects unsupported
+input. It does not resize, re-encode, flatten alpha, or extract video frames.
+Add a narrowly scoped transform only when a supported provider needs it and the
+CLI contract can state when it occurs.
 
 Signed URLs are treated as transient transport input. They are not included in
 JSON output, history, logs, or database rows.
 
 ## Provider boundary
 
-The internal protocol should use structured model specifications and media
-objects. A provider does not return an unchecked MIME string.
+The internal protocol should return media delivery data, not a claimed MIME
+type. The shared artifact code inspects the received bytes before persistence.
 
 ```python
 # src/pixgen/providers/base.py
 class ProviderMedia(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    facts: MediaFacts | None = None
     data: bytes | None = None
     fetch_url: AnyHttpUrl | None = None
 
@@ -271,13 +237,12 @@ class Provider(Protocol):
 ```
 
 `ProviderMedia` must contain exactly one delivery form: `data` or `fetch_url`.
-`facts` may be absent until a URL or byte sequence has been materialized and
-inspected. The runtime performs that materialization before persistence and
+The runtime materializes and inspects that delivery before persistence and
 public output.
 
 ## OpenAI implementation and compatible endpoints
 
-### One mapper, two profile types
+### One adapter, reusable profile
 
 The first adapter uses the OpenAI Images API as a precise contract:
 
@@ -287,44 +252,47 @@ The first adapter uses the OpenAI Images API as a precise contract:
 - `b64_json` or URL result representations, decoded or fetched by the shared
   artifact layer.
 
-The mapper lives in
-[`src/pixgen/providers/openai_contract.py`](../src/pixgen/providers/openai_contract.py).
-It maps Pixgen requests into these shapes and maps responses back to
-`ProviderGeneration`. It is the only code that knows OpenAI field names such as
-`image[]`, `response_format`, `size`, `quality`, and `output_format`.
+Start with one [`src/pixgen/providers/openai.py`](../src/pixgen/providers/openai.py)
+module. It maps Pixgen requests into these shapes, calls HTTPX, and maps
+responses back to `ProviderGeneration`. It is the only code that knows OpenAI
+field names such as `image[]`, `response_format`, `size`, `quality`, and
+`output_format`.
 
-[`src/pixgen/providers/openai_transport.py`](../src/pixgen/providers/openai_transport.py)
-is reusable HTTP infrastructure. It accepts a validated base URL, credential,
-safe custom headers, timeouts, and an injected `httpx.AsyncClient`. It does not
-invent a retry policy and never log authorization data.
+Its reusable input is a small immutable profile. Native OpenAI provides a fixed
+profile in code. A later compatible endpoint can provide the same profile from
+validated configuration without requiring a new provider abstraction.
 
-`openai.py` creates the native profile. It has the OpenAI base URL, an
-`OPENAI_API_KEY` credential resolver, curated model specs, and direct HTTP
-contract tests. `openai_compatible.py` creates configured compatible profiles
-using the same mapper and transport. It has no native model assumptions.
+```python
+# src/pixgen/providers/openai.py
+class OpenAIProfile(BaseModel):
+    model_config = ConfigDict(frozen=True)
 
-### Compatibility levels
+    provider_id: str
+    base_url: AnyHttpUrl
+    credential_env: str
+    models: tuple[ModelSpec, ...]
+```
 
-Compatibility is a per-model declaration, not a provider-wide promise.
+Credential resolution uses `provider_id` as the keyring account and
+`credential_env` as the environment fallback, preserving Pixgen's existing
+keyring-first policy.
 
-| Level | Meaning | Allowed Pixgen operations |
-| --- | --- | --- |
-| `native` | Pixgen directly verifies the provider's own contract. | Manifest-declared image operations; later video only after lifecycle tests. |
-| `openai-images` | The endpoint passes Pixgen fixtures for the OpenAI Images routes. | `image-create`, and `image-edit` only if separately verified. |
-| `openai-video` | The endpoint passes fixtures for a defined OpenAI-style asynchronous lifecycle. | Manifest-declared video create, get, cancel, download. |
-| `partial` | The endpoint is known to accept only selected fields or operations. | Only the exact manifest declaration. |
+Each `ModelSpec` records `verified_at` and a documentation URL. Its declared
+capabilities are the compatibility statement. For example, a model with only
+`text-to-image` does not receive edit or video requests.
 
 A provider that responds to `/v1/models` or `/v1/chat/completions` has no image
 compatibility by that fact alone. A declared image route does not imply edits,
 multiple input files, masks, base64 output, URL downloading, or video support.
 
-### Configuration
+### Later compatible-endpoint configuration
 
 Provider configuration is named, so canonical model IDs remain stable and
 unambiguous. Native OpenAI has its fixed `openai` provider ID. A local endpoint
 could use `local/flux-dev`; a router profile could use
 `router/provider/model-name` because Pixgen already splits only at the first
-slash.
+slash. The configuration's `id` is the provider-local model ID; runtime combines
+it with the configured provider ID to build the canonical model ID.
 
 ```toml
 # config.toml
@@ -335,9 +303,10 @@ credential_env = "LOCALAI_API_KEY"
 
 [[providers.local.models]]
 id = "flux-dev"
-compatibility = "openai-images"
 capabilities = ["text-to-image"]
 output_media_types = ["image/png", "image/webp"]
+documentation_url = "https://example.invalid/models/flux-dev"
+verified_at = "2026-09-21"
 
 [providers.local.models.media.reference]
 kind = "image"
@@ -347,13 +316,12 @@ max_count = 1
 
 The settings model in
 [`src/pixgen/config/models.py`](../src/pixgen/config/models.py) validates the
-provider ID, HTTPS endpoint policy, local loopback exception, header allowlist,
-credential environment-variable name, and model manifests. Sensitive values do
-not enter the TOML file or generated JSON.
+provider ID, base URL, credential environment-variable name, and model
+manifests. Sensitive values do not enter the TOML file or generated JSON.
 
-The initial release should accept compatible profiles only through the user
-configuration file. It should not add a general plugin loader or fetch a
-provider's catalog dynamically.
+Native OpenAI ships first. The configuration form is added only after its image
+create and edit contract tests pass. It should not add a general plugin loader
+or fetch a provider's catalog dynamically.
 
 ### Compatibility assessment
 
@@ -371,7 +339,7 @@ until its profile and fixtures pass. The transport reuse is useful even when the
 adapter must be provider-specific. As of 2026-09-21, Cloudflare Workers AI's
 documented OpenAI-compatible routes cover chat completions, embeddings, and a
 limited Responses API. They do not establish OpenAI Images compatibility, so
-Cloudflare Workers AI is not an `openai-images` profile candidate without a
+Cloudflare Workers AI is not a compatible image-profile candidate without a
 separate media endpoint and verification.
 
 LiteLLM documents an OpenAI-style image API and an OpenAI-style video API. That
@@ -408,31 +376,28 @@ Never record API keys, headers, raw responses, request bodies, or signed URLs.
 
 ## Implementation order
 
-1. Add `core/media.py` and pure manifest models. Replace image-only
-   `MediaReference` validators with an explicit inspection step.
-2. Add `media/inspect.py`, tests for allowed images and rejected/corrupt files,
-   then `media/artifacts.py` with atomic-write and output verification tests.
-3. Add `media/prepare.py` and `media/encode.py`. Start with no automatic
-   transforms. Add each transform only alongside an explicit request or model
-   policy and its tests.
-4. Add model specs and manifest-based validation. Convert the future Google
-   manifest to the same representation.
-5. Implement `openai_transport.py` and `openai_contract.py` with HTTPX mock
-   tests. Add native OpenAI image creation first, then edits after multipart
-   tests pass.
-6. Add the `openai-compatible` configured profile and fixtures for one known
+1. Add pure manifest models and replace the image-only `MediaReference`
+   validators with one explicit inspection step.
+2. Add `media.py` with image inspection, output verification, and atomic writes.
+   Test allowed images, corrupt files, base64 results, URL results, and output
+   collisions.
+3. Add manifest-based validation. Convert the future Google manifest to the
+   same representation.
+4. Implement native OpenAI in `providers/openai.py` with HTTPX mock tests. Add
+   image creation first, then edits after multipart tests pass.
+5. Add configured `OpenAIProfile` creation and fixtures for one known compatible
    endpoint. Start with `text-to-image`; enable edits only after verification.
-7. Add a video profile only after a concrete endpoint passes full lifecycle
+6. Add a video profile only after a concrete endpoint passes full lifecycle
    tests. Do not add automatic routing or fallback in this sequence.
 
 ## Tests
 
 | Test group | Location | Covers |
 | --- | --- | --- |
-| Media unit tests | `tests/media/` | type detection, hashes, dimensions, corrupt files, transforms, base64, data URLs, atomic writes |
+| Media unit tests | `tests/test_media.py` | type detection, hashes, dimensions, corrupt files, base64 and URL results, atomic writes |
 | Core validation tests | `tests/core/` | roles, cardinality, MIME allowlists, manifest limits, operation capability gates |
-| OpenAI contract tests | `tests/providers/test_openai_contract.py` | generation JSON, edit multipart bodies, base64 and URL responses, safe errors |
-| Compatible-profile tests | `tests/providers/test_openai_compatible.py` | endpoint configuration, declared partial support, rejected unknown fields, credentials, error mapping |
+| OpenAI contract tests | `tests/providers/test_openai.py` | generation JSON, edit multipart bodies, base64 and URL responses, safe errors |
+| Compatible-profile tests | `tests/providers/test_openai_compatible.py` | endpoint configuration, declared capabilities, rejected unknown fields, credentials, error mapping |
 | Live opt-in tests | `tests/live/` | a named native or compatible profile, never routine CI |
 
 Each compatible profile gets a fixture set that states the endpoint version,
