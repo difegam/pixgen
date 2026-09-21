@@ -1,0 +1,7 @@
+interface:
+  display_name: "Pixgen Design Review"
+  short_description: "Plan and review Pixgen changes"
+  default_prompt: "Use $pixgen-design-review to assess this Pixgen feature or proposal change."
+
+policy:
+  allow_implicit_invocation: false
