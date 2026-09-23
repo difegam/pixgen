@@ -1,9 +1,20 @@
 from typing import TYPE_CHECKING
 
 from PIL import Image
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+class FieldError(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    field: str
+    reason: str
 
 
 def file_exists(file_path: Path) -> Path:

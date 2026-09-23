@@ -3,12 +3,13 @@ from typing import TYPE_CHECKING, Protocol
 from pydantic import AnyHttpUrl, BaseModel, ConfigDict
 
 from pixgen.core.errors import ErrorCode
-from pixgen.core.models import GenerationStatus
+from pixgen.core.models import GenerationStatus, ModelSpec
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from pixgen.core.requests import GenerationRequest
+    from pixgen.core.validation import FieldError
 
 
 class ProviderMedia(BaseModel):
@@ -48,12 +49,12 @@ class ProviderGeneration(BaseModel):
 class Provider(Protocol):
     name: str
 
-    def list_models(self) -> Sequence: ...
+    def list_models(self) -> Sequence[ModelSpec]: ...
     def validate_params(
         self,
         request: GenerationRequest,
-        spec: dict,
-    ) -> list: ...
+        spec: ModelSpec,
+    ) -> list[FieldError]: ...
 
     async def submit(self, request: GenerationRequest) -> ProviderGeneration: ...
     async def get(self, provider_job_id: str) -> ProviderGeneration: ...
