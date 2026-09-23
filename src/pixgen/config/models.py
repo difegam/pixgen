@@ -9,7 +9,7 @@ from pydantic_settings import (
 )
 
 from pixgen.config.paths import resolve_config_path
-from pixgen.core.models import ModelId  # noqa: TC001
+from pixgen.core.models import ModelId
 
 
 class Defaults(BaseModel):
