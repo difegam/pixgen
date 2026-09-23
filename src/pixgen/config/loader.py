@@ -1,7 +1,10 @@
 import tomllib
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from pixgen.config.models import Settings
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def read_config_file(path: Path | None = None) -> Settings:

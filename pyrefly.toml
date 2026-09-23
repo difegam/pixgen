@@ -17,7 +17,7 @@ untyped-def-behavior = "check-and-infer-return-type"
 [errors]
 unknown-name = true
 unbound-name = true
-import-error = true
+missing-import = true
 missing-module-attribute = true
 missing-attribute = true
 bad-assignment = true
@@ -28,7 +28,7 @@ missing-argument = true
 bad-argument-count = true
 unexpected-keyword = true
 unexpected-positional-argument = true
-index-error = true
+bad-index = true
 redundant-cast = false
 assert-type = true
 
@@ -37,7 +37,7 @@ matches = "**/tests/**"
 
 [sub-config.errors]
 missing-attribute = false
-import-error = false
+missing-import = false
 bad-assignment = false
 bad-argument-type = false
 bad-return = false
@@ -47,7 +47,7 @@ matches = "**/conftest.py"
 
 [sub-config.errors]
 missing-attribute = false
-import-error = false
+missing-import = false
 bad-assignment = false
 bad-argument-type = false
 bad-return = false
@@ -57,7 +57,7 @@ matches = "**/test_*.py"
 
 [sub-config.errors]
 missing-attribute = false
-import-error = false
+missing-import = false
 bad-assignment = false
 bad-argument-type = false
 bad-return = false
@@ -66,5 +66,5 @@ bad-return = false
 matches = "**/__init__.py"
 
 [sub-config.errors]
-import-error = false
+missing-import = false
 missing-module-attribute = false
