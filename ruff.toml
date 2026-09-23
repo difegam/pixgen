@@ -108,3 +108,6 @@ unfixable = []
 [lint.per-file-ignores]
 "tests/*.py" = ["S101"]     # Use of `assert` detected
 "**/__init__.py" = ["D104"]
+
+[lint.flake8-type-checking]
+runtime-evaluated-base-classes = ["pydantic.BaseModel"]
