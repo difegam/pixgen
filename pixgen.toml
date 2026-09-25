@@ -1,9 +1,9 @@
 [defaults]
-image_create_models = ["openai/gpt-image-2.5-sunburst"]
-image_edit_models = ["openai/gpt-image-2.5-sunburst"]
+image_create_models = ["openai/gpt-image-2"]
+image_edit_models = ["openai/gpt-image-2"]
 
 [generation]
-output_dir = "/Users/example/Pictures/pixgen"
 max_parallel_requests = 4
 max_variants = 10
+max_jobs = 10
 request_timeout_seconds = 300

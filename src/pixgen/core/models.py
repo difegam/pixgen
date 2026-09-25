@@ -1,146 +1,79 @@
+"""Define curated model catalogue types and image operations."""
+
+from collections.abc import Mapping
 from datetime import date
 from enum import StrEnum
-from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Self
 
 from pydantic import (
     AnyHttpUrl,
     BaseModel,
     ConfigDict,
     Field,
-    NonNegativeInt,
-    PositiveInt,
+    JsonValue,
     StringConstraints,
+    model_validator,
 )
+
+__all__: list[str] = [
+    "ImageOperation",
+    "JsonObject",
+    "JsonSchema",
+    "MediaRole",
+    "MediaRoleSpec",
+    "ModelId",
+    "ModelSpec",
+]
 
 type ModelId = Annotated[
     str,
-    StringConstraints(
-        pattern=r"^[a-z0-9][a-z0-9-]*/.+$",  # namespace/model-name
-        min_length=3,
-    ),
+    StringConstraints(pattern=r"^[a-z0-9][a-z0-9-]*/[a-z0-9][a-z0-9._-]*$"),
 ]
+type JsonObject = dict[str, JsonValue]
+type JsonSchema = dict[str, JsonValue]
 
 
-class MediaKind(StrEnum):
-    IMAGE = "image"
-    VIDEO = "video"
+class ImageOperation(StrEnum):
+    """Supported image operations."""
+
+    IMAGE_CREATE = "image-create"
+    IMAGE_EDIT = "image-edit"
 
 
 class MediaRole(StrEnum):
-    IMAGE = "image"
+    """Roles for media inputs."""
+
     REFERENCE = "reference"
-    MASK = "mask"
-    START_FRAME = "start-frame"
-
-
-class Capability(StrEnum):
-    TEXT_TO_IMAGE = "text-to-image"
-    REFERENCE_TO_IMAGE = "reference-to-image"
-    IMAGE_EDIT = "image-edit"
-    TEXT_TO_VIDEO = "text-to-video"
-    IMAGE_TO_VIDEO = "image-to-video"
-
-
-class Operation(StrEnum):
-    IMAGE_CREATE = "image-create"
-    IMAGE_EDIT = "image-edit"
-    VIDEO_CREATE = "video-create"
-
-
-class GenerationStatus(StrEnum):
-    PENDING = "pending"
-    RUNNING = "running"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
-
-
-class MediaReference(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    role: MediaRole
-    path: Path
+    IMAGE = "image"
 
 
 class MediaRoleSpec(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    """Specification for a media role's constraints."""
 
-    minimum: NonNegativeInt = 0
-    maximum: PositiveInt = 1
-    formats: frozenset[str]
-    max_bytes: int | None = None
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
+    minimum: int = Field(default=0, ge=0, description="Minimum number of inputs required")
+    maximum: int = Field(default=1, ge=1, description="Maximum number of inputs allowed")
+    formats: frozenset[str] = Field(description="Accepted lower-case decoded image formats")
+    max_bytes: int | None = Field(default=None, gt=0, description="Maximum bytes per input")
 
-# Typed parameter metadata
-
-
-class Kind(StrEnum):
-    """Primitive data kinds for parameter specifications."""
-
-    STRING = "string"
-    INTEGER = "integer"
-    NUMBER = "number"
-    BOOLEAN = "boolean"
-    ENUM = "enum"
-
-
-class IntegerParameterSpec(BaseModel):
-    kind: Literal[Kind.INTEGER] = Kind.INTEGER
-    minimum: int | None = None
-    maximum: int | None = None
-    default: int | None = None
-    description: str = ""
-
-
-class EnumParameterSpec(BaseModel):
-    kind: Literal[Kind.ENUM] = Kind.ENUM
-    values: tuple[str, ...]
-    default: str | None = None
-    description: str = ""
-
-
-class StringParameterSpec(BaseModel):
-    kind: Literal[Kind.STRING] = Kind.STRING
-    pattern: str | None = None
-    default: str | None = None
-    description: str = ""
-
-
-class NumberParameterSpec(BaseModel):
-    kind: Literal[Kind.NUMBER] = Kind.NUMBER
-    minimum: float | None = None
-    maximum: float | None = None
-    default: float | None = None
-    description: str = ""
-
-
-class BooleanParameterSpec(BaseModel):
-    kind: Literal[Kind.BOOLEAN] = Kind.BOOLEAN
-    default: bool | None = None
-    description: str = ""
-
-
-# Union type for all parameter specifications
-type ParameterSpec = Annotated[
-    StringParameterSpec
-    | IntegerParameterSpec
-    | NumberParameterSpec
-    | BooleanParameterSpec
-    | EnumParameterSpec,
-    Field(discriminator="kind"),
-]
+    @model_validator(mode="after")
+    def _validate_cardinality(self) -> Self:
+        if self.minimum > self.maximum:
+            raise ValueError("minimum cannot exceed maximum")
+        return self
 
 
 class ModelSpec(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    """Specification for a curated image model."""
 
-    id: ModelId
-    display_name: str
-    kind: MediaKind
-    capabilities: frozenset[Capability]
-    media: dict[MediaRole, MediaRoleSpec]
-    parameters: dict[str, ParameterSpec]
-    documentation_url: AnyHttpUrl
-    verified_at: date
-    supports_cancel: bool = False
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    id: ModelId = Field(description="Canonical provider/model identifier")
+    display_name: str = Field(min_length=1, description="Human-readable model name")
+    operations: frozenset[ImageOperation] = Field(min_length=1, description="Supported operations")
+    media: Mapping[MediaRole, MediaRoleSpec] = Field(
+        description="Media role constraints for this model"
+    )
+    documentation_url: AnyHttpUrl = Field(description="Vendor documentation URL")
+    verified_at: date = Field(description="Date the specification was verified")

@@ -116,30 +116,30 @@ Examples:
 ```console
 # One target: write the result to an exact file.
 pixgen image create "A paper-cut city at dusk" \
-  --model openai/gpt-image-2.5-sunburst \
+  --model openai/gpt-image-2 \
   --output city.png
 
 # Two providers and two variants each: four independent artifacts.
 pixgen image create "An editorial photograph of a fern" \
-  --model openai/gpt-image-2.5-sunburst \
+  --model openai/gpt-image-2 \
   --model gemini/gemini-3.1-flash-image \
   --variants 2 --output-dir ./renders --mkdir
 
 # Parameters are JSON and target one selected model in this invocation.
 pixgen image edit "Make the sky stormy" --image source.png \
-  --model openai/gpt-image-2.5-sunburst \
+  --model openai/gpt-image-2 \
   --param 'quality="high"' --json
 
 # Scope provider-specific parameters when models from different providers run together.
 pixgen image create "A lighthouse in fog" \
-  --model openai/gpt-image-2.5-sunburst \
+  --model openai/gpt-image-2 \
   --model gemini/gemini-3.1-flash-image \
-  --param 'openai/gpt-image-2.5-sunburst:quality="high"' \
+  --param 'openai/gpt-image-2:quality="high"' \
   --param 'gemini/gemini-3.1-flash-image:aspect_ratio="16:9"' \
   --timeout 110 --json
 
 # Explore the local contract without credentials or a network request.
-pixgen model get openai/gpt-image-2.5-sunburst --json
+pixgen model get openai/gpt-image-2 --json
 ```
 
 `image create` uses `--reference` inputs to guide a new composition. `image
@@ -165,7 +165,7 @@ before it is a model scope; model IDs and parameter names never contain `:`.
 An unscoped parameter is global to the invocation, so every selected target
 must validate it. A scoped parameter applies only to that model, and a scope
 that names an unselected model fails. A name may appear only once, scoped or
-unscoped; `quality` and `openai/gpt-image-2.5-sunburst:quality` together fail.
+unscoped; `quality` and `openai/gpt-image-2:quality` together fail.
 This keeps mixed-provider runs useful while every value is still validated
 before submission.
 
@@ -208,8 +208,8 @@ use that one construction path.
 
 ```toml
 [defaults]
-image_create_models = ["openai/gpt-image-2.5-sunburst"]
-image_edit_models = ["openai/gpt-image-2.5-sunburst"]
+image_create_models = ["openai/gpt-image-2"]
+image_edit_models = ["openai/gpt-image-2"]
 
 [generation]
 output_dir = "/absolute/path/optional"
@@ -678,9 +678,6 @@ class LocalImage:
     filename: str
     content: bytes
     media_type: str
-    decoded_format: str
-    width: int
-    height: int
 
     @property
     def byte_size(self) -> int:
@@ -693,25 +690,18 @@ class ImageInputError(ValueError):
 
 The image loader accepts local regular files only. It applies an input-size
 guard before reading and reads each file once. It then works on those bytes
-with Pillow:
+with magic-byte sniffing:
 
-1. It opens them with `Image.open(..., formats=...)`, restricted to the formats
-   Pixgen maps to MIME types, and calls `verify()`.
-2. `verify()` does not decode pixel data and leaves the image unusable, so the
-   loader reopens the same bytes to read format and dimensions.
-3. It rejects any image whose `width * height` exceeds an explicit pixel cap.
-   Some format plugins, WebP included, skip Pillow's built-in bomb check when
-   opening.
-4. It treats `DecompressionBombWarning` as an error and catches
-   `DecompressionBombError`. The error subclasses `Exception`, not `OSError`,
-   so catching only `OSError` misses it.
+1. It checks the first bytes against known magic numbers for PNG, JPEG, and
+   WebP.
+2. It maps the detected format to a MIME type.
+3. It rejects any file that does not match a supported format.
 
-Every failure becomes an `ImageInputError` with a safe, path-specific message
-that never includes Pillow's exception text. The loader preserves the original
-bytes and derives a lower-case MIME type and decoded format. It never resizes,
-converts, recompresses, or mutates EXIF metadata. The application loads each
-distinct path once, then validates the metadata against every selected
-`MediaRoleSpec` before submission.
+Every failure becomes an `ImageInputError` with a safe, path-specific message.
+The loader preserves the original bytes and derives a lower-case MIME type.
+It never resizes, converts, recompresses, or mutates input. The application
+loads each distinct path once, then validates the metadata against every
+selected `MediaRoleSpec` before submission.
 
 `artifacts.py` chooses local output names from the target and the actual
 media type. It never uses a provider-supplied filename.
@@ -724,8 +714,8 @@ does not guarantee that a particular account can use it.
 
 | Canonical ID | Evidence that shapes the manifest |
 | --- | --- |
-| `openai/gpt-image-2.5-sunburst`, `openai/gpt-image-2.5-flare` | Image API returns base64 only. The edits endpoint takes up to 16 input images, each a PNG, JPEG, or WebP file under 50 MB; no total request limit is stated. Manifest: `reference` 0–16, `image` 1–16, `max_bytes` 50 MB per file, citing the API reference (the 16-image cap came from a fetched summary; confirm it on the reference page before merging). Parameters: `size` (presets, custom multiples of 16 up to 3840 px per edge, `auto`), `quality` (`low`–`max`, `auto`), `background`, `output_format`, `output_compression`, `moderation`. `n` and `mask` are not exposed: variants are independent requests, and masks are deferred. |
-| `gemini/gemini-3.1-flash-image` | Up to 10 object references; aspect ratios 1:1–21:9; sizes 0.5K–4K. |
+| `openai/gpt-image-2`, `openai/gpt-image-1-mini` | Image API returns base64 only. The edits endpoint takes up to 16 input images, each a PNG, JPEG, or WebP file under 50 MB. Manifest: `reference` 0–16, `image` 1–16, `max_bytes` 50 MB per file. Parameters: `size` (presets, custom multiples of 16 up to 3840 px per edge, `auto`), `quality` (`low`–`high`, `auto`), `background`, `output_format`, `output_compression`, `moderation`. `n` and `mask` are not exposed: variants are independent requests, and masks are deferred. |
+| `gemini/gemini-3.1-flash-image` | Up to 10 object references; aspect ratios 1:1–21:9; sizes 1K–4K. |
 | `gemini/gemini-3.1-flash-lite-image` | Up to 14 object references; 1K only. |
 | `gemini/gemini-3-pro-image` | Up to 6 object references. |
 
@@ -775,7 +765,7 @@ src/pixgen/
   images/
     __init__.py        package marker
     models.py          immutable LocalImage and safe input errors
-    inspect.py         one-read Pillow verification and decoded metadata
+    inspect.py         one-read magic-byte verification and MIME mapping
     mime.py            decoded-format to MIME mapping
   config/
     __init__.py        package marker
@@ -807,7 +797,7 @@ src/pixgen/
 | `application.py` | Target selection, complete preflight, variant expansion, concurrency, result ordering, and public result assembly. | `core/`, `providers/`, `images/`, `artifacts.py`. | Cyclopts, HTTP clients, SDK types, or vendor request shapes. |
 | `artifacts.py` | Output planning, collision checks, generated names, and atomic local writes. | Standard library and provider result bytes. | Provider identity, HTTP, or SDKs. |
 | `core/` | Curated model data, caller intent, validation results, public errors, and public JSON models. | Pydantic and the standard library. | Filesystem I/O, configuration, HTTP, SDKs, and providers. |
-| `images/` | One-read local input inspection, decoded metadata, and original bytes. | Pillow and the standard library. | Media roles, provider fields, multipart encoding, and output files. |
+| `images/` | One-read local input inspection via magic bytes, decoded metadata, and original bytes. | Standard library only. | Media roles, provider fields, multipart encoding, and output files. |
 | `config/` | PlatformDirs paths, TOML and environment loading, and runtime-only secrets. | Pydantic Settings, PlatformDirs, `core/`. | Provider resolution, directories for artifacts, and CLI parsing. |
 | `providers/` | Curated vendor manifests, parameter validation, request translation, response translation, and provider error mapping. | `core/`, `images/`, and one injected vendor client (`httpx2` or `google-genai`). | Cyclopts, artifact writes, or another concrete provider. |
 | `cli/` | Cyclopts commands, help, human rendering, JSON rendering, stderr diagnostics, and exit mapping. | `application.py`, `config/`, `core/`. | Provider modules and vendor dependencies. |
@@ -913,8 +903,8 @@ Normal tests use no credentials and never submit paid work.
 - Gemini adapter tests inject a fake SDK client for the same behavior, plus
   text-only and safety-blocked responses.
 - Image utility tests cover one-read behavior, original-byte preservation,
-  decoded MIME mapping, corrupt input, oversize input, `DecompressionBombError`,
-  the escalated bomb warning, and the explicit pixel cap on a WebP input.
+  decoded MIME mapping via magic bytes, corrupt input, oversize input, and
+  unsupported format detection.
 - Application tests cover semaphore bounds, full preflight, one load per
   distinct input path, the `--output` suffix check, atomic artifacts, partial
   results, generated names with `run_id`, collision handling, the run
@@ -948,7 +938,7 @@ from `MediaReference` moves in the right direction: file checks belong in
 | `config/paths.py` | `cache_path()` and `data_path()` have no consumer in an MVP without persistence. | Keep only config-path resolution. |
 | `cli/app.py` and `cli/image.py` | Module-level apps; root `@app.default` no-op makes bare `pixgen` exit `0` silently; `info` and `doctor` are out of scope. | `build_app(application)` with generic `image` and `model` sub-apps and no root default. |
 | `__init__.py` | Imports the CLI at package import. Ruff's `extend-exclude` skips `__init__.py`, so it is never linted. | Version metadata only; console entry point `pixgen.cli.app:main`. |
-| `pyproject.toml` | `pydantic-settings[yaml]` extra is unused (TOML uses the standard library). | Plain `pydantic-settings`; add `google-genai`. |
+| `pyproject.toml` | `pydantic-settings[yaml]` extra is unused (TOML uses the standard library). Pillow, keyring, sqlmodel, and stamina are not needed for the MVP. | Plain `pydantic-settings`; add `google-genai`. Remove `pillow`, `keyring`, `sqlmodel`, `stamina`. |
 
 Apply the repository conventions to every Python module changed during manual
 implementation: module docstrings, future annotations, sorted `__all__`,
@@ -973,15 +963,11 @@ duplicates it.
 | google-genai | add for MVP | Inject the official SDK client into the Gemini adapter only, built with `HttpOptions(timeout=<milliseconds>, retry_options=HttpRetryOptions(attempts=1))`. Use `client.aio.models.generate_content` with `response_modalities=["IMAGE"]` and `ImageConfig`. Follow its image-generation examples for create and image-to-image translation; expose neither SDK models nor client types outside `providers/gemini.py`. | [Gemini image generation](https://ai.google.dev/gemini-api/docs/image-generation) |
 | PlatformDirs | 4.11.8 | Resolve the platform-appropriate user config directory. Keep path selection in `config/paths.py`; do not use it to create output directories. | [PlatformDirs documentation](https://platformdirs.readthedocs.io/en/latest/) |
 | Rich | 15.0.0 | Render only human-facing tables and messages in `cli/render.py`. Instantiate consoles with explicit `stdout` or `stderr`; JSON is standard-library `json` on stdout, never Rich. | [Console API](https://rich.readthedocs.io/en/latest/console.html) |
-| Pillow | 12.3.0 | In `images/`, inspect local input after an existence and size check; open with `formats=`, `verify()`, then reopen for format and dimensions; enforce an explicit pixel cap and treat bomb warnings and errors as input errors. Preserve original bytes; do not transform or re-encode input. | [Image API](https://pillow.readthedocs.io/en/stable/reference/Image.html) |
+| Pillow | removed | No longer used; image inspection uses magic-byte sniffing. | N/A |
 | `asyncio` | Python 3.14 stdlib | Create deterministic jobs, cap active submissions with one semaphore, and collect every completed task so partial outcomes are preserved. Do not put `asyncio.run()` inside leaf commands: Cyclopts supports async commands. | [Coroutines and tasks](https://docs.python.org/3/library/asyncio-task.html) |
 
-`keyring` is installed for the agreed future credential store, but MVP credential
-resolution is environment plus settings only. `sqlmodel` is installed but is
-not used: the MVP has no persistence. `stamina` is installed but is not used:
-provider submissions intentionally do not retry because an ambiguous transport
-failure may already be billable. Treat all three as future dependencies rather
-than wiring them preemptively.
+`keyring`, `sqlmodel`, and `stamina` are not installed in the MVP. They may be
+added later for credential storage, persistence, and retry support respectively.
 
 For provider request details, use the primary vendor guides, not copied request
 models: [OpenAI image generation](https://developers.openai.com/api/docs/guides/image-generation)

@@ -1,21 +1,30 @@
+"""Resolve configuration file paths."""
+
+import os
+from pathlib import Path
+
 from platformdirs import PlatformDirs
 
-dirs = PlatformDirs(
-    appname="pixgen",
-)
+__all__: list[str] = [
+    "resolve_config_path",
+]
 
-CONFIG_FILE_NAME = "config.toml"
-
-
-def resolve_config_path() -> str:
-    return str(dirs.user_config_path / CONFIG_FILE_NAME)
+_CONFIG_FILE_NAME = "config.toml"
+_PIXGEN_CONFIG_ENV = "PIXGEN_CONFIG"
 
 
-def cache_path() -> str:
-    """Return the path to the user cache directory."""
-    return str(dirs.user_cache_path)
+def resolve_config_path() -> Path:
+    """Return the configuration file path.
 
+    Uses PIXGEN_CONFIG environment variable if set (must be absolute),
+    otherwise falls back to PlatformDirs user config directory.
+    """
+    env_path = os.environ.get(_PIXGEN_CONFIG_ENV)
+    if env_path:
+        path = Path(env_path)
+        if not path.is_absolute():
+            raise ValueError(f"{_PIXGEN_CONFIG_ENV} must be an absolute path, got: {env_path}")
+        return path
 
-def data_path() -> str:
-    """Return the path to the user data directory."""
-    return str(dirs.user_data_path)
+    dirs = PlatformDirs(appname="pixgen")
+    return dirs.user_config_path / _CONFIG_FILE_NAME
