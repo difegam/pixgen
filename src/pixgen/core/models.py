@@ -4,7 +4,6 @@ from pathlib import Path
 from typing import Annotated, Literal
 
 from pydantic import (
-    AfterValidator,
     AnyHttpUrl,
     BaseModel,
     ConfigDict,
@@ -13,8 +12,6 @@ from pydantic import (
     PositiveInt,
     StringConstraints,
 )
-
-from pixgen.core.validation import file_exists, file_integrity
 
 type ModelId = Annotated[
     str,
@@ -63,11 +60,7 @@ class MediaReference(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     role: MediaRole
-    path: Annotated[
-        Path,
-        AfterValidator(file_exists),
-        AfterValidator(file_integrity),
-    ]
+    path: Path
 
 
 class MediaRoleSpec(BaseModel):

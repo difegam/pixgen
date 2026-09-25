@@ -1,6 +1,9 @@
 # Reusable media and OpenAI-compatible provider proposal
 
-Status: proposed on 2026-09-21.
+Status: proposed on 2026-09-21. Deferred on 2026-09-24 until after the MVP.
+The image MVP contract is [`pixgen.md`](pixgen.md), which drops the shared
+REST transport and URL downloads for now. Revisit this proposal when a
+second REST adapter is scheduled.
 
 ## Purpose
 

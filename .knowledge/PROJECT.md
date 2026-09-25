@@ -2,13 +2,14 @@
 
 ## Summary
 
-Pixgen is an open-source, local, bring-your-own-key CLI for generative images
-and video. Humans and agents get one typed interface. Pixgen calls provider
-APIs directly, persists resumable local generation state, and writes explicit
-local artifacts.
+Pixgen is an open-source, local, bring-your-own-key CLI for generating and
+editing images. People, shell scripts, CI jobs, and coding agents get one typed
+command shape across OpenAI and Gemini. Pixgen calls provider APIs directly,
+writes explicit local artifacts, and returns structured results.
 
-No hosted service, account, proxy, billing layer, MCP server, or daemon. The
-provider owns inference, moderation, quotas, billing, and remote retention.
+There is no hosted service, account, proxy, billing layer, MCP server, or
+daemon. The provider owns inference, moderation, quotas, billing, and remote
+retention.
 
 ## What each document owns
 
@@ -19,114 +20,84 @@ Every fact lives in exactly one file. The others link to it.
 | [`IDEA.md`](IDEA.md) | Why Pixgen exists: the problem, the alternatives, the differentiator. |
 | `PROJECT.md` | Who it is for, what is in and out of 0.1, and when to stop. |
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | Module boundaries, data flows, and failure policy. |
-| [`pixgen.md`](pixgen.md) | The complete contracts: CLI, core types, providers, storage, machine output, tests, acceptance criteria. |
+| [`pixgen.md`](pixgen.md) | The complete contracts: CLI, core types, providers, configuration, machine output, exit statuses, curated catalog, and tests. |
 
-When a fact appears in two places it drifts. Restating a contract here is how
-this document becomes wrong.
+When a fact appears in two places, the copies drift apart. Restating a contract
+here would make this document wrong.
 
 ## Users
 
 - Developers using Pixgen directly from a terminal.
 - Coding agents with shell access, including Claude Code and Codex.
 - Scripts and CI jobs that require deterministic JSON and exit behavior.
-- Developers who use independently authenticated Google and OpenAI accounts.
+- Developers who use independently authenticated OpenAI and Gemini accounts.
 
 ## 0.1 scope
 
 ### Providers
 
-- Google: image creation, reference-guided creation, image editing, and Gemini
-  Omni Flash video.
 - OpenAI: image creation, reference-guided creation, and image editing.
+- Gemini: image creation, reference-guided creation, and image editing.
 
-No external plugin API in 0.1. Google and OpenAI are built-in adapters behind
-an internal protocol.
+Both are built-in adapters behind an internal protocol. There is no external
+plugin API in 0.1.
 
 ### User-visible capabilities
 
-- `image create` with optional repeated local references.
-- `image edit` with repeated local images and an optional mask.
-- `video create` from text or one local start frame.
-- Capability-gated native image `--count`.
-- Explicit concurrent image `--variants`, limited to four simultaneous
-  independent paid requests.
-- Curated model discovery and model-specific validation.
-- Keyring credentials with `GEMINI_API_KEY` and `OPENAI_API_KEY` fallback.
-- UUIDv7 generation history, background video resume, and cancellation.
-- Atomic local files, versioned JSON, stable errors, and stable exit codes.
-- Passive `info`, active `doctor`, one provider-neutral Agent Skill.
+- `image create` with optional repeated, ordered local references.
+- `image edit` with one or more repeated, ordered local images.
+- Repeated `--model` targets and independent `--variants` per model, run in
+  parallel under a configurable limit.
+- Offline curated-model discovery with `model list` and `model get`, including
+  each model's parameter schema.
+- Configured default model lists per operation and local execution limits.
+- Credentials from `OPENAI_API_KEY` and `GEMINI_API_KEY`.
+- Atomic local files, versioned JSON, stable errors, and stable exit statuses.
 
-## Primary flows
+## Primary flow
 
-These are the user-visible steps. The module-level flows, including
-cancellation and the async boundary, are in
-[`ARCHITECTURE.md`](ARCHITECTURE.md).
-
-### Generate or edit an image
-
-1. Resolve the explicit canonical model ID or configured image default.
-2. Validate capabilities, local inputs, parameters, and output paths.
-3. Resolve the provider credential from keyring or environment.
-4. Create a UUIDv7 generation record.
-5. Submit one provider request, or explicit bounded variant requests.
-6. Write returned media atomically and persist local artifact metadata.
-7. Return human output or a versioned JSON response.
-
-### Submit and resume video
-
-1. Validate a text-only or start-frame request for Gemini Omni Flash.
-2. Create a background Google interaction.
-3. Persist the Google interaction ID before returning for `--no-wait`.
-4. Resume later with `generation get` or `generation wait` and the UUIDv7.
-5. Download the completed result atomically and update local history.
-
-Google background execution stores the interaction remotely. See retention notes
-and source links in [`pixgen.md`](pixgen.md).
-
-### Diagnose setup
-
-- `pixgen info` reports passive local runtime and path information.
-- `pixgen doctor` checks configuration, paths, Alembic revision, SQLite pragmas,
-  keyring, credential presence, provider auth, model manifests.
+1. Resolve the explicit `--model` targets or the configured defaults.
+2. Validate parameters, credentials, local inputs, and output paths for every
+   target before any paid request.
+3. Submit one independent request per model and variant.
+4. Write each returned image atomically.
+5. Return human output or one versioned JSON document.
 
 ## Technology constraints
 
 Three constraints are scope decisions, not implementation choices:
 
-- **Python 3.14+** for standard-library `uuid.uuid7()` and one baseline.
-- **Local and BYOK.** No hosted service, proxy, daemon, account.
+- **Python 3.14+** as the one supported baseline.
+- **Local and BYOK.** No hosted service, proxy, daemon, or account.
 - **Single developer.** Anything one person can't build and maintain is out of
   scope, regardless of merit.
 
-The full dependency and tooling decisions are in
-[`pixgen.md`](pixgen.md) section 16.
+The dependency reading list is in [`pixgen.md`](pixgen.md) under
+"Implementation references".
 
 ## Non-goals and deferred work
 
-0.1 excludes external provider plugins, Runway, fal, Replicate, Veo, OpenAI
-video, remote media URLs, project configuration, dynamic model refresh, model
-aliases, automatic routing, storage maintenance commands, statistics, agent
-installation, workflows, MCP, local inference, audio generation, and 3D.
+0.1 excludes video, masks, native provider batches, generation history and
+resume, cancellation of remote jobs, OS-keyring credentials, `info` and
+`doctor` commands, URL-returning providers, OpenAI-compatible and other
+third-party providers, external plugins, project configuration, live model
+discovery, model aliases, automatic routing or fallback, retries of paid
+submissions, MCP, local inference, audio, and 3D. The deferred list is
+"Nice to have" in [`pixgen.md`](pixgen.md).
 
-## Success criteria
+## Success criterion
 
-The single product criterion:
-
-> A human or coding agent can discover a current model, create or edit images
-> through Google or OpenAI, create and resume a Google video, and consume
-> explicit local artifacts using only the CLI's help and structured contracts.
-
-The twelve testable acceptance criteria are in [`pixgen.md`](pixgen.md)
-section 14.
+> A human or coding agent can discover a curated model, create or edit images
+> through OpenAI or Gemini, run independent variants in parallel, and consume
+> explicit local artifact paths or structured errors using only the CLI's help
+> and structured contracts.
 
 ## Model catalog
 
-The shipped model list with canonical IDs, capabilities, and verification
-dates is in [`pixgen.md`](pixgen.md) section 5. Provider code manifests carry
-exact formats and limits.
-
-IDs were re-verified against official Google and OpenAI catalogs on 2026-09-20.
-Catalog presence doesn't guarantee access for a particular account.
+The curated model IDs and the evidence behind their limits are in
+[`pixgen.md`](pixgen.md) under "Curated catalog". Each provider manifest
+records its own `verified_at` date. A model appearing in the catalog does not
+guarantee that a particular account can use it.
 
 ## Stop conditions
 

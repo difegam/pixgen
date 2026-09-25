@@ -1,8 +1,9 @@
 [defaults]
-image_model = "google/gemini-3.1-flash-image"
-video_model = "google/gemini-omni-1.1-flash"
+image_create_models = ["openai/gpt-image-2.5-sunburst"]
+image_edit_models = ["openai/gpt-image-2.5-sunburst"]
 
 [generation]
 output_dir = "/Users/example/Pictures/pixgen"
-wait_timeout = 700.0
-wait_interval = 5.0
+max_parallel_requests = 4
+max_variants = 10
+request_timeout_seconds = 300
