@@ -3,7 +3,15 @@
 import os
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, model_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    ValidationError,
+    model_validator,
+)
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -64,6 +72,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="PIXGEN_",
         env_nested_delimiter="__",
+        env_file=".env",
         extra="forbid",
         frozen=True,
     )
@@ -72,12 +81,12 @@ class Settings(BaseSettings):
     generation: GenerationSettings = Field(default_factory=GenerationSettings)
     openai_api_key: SecretStr | None = Field(
         default=None,
-        validation_alias="OPENAI_API_KEY",
+        validation_alias=AliasChoices("PIXGEN_OPENAI_API_KEY", "OPENAI_API_KEY"),
         description="OpenAI API key",
     )
     gemini_api_key: SecretStr | None = Field(
         default=None,
-        validation_alias="GEMINI_API_KEY",
+        validation_alias=AliasChoices("PIXGEN_GEMINI_API_KEY", "GEMINI_API_KEY"),
         description="Gemini API key",
     )
 
@@ -90,10 +99,10 @@ class Settings(BaseSettings):
         dotenv_settings: PydanticBaseSettingsSource,
         file_secret_settings: PydanticBaseSettingsSource,
     ) -> tuple[PydanticBaseSettingsSource, ...]:
-        del dotenv_settings, file_secret_settings
+        del file_secret_settings
         config_path = resolve_config_path()
         toml_source = TomlConfigSettingsSource(settings_cls, toml_file=config_path)
-        return (init_settings, env_settings, toml_source)
+        return (init_settings, env_settings, dotenv_settings, toml_source)
 
     @model_validator(mode="after")
     def _validate_toml_file(self) -> Settings:

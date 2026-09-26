@@ -115,7 +115,9 @@ class TestGeminiProvider:
         mock_part.inline_data.mime_type = "image/png"
         mock_response.parts = [mock_part]
 
-        mock_client.aio.models.generate_content = AsyncMock(return_value=mock_response)
+        mock_chat = AsyncMock()
+        mock_chat.send_message = AsyncMock(return_value=mock_response)
+        mock_client.aio.chats.create = MagicMock(return_value=mock_chat)
 
         provider = GeminiProvider(mock_client)
         intent = ImageCreateIntent(prompt="test prompt")
@@ -137,7 +139,9 @@ class TestGeminiProvider:
         mock_part.inline_data.mime_type = "image/jpeg"
         mock_response.parts = [mock_part]
 
-        mock_client.aio.models.generate_content = AsyncMock(return_value=mock_response)
+        mock_chat = AsyncMock()
+        mock_chat.send_message = AsyncMock(return_value=mock_response)
+        mock_client.aio.chats.create = MagicMock(return_value=mock_chat)
 
         provider = GeminiProvider(mock_client)
         intent = ImageCreateIntent(prompt="test")
@@ -157,7 +161,9 @@ class TestGeminiProvider:
         mock_response.parts = []
         mock_response.candidates = []
 
-        mock_client.aio.models.generate_content = AsyncMock(return_value=mock_response)
+        mock_chat = AsyncMock()
+        mock_chat.send_message = AsyncMock(return_value=mock_response)
+        mock_client.aio.chats.create = MagicMock(return_value=mock_chat)
 
         provider = GeminiProvider(mock_client)
         intent = ImageCreateIntent(prompt="test")

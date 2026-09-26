@@ -56,13 +56,17 @@ class TestSettings:
         monkeypatch.delenv("PIXGEN_CONFIG", raising=False)
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         monkeypatch.delenv("GEMINI_API_KEY", raising=False)
-        settings = Settings()
+        monkeypatch.delenv("PIXGEN_OPENAI_API_KEY", raising=False)
+        monkeypatch.delenv("PIXGEN_GEMINI_API_KEY", raising=False)
+        settings = Settings(_env_file=None)
         assert settings.defaults.image_create_models == ("openai/gpt-image-2",)
         assert settings.openai_api_key is None
         assert settings.gemini_api_key is None
 
     def test_env_precedence(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("PIXGEN_CONFIG", raising=False)
+        monkeypatch.delenv("PIXGEN_OPENAI_API_KEY", raising=False)
+        monkeypatch.delenv("PIXGEN_GEMINI_API_KEY", raising=False)
         monkeypatch.setenv("OPENAI_API_KEY", "sk-test-key")
         monkeypatch.setenv("GEMINI_API_KEY", "gemini-test-key")
         settings = Settings()

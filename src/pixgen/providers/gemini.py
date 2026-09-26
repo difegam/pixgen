@@ -169,9 +169,9 @@ class GeminiProvider:
         config = types.GenerateContentConfig(**config_kwargs)
 
         try:
-            response = await self._client.aio.models.generate_content(
-                model=model_id,
-                contents=contents,
+            chat = self._client.aio.chats.create(model=model_id)
+            response = await chat.send_message(
+                message=contents,
                 config=config,
             )
         except Exception as exc:

@@ -51,6 +51,28 @@ uv tool install pixgen
 
 Pixgen requires Python 3.14 or newer.
 
+## Configuration
+
+Set API keys in your environment or `.env` file (both prefixed and unprefixed work):
+
+```bash
+OPENAI_API_KEY=sk-...        # or PIXGEN_OPENAI_API_KEY=sk-...
+GEMINI_API_KEY=...           # or PIXGEN_GEMINI_API_KEY=...
+```
+
+Optional settings (prefix `PIXGEN_`, nested with `__`):
+
+```bash
+PIXGEN_CONFIG=./pixgen.toml
+PIXGEN_GENERATION__MAX_PARALLEL_REQUESTS=4
+PIXGEN_GENERATION__MAX_VARIANTS=10
+PIXGEN_GENERATION__MAX_JOBS=10
+PIXGEN_GENERATION__REQUEST_TIMEOUT_SECONDS=300
+PIXGEN_GENERATION__OUTPUT_DIR=./output
+```
+
+See `.env.example` for a complete template.
+
 ## Development
 
 The project uses [uv](https://docs.astral.sh/uv/),

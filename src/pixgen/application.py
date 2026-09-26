@@ -11,7 +11,7 @@ from pixgen.core.results import CommandResult, PublicError, TargetResult
 from pixgen.images.inspect import load_image
 from pixgen.images.mime import MIME_TO_EXTENSION
 from pixgen.images.models import ImageInputError, LocalImage
-from pixgen.providers.base import ImageProvider, PreparedImageRequest, PreparedMedia
+from pixgen.providers.base import ImageProvider, PreparedImageRequest, PreparedMedia, ProviderImage
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -254,7 +254,7 @@ async def _run_job(
         try:
             async with asyncio.timeout(request_timeout):
                 image = await provider.generate(prepared)
-            write_atomic(plan.path, image.data)
+            actual_path = _save_image_with_correct_format(plan, image)
         except TimeoutError:
             error = PublicError(code=ErrorCode.TIMEOUT, message="request timed out")
         except ProviderError as exc:
@@ -268,16 +268,18 @@ async def _run_job(
             return TargetResult(
                 model=plan.model_id,
                 variant=plan.variant,
-                artifact_path=plan.path,
+                artifact_path=actual_path,
                 media_type=image.media_type,
-                warnings=_extension_warnings(plan.path, image.media_type),
+                warnings=(),
             )
     return TargetResult(model=plan.model_id, variant=plan.variant, error=error)
 
 
-def _extension_warnings(path: Path, media_type: str) -> tuple[str, ...]:
-    ext = path.suffix.lstrip(".")
-    expected = MIME_TO_EXTENSION.get(media_type, media_type.rsplit("/", maxsplit=1)[-1])
-    if ext and ext != expected:
-        return (f"file extension .{ext} does not match media type {media_type}",)
-    return ()
+def _save_image_with_correct_format(plan: OutputPlan, image: ProviderImage) -> Path:
+    ext = MIME_TO_EXTENSION.get(image.media_type, image.media_type.rsplit("/", maxsplit=1)[-1])
+    if plan.path.suffix.lstrip(".") == ext:
+        write_atomic(plan.path, image.data)
+        return plan.path
+    correct_path = plan.path.with_suffix(f".{ext}")
+    write_atomic(correct_path, image.data)
+    return correct_path
