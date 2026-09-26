@@ -1,7 +1,5 @@
 """Test object factories with sensible defaults."""
 
-from __future__ import annotations
-
 from datetime import date
 
 from pixgen.core.models import (

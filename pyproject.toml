@@ -7,6 +7,7 @@ authors = [{ name = "Diego Gamboa", email = "difegam3@gmail.com" }]
 requires-python = ">=3.14"
 dependencies = [
     "cyclopts>=4.25.2,<5",
+    "filetype>=1.2.0",
     "google-genai>=2.24.0",
     "httpx2>=2.12.0",
     "platformdirs>=4.0",
@@ -47,4 +48,5 @@ dev = [
 [tool.vulture]
 min_confidence = 80
 paths = ["src", "tests"]
+ignore_names = ["cls"]
 sort_by_size = true

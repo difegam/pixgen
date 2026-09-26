@@ -1,7 +1,5 @@
 """Gemini image generation adapter."""
 
-from __future__ import annotations
-
 from datetime import date
 from typing import TYPE_CHECKING, Literal
 
@@ -44,7 +42,6 @@ def _make_gemini_spec(
     model_id: str,
     display_name: str,
     max_refs: int,
-    sizes: tuple[str, ...] = ("1K", "2K", "4K"),
 ) -> ModelSpec:
     """Create a Gemini model specification."""
     ref_spec = MediaRoleSpec(
@@ -75,10 +72,15 @@ GEMINI_MODELS: tuple[ModelSpec, ...] = (
         "gemini/gemini-3.1-flash-lite-image",
         "Gemini 3.1 Flash Lite Image",
         max_refs=14,
-        sizes=("1K",),
     ),
     _make_gemini_spec("gemini/gemini-3-pro-image", "Gemini 3 Pro Image", max_refs=6),
 )
+
+_GEMINI_IMAGE_SIZES: dict[ModelId, tuple[str, ...]] = {
+    "gemini/gemini-3.1-flash-image": ("1K", "2K", "4K"),
+    "gemini/gemini-3.1-flash-lite-image": ("1K",),
+    "gemini/gemini-3-pro-image": ("1K", "2K", "4K"),
+}
 
 
 class GeminiProvider:
@@ -98,10 +100,14 @@ class GeminiProvider:
 
     def parameter_schema(
         self,
-        model: ModelId,  # noqa: ARG002
+        model: ModelId,
         operation: ImageOperation,  # noqa: ARG002
     ) -> JsonSchema:
-        return GeminiParams.model_json_schema()
+        schema = GeminiParams.model_json_schema()
+        schema["properties"]["image_size"]["enum"] = list(
+            _GEMINI_IMAGE_SIZES.get(model, ("1K", "2K", "4K"))
+        )
+        return schema
 
     def validate(
         self,
@@ -110,6 +116,14 @@ class GeminiProvider:
         model: ModelSpec,
     ) -> ValidatedImageRequest:
         params = GeminiParams.model_validate(intent.params)
+        if model.id == "gemini/gemini-3.1-flash-lite-image" and params.image_size not in {
+            None,
+            "1K",
+        }:
+            raise PixgenError(
+                ErrorCode.INVALID_REQUEST,
+                "Gemini Flash Lite only supports image_size='1K'",
+            )
         parameters: JsonObject = params.model_dump(exclude_none=True)
         return ValidatedImageRequest(intent=intent, model=model, parameters=parameters)
 
@@ -185,23 +199,31 @@ class GeminiProvider:
         raise ProviderError(ErrorCode.PROVIDER_FAILURE, "no image in response")
 
     def _map_error(self, exc: Exception) -> PixgenError:
+        from http import HTTPStatus
+
         from google.genai import errors
 
         if isinstance(exc, errors.ClientError):
-            code = exc.code
-            if code in (401, 403):
-                return ProviderError(ErrorCode.AUTHENTICATION_FAILED, "invalid API key")
-            if code == 404:
-                return ProviderError(ErrorCode.MODEL_NOT_FOUND, "model not found")
-            if code == 429:
-                return ProviderError(ErrorCode.RATE_LIMITED, "rate limit exceeded")
-            if code == 400:
-                msg = str(exc).lower()
-                if "safety" in msg or "content" in msg:
-                    return ProviderError(ErrorCode.CONTENT_REJECTED, "content rejected")
-                return ProviderError(ErrorCode.INVALID_REQUEST, f"bad request: {exc}")
+            match exc.code:
+                case HTTPStatus.UNAUTHORIZED | HTTPStatus.FORBIDDEN:
+                    return ProviderError(ErrorCode.AUTHENTICATION_FAILED, "invalid API key")
+
+                case HTTPStatus.NOT_FOUND:
+                    return ProviderError(ErrorCode.MODEL_NOT_FOUND, "model not found")
+
+                case HTTPStatus.TOO_MANY_REQUESTS:
+                    return ProviderError(ErrorCode.RATE_LIMITED, "rate limit exceeded")
+
+                case HTTPStatus.BAD_REQUEST:
+                    message = str(exc).lower()
+                    if "safety" in message or "content" in message:
+                        return ProviderError(ErrorCode.CONTENT_REJECTED, "content rejected")
+                    return ProviderError(ErrorCode.INVALID_REQUEST, f"bad request: {exc}")
+
         if isinstance(exc, errors.ServerError):
             return ProviderError(ErrorCode.PROVIDER_UNAVAILABLE, "Gemini server error")
+
         if "timeout" in str(exc).lower():
             return ProviderError(ErrorCode.TIMEOUT, "request timed out")
+
         return ProviderError(ErrorCode.PROVIDER_FAILURE, f"unexpected error: {exc}")

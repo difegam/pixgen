@@ -1,5 +1,3 @@
-"""Define public error codes and domain exceptions."""
-
 from enum import StrEnum
 
 __all__: list[str] = [
@@ -29,11 +27,14 @@ class ErrorCode(StrEnum):
 class PixgenError(Exception):
     """Base exception for all Pixgen domain errors."""
 
+    def __init__(self, code: ErrorCode, message: str) -> None:
+        self.code = code
+        self.message = message
+        super().__init__(f"{code.value}: {message}")
+
 
 class ProviderError(PixgenError):
     """Raised when a provider operation fails."""
 
     def __init__(self, code: ErrorCode, message: str) -> None:
-        self.code = code
-        self.message = message
-        super().__init__(f"{code.value}: {message}")
+        super().__init__(code, message)

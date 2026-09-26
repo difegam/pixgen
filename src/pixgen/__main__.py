@@ -1,7 +1,3 @@
-"""Allow running pixgen as ``python -m pixgen``."""
-
-from __future__ import annotations
-
 from pixgen.cli.app import main
 
 if __name__ == "__main__":

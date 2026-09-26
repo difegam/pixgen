@@ -1,7 +1,5 @@
 """Shared fixtures for the test suite."""
 
-from __future__ import annotations
-
 import pytest
 
 from pixgen.core.models import MediaRoleSpec, ModelSpec  # noqa: TC001

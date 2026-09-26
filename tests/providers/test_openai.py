@@ -1,6 +1,7 @@
 """Tests for providers.openai."""
 
 import base64
+import json
 
 import httpx2
 import pytest
@@ -95,7 +96,7 @@ class TestOpenAIProvider:
 
     def test_parameter_schema_returns_json_schema(self) -> None:
         provider = OpenAIProvider(None)
-        schema = provider.parameter_schema("openai/gpt-image-2", ImageOperation.IMAGE_CREATE)
+        schema: dict = provider.parameter_schema("openai/gpt-image-2", ImageOperation.IMAGE_CREATE)
         assert "properties" in schema
         assert "quality" in schema["properties"]
 
@@ -133,6 +134,25 @@ class TestOpenAIProvider:
         result = await provider.generate(prepared)
         assert result.data == b"fake image data"
         assert result.media_type == "image/png"
+
+    @pytest.mark.asyncio
+    async def test_generate_json_uses_selected_model(self) -> None:
+        b64_data = base64.b64encode(b"fake image data").decode()
+        selected_model = OPENAI_MODELS[1]
+        observed_models: list[str] = []
+
+        def handler(request: httpx2.Request) -> httpx2.Response:
+            observed_models.append(request.read().decode())
+            return httpx2.Response(200, json={"data": [{"b64_json": b64_data}]})
+
+        client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
+        provider = OpenAIProvider(client)
+        intent = ImageCreateIntent(prompt="test prompt")
+        request = provider.validate(intent=intent, model=selected_model)
+
+        await provider.generate(PreparedImageRequest(request=request, media=()))
+
+        assert json.loads(observed_models[0])["model"] == "gpt-image-1-mini"
 
     @pytest.mark.asyncio
     async def test_generate_multipart_with_references(self) -> None:

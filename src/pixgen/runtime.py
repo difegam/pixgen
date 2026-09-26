@@ -1,7 +1,3 @@
-"""Composition root for settings, clients, adapters, and application."""
-
-from __future__ import annotations
-
 import httpx2
 
 from pixgen.application import ImageApplication

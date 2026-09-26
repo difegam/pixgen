@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from pixgen.core.errors import PixgenError
 from pixgen.core.models import ImageOperation, MediaRole
 from pixgen.core.requests import ImageCreateIntent
 from pixgen.images.models import LocalImage
@@ -40,6 +41,13 @@ class TestGeminiParams:
     def test_invalid_image_size_rejected(self) -> None:
         with pytest.raises(Exception):  # noqa: B017, PT011
             GeminiParams(image_size="8K")
+
+    def test_lite_model_rejects_sizes_above_1k(self) -> None:
+        provider = GeminiProvider(None)
+        intent = ImageCreateIntent(prompt="test", params={"image_size": "2K"})
+
+        with pytest.raises(PixgenError, match="1K"):
+            provider.validate(intent=intent, model=GEMINI_MODELS[1])
 
 
 class TestGeminiProvider:
@@ -78,6 +86,14 @@ class TestGeminiProvider:
         )
         assert "properties" in schema
         assert "aspect_ratio" in schema["properties"]
+
+    def test_lite_parameter_schema_only_allows_1k(self) -> None:
+        provider = GeminiProvider(None)
+        schema = provider.parameter_schema(
+            "gemini/gemini-3.1-flash-lite-image", ImageOperation.IMAGE_CREATE
+        )
+
+        assert schema["properties"]["image_size"]["enum"] == ["1K"]
 
     @pytest.mark.asyncio
     async def test_generate_without_client_raises(self) -> None:

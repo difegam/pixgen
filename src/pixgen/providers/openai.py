@@ -1,7 +1,5 @@
 """OpenAI image generation adapter."""
 
-from __future__ import annotations
-
 import base64
 import json
 from datetime import date
@@ -144,18 +142,20 @@ class OpenAIProvider:
 
         intent = request.request.intent
         params = request.request.parameters
+        model_id = request.request.model.id.split("/", 1)[-1]
 
         if isinstance(intent, ImageCreateIntent) and not intent.references:
-            return await self._generate_json(intent.prompt, params)
+            return await self._generate_json(model_id, intent.prompt, params)
         return await self._generate_multipart(request)
 
     async def _generate_json(
         self,
+        model_id: str,
         prompt: str,
         params: JsonObject,
     ) -> ProviderImage:
         assert self._client is not None  # noqa: S101
-        payload = {"model": "gpt-image-2", "prompt": prompt, **params}
+        payload = {"model": model_id, "prompt": prompt, **params}
         try:
             response = await self._client.post(
                 f"{_OPENAI_BASE_URL}/images/generations",
@@ -209,6 +209,8 @@ class OpenAIProvider:
         return ProviderImage(image_bytes, f"image/{output_format}")
 
     def _map_error(self, exc: Exception) -> PixgenError:
+        from http import HTTPStatus
+
         import httpx2
 
         if isinstance(exc, httpx2.TimeoutException):
@@ -217,17 +219,26 @@ class OpenAIProvider:
             return ProviderError(ErrorCode.PROVIDER_UNAVAILABLE, "cannot connect to OpenAI")
         if isinstance(exc, httpx2.HTTPStatusError):
             status = exc.response.status_code
-            if status in (401, 403):
-                return ProviderError(ErrorCode.AUTHENTICATION_FAILED, "invalid API key")
-            if status == 404:
-                return ProviderError(ErrorCode.MODEL_NOT_FOUND, "model not found")
-            if status == 429:
-                return ProviderError(ErrorCode.RATE_LIMITED, "rate limit exceeded")
-            if status == 400:
-                body = exc.response.text
-                if "moderation" in body.lower() or "content_policy" in body.lower():
-                    return ProviderError(ErrorCode.CONTENT_REJECTED, "content rejected")
-                return ProviderError(ErrorCode.INVALID_REQUEST, f"bad request: {body[:200]}")
-            if status >= 500:
-                return ProviderError(ErrorCode.PROVIDER_UNAVAILABLE, "OpenAI server error")
+
+            match status:
+                case HTTPStatus.UNAUTHORIZED | HTTPStatus.FORBIDDEN:
+                    return ProviderError(ErrorCode.AUTHENTICATION_FAILED, "invalid API key")
+
+                case HTTPStatus.NOT_FOUND:
+                    return ProviderError(ErrorCode.MODEL_NOT_FOUND, "model not found")
+
+                case HTTPStatus.TOO_MANY_REQUESTS:
+                    return ProviderError(ErrorCode.RATE_LIMITED, "rate limit exceeded")
+
+                case HTTPStatus.BAD_REQUEST:
+                    body = exc.response.text
+                    if "moderation" in body.lower() or "content_policy" in body.lower():
+                        return ProviderError(ErrorCode.CONTENT_REJECTED, "content rejected")
+                    return ProviderError(ErrorCode.INVALID_REQUEST, f"bad request: {body[:200]}")
+                case _ if status >= 500:
+                    return ProviderError(ErrorCode.PROVIDER_UNAVAILABLE, "OpenAI server error")
+
+                case _:
+                    return ProviderError(ErrorCode.AUTHENTICATION_FAILED, "invalid API key")
+
         return ProviderError(ErrorCode.PROVIDER_FAILURE, f"unexpected error: {exc}")

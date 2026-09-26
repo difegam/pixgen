@@ -1,7 +1,5 @@
 """Model sub-app with list and get commands."""
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING
 
 from cyclopts import App
@@ -22,7 +20,7 @@ def build_model_app(registry: ProviderRegistry) -> App:
     """Build the model sub-app."""
     app = App(name="model", help="Offline curated-model catalogue")
 
-    @app.command(name="list")
+    @app.command(name="list", alias=["ls"])
     def list_models(*, json: bool = False) -> None:
         """List available models and supported operations."""
         models = registry.models()

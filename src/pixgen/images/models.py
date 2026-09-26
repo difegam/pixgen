@@ -1,7 +1,5 @@
 """Define local image model and input errors."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 

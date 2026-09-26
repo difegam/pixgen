@@ -1,7 +1,3 @@
-"""Define public result envelopes for command and model outputs."""
-
-from __future__ import annotations
-
 from pathlib import Path
 from typing import Literal, Self
 
@@ -88,7 +84,8 @@ class ModelGetResult(BaseModel):
     schema_version: Literal["1"] = "1"
     model: ModelSpec | None = Field(default=None, description="The requested model specification")
     parameter_schemas: dict[str, JsonSchema] = Field(
-        default_factory=dict, description="Parameter schemas keyed by operation"
+        default_factory=dict,
+        description="Parameter schemas keyed by operation",
     )
     error: PublicError | None = Field(default=None, description="Command-level error if any")
 

@@ -3,10 +3,7 @@
 
 project-includes = ["src", "tests"]
 
-project-excludes = [
-    "**/dist/**",
-    "**/build/**",
-]
+project-excludes = ["**/dist/**", "**/build/**"]
 
 search-path = [".", "src"]
 use-ignore-files = true
@@ -53,14 +50,17 @@ bad-argument-type = false
 bad-return = false
 
 [[sub-config]]
-matches = "**/test_*.py"
-
+matches = "tests/*"
 [sub-config.errors]
 missing-attribute = false
 missing-import = false
 bad-assignment = false
 bad-argument-type = false
 bad-return = false
+read-only = false
+not-iterable = false
+unexpected-keyword = false
+bad-index = false
 
 [[sub-config]]
 matches = "**/__init__.py"

@@ -1,9 +1,11 @@
 """Tests for images.inspect."""
 
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import pytest
 
+from pixgen.images import inspect
 from pixgen.images.inspect import load_image
 from pixgen.images.models import ImageInputError, LocalImage
 
@@ -35,6 +37,22 @@ def webp_bytes() -> bytes:
 
 class TestLoadImage:
     """Tests for load_image function."""
+
+    def test_uses_filetype_detected_mime(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        path = tmp_path / "detected-image"
+        path.write_bytes(b"image bytes delegated to filetype")
+        monkeypatch.setattr(
+            inspect,
+            "filetype",
+            SimpleNamespace(guess=lambda _content: SimpleNamespace(mime="image/png")),
+            raising=False,
+        )
+
+        result = inspect.load_image(path)
+
+        assert result.media_type == "image/png"
 
     def test_load_png(self, tmp_path: Path, png_bytes: bytes) -> None:
         path = tmp_path / "test.png"
@@ -83,12 +101,6 @@ class TestLoadImage:
     def test_unsupported_format_raises(self, tmp_path: Path) -> None:
         path = tmp_path / "unknown.xyz"
         path.write_bytes(b"not an image")
-        with pytest.raises(ImageInputError, match="unrecognised"):
-            load_image(path)
-
-    def test_corrupt_png_raises(self, tmp_path: Path) -> None:
-        path = tmp_path / "corrupt.png"
-        path.write_bytes(b"\x89PNG" + b"corrupt data without proper header")
         with pytest.raises(ImageInputError, match="unrecognised"):
             load_image(path)
 

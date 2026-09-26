@@ -29,7 +29,7 @@ def build_app(
     application: ImageApplication,
     registry: ProviderRegistry,
 ) -> App:
-    """Build the root Cyclopts app."""
+    """Build the Pixgen app."""
     app = App(
         name="pixgen",
         help="Generate and edit images with curated AI models.",

@@ -1,25 +1,11 @@
-"""Map decoded image formats to MIME types."""
-
-from __future__ import annotations
+"""Map image MIME types to canonical filename extensions."""
 
 __all__: list[str] = [
-    "FORMAT_TO_MIME",
-    "SUPPORTED_FORMATS",
-    "format_to_mime",
+    "MIME_TO_EXTENSION",
 ]
 
-FORMAT_TO_MIME: dict[str, str] = {
-    "png": "image/png",
-    "jpeg": "image/jpeg",
-    "webp": "image/webp",
+MIME_TO_EXTENSION: dict[str, str] = {
+    "image/png": "png",
+    "image/jpeg": "jpg",
+    "image/webp": "webp",
 }
-
-SUPPORTED_FORMATS: frozenset[str] = frozenset(FORMAT_TO_MIME.keys())
-
-
-def format_to_mime(fmt: str) -> str:
-    """Convert a decoded format name to a MIME type."""
-    try:
-        return FORMAT_TO_MIME[fmt]
-    except KeyError:
-        raise ValueError(f"unsupported image format: {fmt}") from None
