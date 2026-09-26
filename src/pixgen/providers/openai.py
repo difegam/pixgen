@@ -154,7 +154,8 @@ class OpenAIProvider:
         prompt: str,
         params: JsonObject,
     ) -> ProviderImage:
-        assert self._client is not None  # noqa: S101
+        if self._client is None:
+            raise ProviderError(ErrorCode.CREDENTIAL_UNAVAILABLE, "OpenAI API key not configured")
         payload = {"model": model_id, "prompt": prompt, **params}
         try:
             response = await self._client.post(
@@ -172,7 +173,8 @@ class OpenAIProvider:
         return ProviderImage(image_bytes, f"image/{output_format}")
 
     async def _generate_multipart(self, request: PreparedImageRequest) -> ProviderImage:
-        assert self._client is not None  # noqa: S101
+        if self._client is None:
+            raise ProviderError(ErrorCode.CREDENTIAL_UNAVAILABLE, "OpenAI API key not configured")
         intent = request.request.intent
         params = request.request.parameters
 

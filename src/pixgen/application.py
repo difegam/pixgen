@@ -58,6 +58,7 @@ class ImageApplication:
         run_id = secrets.token_hex(2)
         try:
             model_ids = self._resolve_models(intent, models)
+            self._check_provider_availability(model_ids)
             self._validate_variant_limits(len(model_ids), variants)
             images = _load_images(intent.input_paths)
             prepared, providers = self._prepare(intent, model_ids, raw_params, images)
@@ -99,6 +100,15 @@ class ImageApplication:
             return list(self._settings.defaults.image_create_models)
         return list(self._settings.defaults.image_edit_models)
 
+    def _check_provider_availability(self, model_ids: list[str]) -> None:
+        for mid in model_ids:
+            provider = self._registry.provider_for(mid)
+            if not provider.available:
+                raise PixgenError(
+                    ErrorCode.CREDENTIAL_UNAVAILABLE,
+                    f"credentials not configured for {mid}",
+                )
+
     def _validate_variant_limits(self, model_count: int, variants: int) -> None:
         generation = self._settings.generation
         if variants < 1:
@@ -127,12 +137,6 @@ class ImageApplication:
         media = tuple(PreparedMedia(role=intent.media_role, image=img) for img in images)
 
         providers = {mid: self._registry.provider_for(mid) for mid in model_ids}
-        for mid, provider in providers.items():
-            if not provider.available:
-                raise PixgenError(
-                    ErrorCode.CREDENTIAL_UNAVAILABLE,
-                    f"credentials not configured for {mid}",
-                )
 
         prepared: dict[ModelId, PreparedImageRequest] = {}
         for mid, provider in providers.items():

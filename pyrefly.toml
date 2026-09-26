@@ -38,29 +38,11 @@ missing-import = false
 bad-assignment = false
 bad-argument-type = false
 bad-return = false
-
-[[sub-config]]
-matches = "**/conftest.py"
-
-[sub-config.errors]
-missing-attribute = false
-missing-import = false
-bad-assignment = false
-bad-argument-type = false
-bad-return = false
-
-[[sub-config]]
-matches = "tests/*"
-[sub-config.errors]
-missing-attribute = false
-missing-import = false
-bad-assignment = false
-bad-argument-type = false
-bad-return = false
 read-only = false
 not-iterable = false
 unexpected-keyword = false
 bad-index = false
+unsupported-operation = false
 
 [[sub-config]]
 matches = "**/__init__.py"

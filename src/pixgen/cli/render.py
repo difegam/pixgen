@@ -67,7 +67,8 @@ def render_model_get_result(result: ModelGetResult, *, as_json: bool) -> None:
         return
 
     model = result.model
-    assert model is not None  # noqa: S101
+    if model is None:
+        return
     _stdout_console.print(f"ID: {model.id}")
     _stdout_console.print(f"Name: {model.display_name}")
     _stdout_console.print(f"Operations: {', '.join(sorted(model.operations))}")
