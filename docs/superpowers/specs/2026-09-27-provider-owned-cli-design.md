@@ -8,11 +8,13 @@
 
 Replace the string-based `--param` interface with provider-owned Pydantic parameter models and Cyclopts sub-apps. Compose model identity, restrictions, and parameter definitions in one provider-owned model definition. The main CLI and application must not contain model-specific parameter branches.
 
-Keep `pixgen image <operation>` for shared multi-model invocations. These use provider/model defaults plus one optional shared generation parameter, `aspect_ratio`. Provider subcommands expose the full native parameter set. All selected models must accept an explicitly supplied shared ratio before generation starts.
+Keep `pixgen <operation>` for shared multi-model invocations. These use provider/model defaults plus one optional shared generation parameter, `aspect_ratio`. Provider subcommands expose the full native parameter set. All selected models must accept an explicitly supplied shared ratio before generation starts.
+
+Pixgen supports image-generation providers only, including image editing. The provider contract and model definitions remain image-specific; this change introduces no abstraction for video, audio, or other modalities. Remove the redundant top-level `image` group rather than retaining it as a compatibility alias. Root generation commands are `create` and `edit`; the existing `model` catalogue group remains at the root.
 
 Adding a model changes only its provider package and its tests. Adding a provider requires its package, tests, and composition-root registration, with credential configuration where needed. It requires no changes to the main CLI's command logic. This remains an internal provider contract, not a third-party plugin system.
 
-The approved scope includes removing `--param`, preserving existing orchestration and output behaviour, extending model introspection, and documenting replacement commands. It does not add new providers, new generation parameters, image conversion, or the separately designed media commands.
+The approved scope includes removing the `image` command group and `--param`, preserving existing orchestration and output behaviour, extending model introspection, and documenting replacement commands. It does not add new providers, new generation parameters, image conversion, or the separately designed media commands.
 
 ## Existing code and boundaries
 
@@ -32,15 +34,15 @@ Provider packages may be split into focused modules for parameters, definitions,
 
 ## Command structure
 
-Shared commands retain their operation-first layout:
+Shared commands are mounted directly on the root app:
 
 ```bash
-pixgen image create "A forest" \
+pixgen create "A forest" \
   --model openai/gpt-image-2 \
   --model gemini/gemini-3.1-flash-image \
   --aspect-ratio 16:9
 
-pixgen image edit "Add morning mist" \
+pixgen edit "Add morning mist" \
   --image forest.png \
   --model openai/gpt-image-2 \
   --aspect-ratio 3:2
@@ -49,10 +51,10 @@ pixgen image edit "Add morning mist" \
 Provider sub-apps are mounted beneath each supported operation:
 
 ```bash
-pixgen image create openai "A forest" \
+pixgen create openai "A forest" \
   --model gpt-image-2 --quality high --size 1536x1024
 
-pixgen image create gemini "A forest" \
+pixgen create gemini "A forest" \
   --model gemini-3.1-flash-image --image-size 2K --aspect-ratio 16:9
 ```
 
@@ -69,8 +71,8 @@ A throwaway probe against installed Cyclopts 4.25.2 verified that an operation a
 Both forms below disambiguate a shared prompt matching a provider name:
 
 ```bash
-pixgen image create --prompt "openai"
-pixgen image create --model openai/gpt-image-2 -- "openai"
+pixgen create --prompt "openai"
+pixgen create --model openai/gpt-image-2 -- "openai"
 ```
 
 Document `--prompt` as the straightforward disambiguation. Add regression tests for this behaviour rather than implementing a custom command parser.
@@ -164,7 +166,7 @@ Use the repository's behaviour-first TDD workflow during implementation. Require
 - Valid and invalid ratio syntax, equivalent-ratio normalisation, and omission preserving defaults.
 - Every initial predefined mapping, native validation of mapped values, and absence of fallback for unsupported values.
 - A compatible multi-model request and an incompatible later target proving zero generation calls and no artifacts.
-- Both operations, provider-specific restrictions, native flag parsing, and refusal of removed `--param`.
+- Both root operations, provider-specific restrictions, native flag parsing, and refusal of the removed `image` group and `--param`.
 - Shared/native dispatch, provider-name prompt disambiguation, and help/catalogue use without credentials or clients.
 - Concrete typed parameter fields surviving validation and serialisation into native payloads.
 - Duplicate registrations and disagreement between definitions and CLI operation support.
@@ -173,7 +175,7 @@ Use the repository's behaviour-first TDD workflow during implementation. Require
 
 Implementation completion requires `just lint && just type-check && just test`. No real API requests, credentials, or user files are used in tests. This spec-only change does not claim implementation or test-suite completion.
 
-Update the README with shared and native command examples, the breaking removal of `--param`, model-specific ratio support, defaults, and prompt disambiguation. Preserve unrelated working-tree changes.
+Update the README with shared and native command examples, the breaking removal of the `image` command group and `--param`, model-specific ratio support, defaults, and prompt disambiguation. Preserve unrelated working-tree changes.
 
 ## Research supporting the design
 
