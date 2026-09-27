@@ -88,6 +88,10 @@ class ModelGetResult(BaseModel):
         default_factory=dict,
         description="Parameter schemas keyed by operation",
     )
+    shared_aspect_ratios: dict[str, tuple[str, ...]] = Field(
+        default_factory=dict,
+        description="Canonical shared aspect ratios keyed by operation",
+    )
     error: PublicError | None = Field(default=None, description="Command-level error if any")
 
     @model_validator(mode="after")

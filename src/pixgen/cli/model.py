@@ -46,10 +46,18 @@ def build_model_app(registry: ProviderRegistry) -> App:
 
         provider = registry.provider_for(spec.id)
         schemas = {}
+        shared_aspect_ratios = {}
         for op in spec.operations:
             schemas[op.value] = provider.parameter_schema(spec.id, op)
+            ratios = registry.shared_aspect_ratios(spec.id, op)
+            if ratios:
+                shared_aspect_ratios[op.value] = ratios
 
-        result = ModelGetResult(model=spec, parameter_schemas=schemas)
+        result = ModelGetResult(
+            model=spec,
+            parameter_schemas=schemas,
+            shared_aspect_ratios=shared_aspect_ratios,
+        )
         render_model_get_result(result, as_json=json)
 
     return app

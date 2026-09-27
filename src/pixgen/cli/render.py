@@ -78,3 +78,8 @@ def render_model_get_result(result: ModelGetResult, *, as_json: bool) -> None:
         for op, schema in result.parameter_schemas.items():
             _stdout_console.print(f"  {op}:")
             _stdout_console.print(json.dumps(schema, indent=4))
+
+    if result.shared_aspect_ratios:
+        _stdout_console.print("\nShared aspect ratios:")
+        for op, ratios in result.shared_aspect_ratios.items():
+            _stdout_console.print(f"  {op}: {', '.join(ratios)}")
