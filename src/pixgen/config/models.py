@@ -1,6 +1,7 @@
 """Define application settings and configuration models."""
 
 import os
+import tomllib
 from pathlib import Path
 
 from pydantic import (
@@ -120,5 +121,5 @@ def load_settings() -> Settings:
     """Load settings, mapping validation errors to PixgenError."""
     try:
         return Settings()
-    except ValidationError as exc:
+    except (OSError, tomllib.TOMLDecodeError, ValidationError) as exc:
         raise PixgenError(ErrorCode.INVALID_CONFIGURATION, str(exc)) from exc

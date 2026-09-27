@@ -96,14 +96,14 @@ class TestCommandResult:
             artifact_path=Path("/tmp/x.png"),  # noqa: S108
             media_type="image/png",
         )
-        result = CommandResult(run_id="abc123", results=(target,))
+        result = CommandResult(run_id="01a0e4be-5fc8-77e9-b949-88fdc04034d7", results=(target,))
         assert result.schema_version == "1"
         assert len(result.results) == 1
         assert result.error is None
 
     def test_failure_with_error(self) -> None:
         result = CommandResult(
-            run_id="abc123",
+            run_id="01a0e4be-5fc8-77e9-b949-88fdc04034d7",
             error=PublicError(code=ErrorCode.INVALID_REQUEST, message="bad input"),
         )
         assert result.results == ()
@@ -111,7 +111,7 @@ class TestCommandResult:
 
     def test_neither_results_nor_error_rejected(self) -> None:
         with pytest.raises(ValidationError, match="requires target results or one command error"):
-            CommandResult(run_id="abc123")
+            CommandResult(run_id="01a0e4be-5fc8-77e9-b949-88fdc04034d7")
 
     def test_both_results_and_error_rejected(self) -> None:
         target = TargetResult(
@@ -122,7 +122,7 @@ class TestCommandResult:
         )
         with pytest.raises(ValidationError, match="requires target results or one command error"):
             CommandResult(
-                run_id="abc123",
+                run_id="01a0e4be-5fc8-77e9-b949-88fdc04034d7",
                 results=(target,),
                 error=PublicError(code=ErrorCode.INVALID_REQUEST, message="x"),
             )

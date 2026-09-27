@@ -15,8 +15,8 @@ __all__: list[str] = [
     "render_model_list_result",
 ]
 
-_stdout_console = Console(highlight=False)
-_stderr_console = Console(stderr=True, highlight=False)
+_stdout_console = Console(highlight=False, markup=False)
+_stderr_console = Console(stderr=True, highlight=False, markup=False)
 
 
 def render_command_result(result: CommandResult, *, as_json: bool) -> None:
@@ -26,7 +26,7 @@ def render_command_result(result: CommandResult, *, as_json: bool) -> None:
         return
 
     if result.error:
-        _stderr_console.print(f"[red]Error:[/red] {result.error.message}")
+        _stderr_console.print(f"Error: {result.error.message}")
         return
 
     _stdout_console.print(f"Run ID: {result.run_id}")
@@ -34,11 +34,9 @@ def render_command_result(result: CommandResult, *, as_json: bool) -> None:
         if target.artifact_path:
             _stdout_console.print(f"  {target.model} v{target.variant}: {target.artifact_path}")
             for warning in target.warnings:
-                _stderr_console.print(f"  [yellow]Warning:[/yellow] {warning}")
+                _stderr_console.print(f"  Warning: {warning}")
         elif target.error:
-            _stderr_console.print(
-                f"  [red]{target.model} v{target.variant}:[/red] {target.error.message}"
-            )
+            _stderr_console.print(f"  {target.model} v{target.variant}: {target.error.message}")
 
 
 def render_model_list_result(result: ModelListResult, *, as_json: bool) -> None:
@@ -48,7 +46,7 @@ def render_model_list_result(result: ModelListResult, *, as_json: bool) -> None:
         return
 
     if result.error:
-        _stderr_console.print(f"[red]Error:[/red] {result.error.message}")
+        _stderr_console.print(f"Error: {result.error.message}")
         return
 
     for model in result.models:
@@ -63,7 +61,7 @@ def render_model_get_result(result: ModelGetResult, *, as_json: bool) -> None:
         return
 
     if result.error:
-        _stderr_console.print(f"[red]Error:[/red] {result.error.message}")
+        _stderr_console.print(f"Error: {result.error.message}")
         return
 
     model = result.model

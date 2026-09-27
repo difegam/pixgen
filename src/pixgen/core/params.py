@@ -1,6 +1,7 @@
 """Parse and validate --param CLI values."""
 
 import json
+import math
 from typing import TYPE_CHECKING
 
 from pixgen.core.errors import ErrorCode, PixgenError
@@ -37,8 +38,14 @@ def _parse_json_value(raw: str) -> JsonValue:
             f"non-finite constant {c!r} is rejected",
         )
 
+    def parse_float(value: str) -> float:
+        parsed = float(value)
+        if not math.isfinite(parsed):
+            raise PixgenError(ErrorCode.INVALID_REQUEST, "non-finite parameter values are rejected")
+        return parsed
+
     try:
-        value = json.loads(raw, parse_constant=parse_constant)
+        value = json.loads(raw, parse_constant=parse_constant, parse_float=parse_float)
     except json.JSONDecodeError as exc:
         raise PixgenError(
             ErrorCode.INVALID_REQUEST, f"invalid JSON in parameter value: {exc}"

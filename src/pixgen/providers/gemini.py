@@ -3,9 +3,9 @@
 from datetime import date
 from typing import TYPE_CHECKING, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from pixgen.core.errors import ErrorCode, PixgenError, ProviderError
+from pixgen.core.errors import ErrorCode, PixgenError, ProviderError, validation_message
 from pixgen.core.models import (
     ImageOperation,
     JsonObject,
@@ -19,6 +19,8 @@ from pixgen.core.requests import ImageIntent, ValidatedImageRequest
 from pixgen.providers.base import PreparedImageRequest, ProviderImage
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from google.genai import Client
 
 __all__: list[str] = [
@@ -26,16 +28,36 @@ __all__: list[str] = [
     "GeminiProvider",
 ]
 
+type AspectRatio = Literal["1:1", "2:3", "3:2", "3:4", "4:3", "9:16", "16:9", "21:9"]
+type ImageSize = Literal["1K", "2K", "4K"]
+
 
 class GeminiParams(BaseModel):
     """Validated parameters for Gemini image models."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    aspect_ratio: Literal["1:1", "2:3", "3:2", "3:4", "4:3", "9:16", "16:9", "21:9"] | None = Field(
-        default=None, description="Aspect ratio of generated image"
+    aspect_ratio: AspectRatio | None = Field(
+        default=None,
+        description="Aspect ratio of generated image",
     )
-    image_size: Literal["1K", "2K", "4K"] | None = Field(default=None, description="Image size")
+    image_size: ImageSize | None = Field(
+        default=None,
+        description="Image size",
+    )
+
+
+class GeminiLiteParams(GeminiParams):
+    """Parameters supported by the Gemini Flash Lite image model."""
+
+    image_size: Literal["1K"] | None = Field(default=None, description="Image size")
+
+
+def _parameter_model(model: ModelId) -> type[GeminiParams]:
+    """Return the parameter model for a curated Gemini model."""
+    if model == "gemini/gemini-3.1-flash-lite-image":
+        return GeminiLiteParams
+    return GeminiParams
 
 
 def _make_gemini_spec(
@@ -88,12 +110,27 @@ class GeminiProvider:
 
     name = "gemini"
 
-    def __init__(self, client: Client | None) -> None:
+    def __init__(
+        self,
+        client: Client | None,
+        client_factory: Callable[[], Client] | None = None,
+    ) -> None:
         self._client = client
+        self._client_factory = client_factory
 
     @property
     def available(self) -> bool:
-        return self._client is not None
+        return self._client is not None or self._client_factory is not None
+
+    def _get_client(self) -> Client:
+        if self._client is None:
+            if self._client_factory is None:
+                raise ProviderError(
+                    ErrorCode.CREDENTIAL_UNAVAILABLE,
+                    "Gemini API key not configured",
+                )
+            self._client = self._client_factory()
+        return self._client
 
     def models(self) -> tuple[ModelSpec, ...]:
         return GEMINI_MODELS
@@ -103,11 +140,7 @@ class GeminiProvider:
         model: ModelId,
         operation: ImageOperation,  # noqa: ARG002
     ) -> JsonSchema:
-        schema = GeminiParams.model_json_schema()
-        schema["properties"]["image_size"]["enum"] = list(
-            _GEMINI_IMAGE_SIZES.get(model, ("1K", "2K", "4K"))
-        )
-        return schema
+        return _parameter_model(model).model_json_schema()
 
     def validate(
         self,
@@ -115,15 +148,10 @@ class GeminiProvider:
         intent: ImageIntent,
         model: ModelSpec,
     ) -> ValidatedImageRequest:
-        params = GeminiParams.model_validate(intent.params)
-        if model.id == "gemini/gemini-3.1-flash-lite-image" and params.image_size not in {
-            None,
-            "1K",
-        }:
-            raise PixgenError(
-                ErrorCode.INVALID_REQUEST,
-                "Gemini Flash Lite only supports image_size='1K'",
-            )
+        try:
+            params = _parameter_model(model.id).model_validate(intent.params)
+        except ValidationError as exc:
+            raise PixgenError(ErrorCode.INVALID_REQUEST, validation_message(exc)) from exc
         parameters: JsonObject = params.model_dump(exclude_none=True)
         return ValidatedImageRequest(intent=intent, model=model, parameters=parameters)
 
@@ -131,11 +159,7 @@ class GeminiProvider:
         return None
 
     async def generate(self, request: PreparedImageRequest) -> ProviderImage:
-        if self._client is None:
-            raise ProviderError(
-                ErrorCode.CREDENTIAL_UNAVAILABLE,
-                "Gemini API key not configured",
-            )
+        client = self._get_client()
 
         from google.genai import types
 
@@ -156,20 +180,15 @@ class GeminiProvider:
             for media in request.media
         )
 
-        config_kwargs: dict = {"response_modalities": ["IMAGE"]}
-        if params:
-            image_config_kwargs: dict = {}
-            if "aspect_ratio" in params:
-                image_config_kwargs["aspect_ratio"] = params["aspect_ratio"]
-            if "image_size" in params:
-                image_config_kwargs["image_size"] = params["image_size"]
-            if image_config_kwargs:
-                config_kwargs["image_config"] = types.ImageConfig(**image_config_kwargs)
-
-        config = types.GenerateContentConfig(**config_kwargs)
+        config = types.GenerateContentConfig.model_validate(
+            {
+                "response_modalities": ["IMAGE"],
+                "image_config": types.ImageConfig.model_validate(params) if params else None,
+            }
+        )
 
         try:
-            chat = self._client.aio.chats.create(model=model_id)
+            chat = client.aio.chats.create(model=model_id)
             response = await chat.send_message(
                 message=contents,
                 config=config,
@@ -193,7 +212,8 @@ class GeminiProvider:
             "IMAGE_SAFETY",
             "IMAGE_PROHIBITED_CONTENT",
         }
-        if finish_reason and str(finish_reason) in safety_reasons:
+        finish_name = getattr(finish_reason, "name", str(finish_reason).rsplit(".", 1)[-1])
+        if finish_name in safety_reasons:
             raise ProviderError(ErrorCode.CONTENT_REJECTED, "content rejected by safety filter")
 
         raise ProviderError(ErrorCode.PROVIDER_FAILURE, "no image in response")
@@ -216,9 +236,9 @@ class GeminiProvider:
 
                 case HTTPStatus.BAD_REQUEST:
                     message = str(exc).lower()
-                    if "safety" in message or "content" in message:
+                    if "safety" in message or "prohibited" in message or "blocklist" in message:
                         return ProviderError(ErrorCode.CONTENT_REJECTED, "content rejected")
-                    return ProviderError(ErrorCode.INVALID_REQUEST, f"bad request: {exc}")
+                    return ProviderError(ErrorCode.INVALID_REQUEST, "bad request")
 
         if isinstance(exc, errors.ServerError):
             return ProviderError(ErrorCode.PROVIDER_UNAVAILABLE, "Gemini server error")
@@ -226,4 +246,4 @@ class GeminiProvider:
         if "timeout" in str(exc).lower():
             return ProviderError(ErrorCode.TIMEOUT, "request timed out")
 
-        return ProviderError(ErrorCode.PROVIDER_FAILURE, f"unexpected error: {exc}")
+        return ProviderError(ErrorCode.PROVIDER_FAILURE, "unexpected Gemini provider failure")

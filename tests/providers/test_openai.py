@@ -49,6 +49,22 @@ class TestOpenAIParams:
         with pytest.raises(Exception):  # noqa: B017, PT011
             OpenAIParams(output_compression=150)
 
+    def test_compression_rejects_boolean(self) -> None:
+        with pytest.raises(Exception):  # noqa: B017, PT011
+            OpenAIParams(output_compression=True)
+
+    def test_invalid_parameter_has_safe_provider_error(self) -> None:
+        provider = OpenAIProvider(None)
+
+        with pytest.raises(Exception) as exc_info:  # noqa: PT011
+            provider.validate(
+                intent=ImageCreateIntent(prompt="test", params={"quality": "bogus"}),
+                model=OPENAI_MODELS[0],
+            )
+
+        assert exc_info.value.code == ErrorCode.INVALID_REQUEST
+        assert "bogus" not in str(exc_info.value)
+
 
 class TestOpenAIProvider:
     """Tests for OpenAIProvider."""
@@ -153,6 +169,20 @@ class TestOpenAIProvider:
         await provider.generate(PreparedImageRequest(request=request, media=()))
 
         assert json.loads(observed_models[0])["model"] == "gpt-image-1-mini"
+
+    @pytest.mark.asyncio
+    async def test_invalid_image_response_is_safe_provider_error(self) -> None:
+        def handler(request: httpx2.Request) -> httpx2.Response:
+            return httpx2.Response(200, json={"data": [{"b64_json": "not-base64"}]})
+
+        provider = OpenAIProvider(httpx2.AsyncClient(transport=httpx2.MockTransport(handler)))
+        request = provider.validate(intent=ImageCreateIntent(prompt="test"), model=OPENAI_MODELS[0])
+
+        with pytest.raises(Exception) as exc_info:  # noqa: PT011
+            await provider.generate(PreparedImageRequest(request=request, media=()))
+
+        assert exc_info.value.code == ErrorCode.PROVIDER_FAILURE
+        assert "not-base64" not in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_generate_multipart_with_references(self) -> None:

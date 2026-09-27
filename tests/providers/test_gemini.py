@@ -46,7 +46,7 @@ class TestGeminiParams:
         provider = GeminiProvider(None)
         intent = ImageCreateIntent(prompt="test", params={"image_size": "2K"})
 
-        with pytest.raises(PixgenError, match="1K"):
+        with pytest.raises(PixgenError, match="invalid parameters"):
             provider.validate(intent=intent, model=GEMINI_MODELS[1])
 
 
@@ -93,7 +93,9 @@ class TestGeminiProvider:
             "gemini/gemini-3.1-flash-lite-image", ImageOperation.IMAGE_CREATE
         )
 
-        assert schema["properties"]["image_size"]["enum"] == ["1K"]
+        image_size_schema = schema["properties"]["image_size"]
+        assert image_size_schema["anyOf"][0]["const"] == "1K"
+        assert image_size_schema["anyOf"][1] == {"type": "null"}
 
     @pytest.mark.asyncio
     async def test_generate_without_client_raises(self) -> None:

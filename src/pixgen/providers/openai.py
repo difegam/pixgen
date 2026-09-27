@@ -1,13 +1,14 @@
 """OpenAI image generation adapter."""
 
 import base64
+import binascii
 import json
 from datetime import date
 from typing import TYPE_CHECKING, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, ValidationError
 
-from pixgen.core.errors import ErrorCode, PixgenError, ProviderError
+from pixgen.core.errors import ErrorCode, PixgenError, ProviderError, validation_message
 from pixgen.core.models import (
     ImageOperation,
     JsonObject,
@@ -29,6 +30,8 @@ from pixgen.providers.base import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     import httpx2
 
 __all__: list[str] = [
@@ -54,12 +57,29 @@ class OpenAIParams(BaseModel):
     output_format: Literal["png", "jpeg", "webp"] | None = Field(
         default=None, description="Output format"
     )
-    output_compression: int | None = Field(
+    output_compression: StrictInt | None = Field(
         default=None, ge=0, le=100, description="Compression level for jpeg/webp"
     )
     moderation: Literal["auto", "low"] | None = Field(
         default=None, description="Content moderation level"
     )
+
+
+class _OpenAIImageItem(BaseModel):
+    """Minimum image item returned by the OpenAI image endpoints."""
+
+    model_config = ConfigDict(extra="allow")
+
+    b64_json: str = Field(min_length=1)
+
+
+class _OpenAIImageResponse(BaseModel):
+    """Minimum response envelope returned by the OpenAI image endpoints."""
+
+    model_config = ConfigDict(extra="allow")
+
+    data: tuple[_OpenAIImageItem, ...] = Field(min_length=1)
+    output_format: Literal["png", "jpeg", "webp"] = "png"
 
 
 def _make_openai_spec(
@@ -100,12 +120,27 @@ class OpenAIProvider:
 
     name = "openai"
 
-    def __init__(self, client: httpx2.AsyncClient | None) -> None:
+    def __init__(
+        self,
+        client: httpx2.AsyncClient | None,
+        client_factory: Callable[[], httpx2.AsyncClient] | None = None,
+    ) -> None:
         self._client = client
+        self._client_factory = client_factory
 
     @property
     def available(self) -> bool:
-        return self._client is not None
+        return self._client is not None or self._client_factory is not None
+
+    def _get_client(self) -> httpx2.AsyncClient:
+        if self._client is None:
+            if self._client_factory is None:
+                raise ProviderError(
+                    ErrorCode.CREDENTIAL_UNAVAILABLE,
+                    "OpenAI API key not configured",
+                )
+            self._client = self._client_factory()
+        return self._client
 
     def models(self) -> tuple[ModelSpec, ...]:
         return OPENAI_MODELS
@@ -123,7 +158,10 @@ class OpenAIProvider:
         intent: ImageIntent,
         model: ModelSpec,
     ) -> ValidatedImageRequest:
-        params = OpenAIParams.model_validate(intent.params)
+        try:
+            params = OpenAIParams.model_validate(intent.params)
+        except ValidationError as exc:
+            raise PixgenError(ErrorCode.INVALID_REQUEST, validation_message(exc)) from exc
         parameters: JsonObject = params.model_dump(exclude_none=True)
         return ValidatedImageRequest(intent=intent, model=model, parameters=parameters)
 
@@ -134,12 +172,6 @@ class OpenAIProvider:
         return None
 
     async def generate(self, request: PreparedImageRequest) -> ProviderImage:
-        if self._client is None:
-            raise ProviderError(
-                ErrorCode.CREDENTIAL_UNAVAILABLE,
-                "OpenAI API key not configured",
-            )
-
         intent = request.request.intent
         params = request.request.parameters
         model_id = request.request.model.id.split("/", 1)[-1]
@@ -154,11 +186,10 @@ class OpenAIProvider:
         prompt: str,
         params: JsonObject,
     ) -> ProviderImage:
-        if self._client is None:
-            raise ProviderError(ErrorCode.CREDENTIAL_UNAVAILABLE, "OpenAI API key not configured")
+        client = self._get_client()
         payload = {"model": model_id, "prompt": prompt, **params}
         try:
-            response = await self._client.post(
+            response = await client.post(
                 f"{_OPENAI_BASE_URL}/images/generations",
                 json=payload,
             )
@@ -166,15 +197,10 @@ class OpenAIProvider:
         except Exception as exc:
             raise self._map_error(exc) from exc
 
-        data = response.json()
-        b64_data = data["data"][0]["b64_json"]
-        image_bytes = base64.b64decode(b64_data)
-        output_format = data.get("output_format", "png")
-        return ProviderImage(image_bytes, f"image/{output_format}")
+        return _decode_image_response(response.json())
 
     async def _generate_multipart(self, request: PreparedImageRequest) -> ProviderImage:
-        if self._client is None:
-            raise ProviderError(ErrorCode.CREDENTIAL_UNAVAILABLE, "OpenAI API key not configured")
+        client = self._get_client()
         intent = request.request.intent
         params = request.request.parameters
 
@@ -195,7 +221,7 @@ class OpenAIProvider:
             form_data[key] = json.dumps(value) if not isinstance(value, str) else value
 
         try:
-            response = await self._client.post(
+            response = await client.post(
                 f"{_OPENAI_BASE_URL}/images/edits",
                 data=form_data,
                 files=files,
@@ -204,11 +230,7 @@ class OpenAIProvider:
         except Exception as exc:
             raise self._map_error(exc) from exc
 
-        data = response.json()
-        b64_data = data["data"][0]["b64_json"]
-        image_bytes = base64.b64decode(b64_data)
-        output_format = data.get("output_format", "png")
-        return ProviderImage(image_bytes, f"image/{output_format}")
+        return _decode_image_response(response.json())
 
     def _map_error(self, exc: Exception) -> PixgenError:
         from http import HTTPStatus
@@ -233,14 +255,28 @@ class OpenAIProvider:
                     return ProviderError(ErrorCode.RATE_LIMITED, "rate limit exceeded")
 
                 case HTTPStatus.BAD_REQUEST:
-                    body = exc.response.text
-                    if "moderation" in body.lower() or "content_policy" in body.lower():
+                    body = exc.response.text.lower()
+                    if "moderation" in body or "content_policy" in body:
                         return ProviderError(ErrorCode.CONTENT_REJECTED, "content rejected")
-                    return ProviderError(ErrorCode.INVALID_REQUEST, f"bad request: {body[:200]}")
+                    return ProviderError(ErrorCode.INVALID_REQUEST, "bad request")
                 case _ if status >= 500:
                     return ProviderError(ErrorCode.PROVIDER_UNAVAILABLE, "OpenAI server error")
 
                 case _:
-                    return ProviderError(ErrorCode.AUTHENTICATION_FAILED, "invalid API key")
+                    return ProviderError(ErrorCode.PROVIDER_FAILURE, "OpenAI request failed")
 
-        return ProviderError(ErrorCode.PROVIDER_FAILURE, f"unexpected error: {exc}")
+        return ProviderError(ErrorCode.PROVIDER_FAILURE, "unexpected OpenAI provider failure")
+
+
+def _decode_image_response(payload: object) -> ProviderImage:
+    """Validate and decode an OpenAI image response without exposing payload data."""
+    try:
+        response = _OpenAIImageResponse.model_validate(payload)
+        image_bytes = base64.b64decode(response.data[0].b64_json, validate=True)
+    except (ValidationError, ValueError, binascii.Error) as exc:
+        raise ProviderError(
+            ErrorCode.PROVIDER_FAILURE, "OpenAI returned an invalid image response"
+        ) from exc
+    if not image_bytes:
+        raise ProviderError(ErrorCode.PROVIDER_FAILURE, "OpenAI returned an empty image")
+    return ProviderImage(image_bytes, f"image/{response.output_format}")

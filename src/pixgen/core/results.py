@@ -1,3 +1,4 @@
+import uuid
 from pathlib import Path
 from typing import Literal, Self
 
@@ -51,7 +52,7 @@ class CommandResult(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     schema_version: Literal["1"] = "1"
-    run_id: str = Field(min_length=1, description="Short random identifier for this run")
+    run_id: uuid.UUID = Field(description="Unique identifier for this run")
     results: tuple[TargetResult, ...] = Field(
         default=(), description="Per-target results in model/variant order"
     )

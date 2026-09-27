@@ -1,9 +1,13 @@
 from enum import StrEnum
+from typing import TYPE_CHECKING
 
+if TYPE_CHECKING:
+    from pydantic import ValidationError
 __all__: list[str] = [
     "ErrorCode",
     "PixgenError",
     "ProviderError",
+    "validation_message",
 ]
 
 
@@ -38,3 +42,12 @@ class ProviderError(PixgenError):
 
     def __init__(self, code: ErrorCode, message: str) -> None:
         super().__init__(code, message)
+
+
+def validation_message(error: ValidationError) -> str:
+    """Return a safe, concise message for expected model validation failures."""
+    details: list[str] = []
+    for item in error.errors(include_context=False, include_input=False, include_url=False):
+        location = ".".join(str(part) for part in item["loc"]) or "value"
+        details.append(f"{location}: {item['type']}")
+    return "invalid value" if not details else "invalid parameters: " + "; ".join(details)

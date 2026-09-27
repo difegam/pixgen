@@ -44,6 +44,11 @@ class TestParseParams:
         with pytest.raises(PixgenError, match="non-finite"):
             parse_params(["value=-Infinity"], {"openai/gpt-image-2"})
 
+    @pytest.mark.parametrize("raw", ['value={"nested":1e400}', "value=[1e400]"])
+    def test_rejects_nested_non_finite_values(self, raw: str) -> None:
+        with pytest.raises(PixgenError, match="non-finite"):
+            parse_params([raw], {"openai/gpt-image-2"})
+
     def test_rejects_invalid_json(self) -> None:
         with pytest.raises(PixgenError, match="invalid JSON"):
             parse_params(["value={bad}"], {"openai/gpt-image-2"})

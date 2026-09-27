@@ -105,6 +105,67 @@ class TestImageApplication:
         assert outcome.result.error.code == ErrorCode.CREDENTIAL_UNAVAILABLE
 
     @pytest.mark.asyncio
+    async def test_rejects_duplicate_models_before_submission(self, tmp_path: Path) -> None:
+        from tests.factories import make_model_spec
+
+        model = make_model_spec(model_id="fake/model")
+        provider = SlowProvider(model, 0)
+        registry = ProviderRegistry((provider,))
+        settings = Settings(
+            defaults=Defaults(image_create_models=("fake/model",)),
+            generation=GenerationSettings(output_dir=tmp_path),
+        )
+
+        outcome = await ImageApplication(registry, settings).run(
+            ImageCreateIntent(prompt="test"),
+            models=["fake/model", "fake/model"],
+        )
+
+        assert outcome.exit_code == 2
+        assert outcome.result.error is not None
+        assert outcome.result.error.code == ErrorCode.INVALID_REQUEST
+
+    @pytest.mark.asyncio
+    async def test_preserves_intent_parameters(self, tmp_path: Path) -> None:
+        from tests.factories import make_model_spec
+
+        model = make_model_spec(model_id="fake/model")
+        provider = ParameterCapturingProvider(model)
+        registry = ProviderRegistry((provider,))
+        settings = Settings(
+            defaults=Defaults(image_create_models=("fake/model",)),
+            generation=GenerationSettings(output_dir=tmp_path),
+        )
+
+        outcome = await ImageApplication(registry, settings).run(
+            ImageCreateIntent(prompt="test", params={"quality": "high"}),
+        )
+
+        assert outcome.exit_code == 0
+        assert provider.parameters == {"quality": "high"}
+
+    @pytest.mark.asyncio
+    async def test_rejects_nonpositive_timeout_before_submission(self, tmp_path: Path) -> None:
+        from tests.factories import make_model_spec
+
+        model = make_model_spec(model_id="fake/model")
+        provider = SlowProvider(model, 0)
+        registry = ProviderRegistry((provider,))
+        settings = Settings(
+            defaults=Defaults(image_create_models=("fake/model",)),
+            generation=GenerationSettings(output_dir=tmp_path),
+        )
+
+        outcome = await ImageApplication(registry, settings).run(
+            ImageCreateIntent(prompt="test"),
+            timeout_seconds=0,
+        )
+
+        assert outcome.exit_code == 2
+        assert outcome.result.error is not None
+        assert outcome.result.error.code == ErrorCode.INVALID_REQUEST
+
+    @pytest.mark.asyncio
     async def test_run_timeout_is_shared_by_all_jobs(self, tmp_path: Path) -> None:
         from tests.factories import make_model_spec
 
@@ -204,3 +265,17 @@ class UnavailableProvider(SlowProvider):
     @property
     def available(self) -> bool:
         return False
+
+
+class ParameterCapturingProvider(SlowProvider):
+    """Provider that records the validated provider parameters."""
+
+    def __init__(self, model: ModelSpec) -> None:
+        super().__init__(model, 0)
+        self.parameters: dict[str, object] = {}
+
+    def validate(self, *, intent: object, model: ModelSpec) -> object:
+        from pixgen.core.requests import ValidatedImageRequest
+
+        self.parameters = dict(intent.params)
+        return ValidatedImageRequest(intent=intent, model=model, parameters=self.parameters)

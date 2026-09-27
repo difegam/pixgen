@@ -31,6 +31,10 @@ class TestImageCreateIntent:
         with pytest.raises(ValidationError):
             ImageCreateIntent(prompt="")
 
+    def test_whitespace_prompt_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="non-whitespace"):
+            ImageCreateIntent(prompt="   ")
+
     def test_frozen_raises_on_assignment(self) -> None:
         intent = ImageCreateIntent(prompt="test")
         with pytest.raises(ValidationError):

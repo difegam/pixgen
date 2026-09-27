@@ -1,7 +1,7 @@
 from pathlib import Path
-from typing import Annotated, ClassVar, Literal
+from typing import Annotated, ClassVar, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from pixgen.core.models import ImageOperation, JsonObject, MediaRole, ModelSpec
 
@@ -18,8 +18,14 @@ class ImageIntentBase(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    prompt: str = Field(min_length=3, description="Prompt for image generation")
+    prompt: str = Field(min_length=1, description="Prompt for image generation")
     params: JsonObject = Field(default_factory=dict, description="Provider-neutral parameters")
+
+    @model_validator(mode="after")
+    def _validate_prompt(self) -> Self:
+        if not self.prompt.strip():
+            raise ValueError("prompt must contain a non-whitespace character")
+        return self
 
 
 class ImageCreateIntent(ImageIntentBase):

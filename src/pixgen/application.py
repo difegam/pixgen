@@ -1,17 +1,18 @@
 import asyncio
-import secrets
+import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from pixgen.artifacts import OutputPlan, plan_output, write_atomic
-from pixgen.core.errors import ErrorCode, PixgenError, ProviderError
+from pydantic import ValidationError
+
+from pixgen.artifacts import OutputPlan, plan_output, save_artifact
+from pixgen.core.errors import ErrorCode, PixgenError, ProviderError, validation_message
 from pixgen.core.params import parse_params
 from pixgen.core.requests import ImageCreateIntent, ImageIntent, ValidatedImageRequest
 from pixgen.core.results import CommandResult, PublicError, TargetResult
 from pixgen.images.inspect import load_image
-from pixgen.images.mime import MIME_TO_EXTENSION
 from pixgen.images.models import ImageInputError, LocalImage
-from pixgen.providers.base import ImageProvider, PreparedImageRequest, PreparedMedia, ProviderImage
+from pixgen.providers.base import ImageProvider, PreparedImageRequest, PreparedMedia
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -55,9 +56,15 @@ class ImageApplication:
         raw_params: list[str] | None = None,
     ) -> RunOutcome:
         """Run an image generation command."""
-        run_id = secrets.token_hex(2)
+        run_id = uuid.uuid7()
         try:
             model_ids = self._resolve_models(intent, models)
+            if not model_ids:
+                raise PixgenError(ErrorCode.INVALID_REQUEST, "at least one model must be selected")
+            if len(model_ids) != len(set(model_ids)):
+                raise PixgenError(ErrorCode.INVALID_REQUEST, "model selections must be unique")
+            if timeout_seconds is not None and timeout_seconds < 1:
+                raise PixgenError(ErrorCode.INVALID_REQUEST, "timeout_seconds must be at least 1")
             self._check_provider_availability(model_ids)
             self._validate_variant_limits(len(model_ids), variants)
             images = _load_images(intent.input_paths)
@@ -140,11 +147,31 @@ class ImageApplication:
 
         prepared: dict[ModelId, PreparedImageRequest] = {}
         for mid, provider in providers.items():
+            model_spec = self._registry.get_model(mid)
+            if intent.operation not in model_spec.operations:
+                raise PixgenError(
+                    ErrorCode.INVALID_REQUEST,
+                    f"model {mid} does not support {intent.operation.value}",
+                )
             params = {**unscoped, **parsed_params.get(mid, {})}
-            request = provider.validate(
-                intent=intent.model_copy(update={"params": params}),
-                model=self._registry.get_model(mid),
+            overlapping = set(intent.params).intersection(params)
+            if overlapping:
+                names = ", ".join(sorted(overlapping))
+                raise PixgenError(
+                    ErrorCode.INVALID_REQUEST,
+                    f"parameter already supplied by intent: {names}",
+                )
+            resolved_params = {**intent.params, **params}
+            intent_with_params = type(intent).model_validate(
+                {**intent.model_dump(), "params": resolved_params}
             )
+            try:
+                request = provider.validate(
+                    intent=intent_with_params,
+                    model=model_spec,
+                )
+            except ValidationError as exc:
+                raise PixgenError(ErrorCode.INVALID_REQUEST, validation_message(exc)) from exc
             _validate_media(request, images)
             prepared[mid] = PreparedImageRequest(request=request, media=media)
         return prepared, providers
@@ -254,32 +281,27 @@ async def _run_job(
         try:
             async with asyncio.timeout(request_timeout):
                 image = await provider.generate(prepared)
-            actual_path = _save_image_with_correct_format(plan, image)
+            publication = save_artifact(plan, image.data, image.media_type)
         except TimeoutError:
             error = PublicError(code=ErrorCode.TIMEOUT, message="request timed out")
         except ProviderError as exc:
             error = PublicError(code=exc.code, message=exc.message)
-        except Exception as exc:  # noqa: BLE001
+        except OSError as exc:
+            error = PublicError(
+                code=ErrorCode.ARTIFACT_FAILURE,
+                message=f"could not write artifact: {exc.strerror or 'filesystem error'}",
+            )
+        except Exception:  # noqa: BLE001
             error = PublicError(
                 code=ErrorCode.PROVIDER_FAILURE,
-                message=f"unexpected error: {exc}",
+                message="unexpected provider failure",
             )
         else:
             return TargetResult(
                 model=plan.model_id,
                 variant=plan.variant,
-                artifact_path=actual_path,
+                artifact_path=publication.path,
                 media_type=image.media_type,
-                warnings=(),
+                warnings=publication.warnings,
             )
     return TargetResult(model=plan.model_id, variant=plan.variant, error=error)
-
-
-def _save_image_with_correct_format(plan: OutputPlan, image: ProviderImage) -> Path:
-    ext = MIME_TO_EXTENSION.get(image.media_type, image.media_type.rsplit("/", maxsplit=1)[-1])
-    if plan.path.suffix.lstrip(".") == ext:
-        write_atomic(plan.path, image.data)
-        return plan.path
-    correct_path = plan.path.with_suffix(f".{ext}")
-    write_atomic(correct_path, image.data)
-    return correct_path

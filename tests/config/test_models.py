@@ -1,11 +1,14 @@
 """Tests for config.models."""
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
 from pixgen.config.models import Defaults, GenerationSettings, Settings, load_settings
 from pixgen.core.errors import PixgenError
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class TestDefaults:
@@ -36,16 +39,17 @@ class TestGenerationSettings:
         assert settings.request_timeout_seconds == 300
         assert settings.run_timeout_seconds is None
 
-    def test_custom_values(self) -> None:
+    def test_custom_values(self, tmp_path: Path) -> None:
+        output_dir = tmp_path / "output"
         settings = GenerationSettings(
-            output_dir=Path("/tmp/output"),  # noqa: S108
+            output_dir=output_dir,
             max_parallel_requests=8,
             max_variants=5,
             max_jobs=20,
             request_timeout_seconds=600,
             run_timeout_seconds=120,
         )
-        assert settings.output_dir == Path("/tmp/output")  # noqa: S108
+        assert settings.output_dir == output_dir
         assert settings.max_parallel_requests == 8
 
 
