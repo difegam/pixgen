@@ -1,16 +1,41 @@
 from pathlib import Path
 from typing import Annotated, ClassVar, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SerializeAsAny, model_validator
 
 from pixgen.core.models import ImageOperation, JsonObject, MediaRole, ModelSpec
+from pixgen.core.parameters import ProviderParams, SharedImageParams
 
 __all__: list[str] = [
     "ImageCreateIntent",
     "ImageEditIntent",
     "ImageIntent",
+    "NativeSelection",
+    "ParameterSelection",
+    "SharedSelection",
     "ValidatedImageRequest",
 ]
+
+
+class SharedSelection(BaseModel):
+    """Selection and shared parameters for one multi-model invocation."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    models: tuple[str, ...] | None = None
+    parameters: SharedImageParams = Field(default_factory=SharedImageParams)
+
+
+class NativeSelection(BaseModel):
+    """Selection and native parameters for one provider invocation."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    model: str
+    parameters: SerializeAsAny[ProviderParams]
+
+
+type ParameterSelection = SharedSelection | NativeSelection
 
 
 class ImageIntentBase(BaseModel):
@@ -68,3 +93,7 @@ class ValidatedImageRequest(BaseModel):
     intent: ImageIntent = Field(description="The caller's intent")
     model: ModelSpec = Field(description="The selected curated model")
     parameters: JsonObject = Field(description="Validated parameters for the model")
+    native_parameters: SerializeAsAny[ProviderParams] | None = Field(
+        default=None,
+        description="Concrete provider parameters retained for typed adapter boundaries",
+    )

@@ -10,6 +10,7 @@ from pixgen.config.models import Defaults, GenerationSettings, Settings
 from pixgen.core.errors import ErrorCode
 from pixgen.core.requests import ImageCreateIntent
 from pixgen.providers.base import PreparedImageRequest, ProviderImage
+from pixgen.providers.openai import OpenAIProvider
 from pixgen.providers.registry import ProviderRegistry
 
 if TYPE_CHECKING:
@@ -103,6 +104,35 @@ class TestImageApplication:
 
         assert outcome.result.error is not None
         assert outcome.result.error.code == ErrorCode.CREDENTIAL_UNAVAILABLE
+
+    @pytest.mark.asyncio
+    async def test_rejects_incompatible_shared_ratio_before_generation(
+        self, tmp_path: Path
+    ) -> None:
+        calls = 0
+
+        def make_client() -> object:
+            nonlocal calls
+            calls += 1
+            raise AssertionError("client must not be created during strict preflight")
+
+        provider = OpenAIProvider(None, client_factory=make_client)
+        registry = ProviderRegistry((provider,))
+        settings = Settings(
+            defaults=Defaults(image_create_models=("openai/gpt-image-2",)),
+            generation=GenerationSettings(output_dir=tmp_path),
+        )
+        outcome = await ImageApplication(registry, settings).run(
+            ImageCreateIntent(prompt="test"),
+            models=["openai/gpt-image-2", "openai/gpt-image-1-mini"],
+            aspect_ratio="16:9",
+        )
+
+        assert outcome.exit_code == 2
+        assert outcome.result.error is not None
+        assert "gpt-image-1-mini" in outcome.result.error.message
+        assert calls == 0
+        assert await asyncio.to_thread(lambda: tuple(tmp_path.iterdir())) == ()
 
     @pytest.mark.asyncio
     async def test_rejects_duplicate_models_before_submission(self, tmp_path: Path) -> None:

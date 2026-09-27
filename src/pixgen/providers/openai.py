@@ -233,7 +233,12 @@ class OpenAIProvider:
         except ValidationError as exc:
             raise PixgenError(ErrorCode.INVALID_REQUEST, validation_message(exc)) from exc
         parameters: JsonObject = params.model_dump(exclude_none=True)
-        return ValidatedImageRequest(intent=intent, model=model, parameters=parameters)
+        return ValidatedImageRequest(
+            intent=intent,
+            model=model,
+            parameters=parameters,
+            native_parameters=params,
+        )
 
     def declared_media_type(self, request: ValidatedImageRequest) -> str | None:
         output_format = request.parameters.get("output_format")

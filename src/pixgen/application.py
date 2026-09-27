@@ -7,8 +7,16 @@ from pydantic import ValidationError
 
 from pixgen.artifacts import OutputPlan, plan_output, save_artifact
 from pixgen.core.errors import ErrorCode, PixgenError, ProviderError, validation_message
+from pixgen.core.parameters import ProviderParams, SharedImageParams
 from pixgen.core.params import parse_params
-from pixgen.core.requests import ImageCreateIntent, ImageIntent, ValidatedImageRequest
+from pixgen.core.requests import (
+    ImageCreateIntent,
+    ImageIntent,
+    NativeSelection,
+    ParameterSelection,
+    SharedSelection,
+    ValidatedImageRequest,
+)
 from pixgen.core.results import CommandResult, PublicError, TargetResult
 from pixgen.images.inspect import load_image
 from pixgen.images.models import ImageInputError, LocalImage
@@ -18,7 +26,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from pixgen.config.models import Settings
-    from pixgen.core.models import ModelId
+    from pixgen.core.models import ImageOperation, JsonObject, ModelId
     from pixgen.providers.registry import ProviderRegistry
 
 __all__: list[str] = [
@@ -47,6 +55,8 @@ class ImageApplication:
         intent: ImageIntent,
         *,
         models: list[str] | None = None,
+        selection: ParameterSelection | None = None,
+        aspect_ratio: str | None = None,
         variants: int = 1,
         output: Path | None = None,
         output_dir: Path | None = None,
@@ -58,6 +68,14 @@ class ImageApplication:
         """Run an image generation command."""
         run_id = uuid.uuid7()
         try:
+            native_parameters = None
+            shared_parameters = SharedImageParams(aspect_ratio=aspect_ratio)
+            if isinstance(selection, SharedSelection):
+                models = list(selection.models) if selection.models is not None else None
+                shared_parameters = selection.parameters
+            elif isinstance(selection, NativeSelection):
+                models = [selection.model]
+                native_parameters = selection.parameters
             model_ids = self._resolve_models(intent, models)
             if not model_ids:
                 raise PixgenError(ErrorCode.INVALID_REQUEST, "at least one model must be selected")
@@ -68,7 +86,14 @@ class ImageApplication:
             self._check_provider_availability(model_ids)
             self._validate_variant_limits(len(model_ids), variants)
             images = _load_images(intent.input_paths)
-            prepared, providers = self._prepare(intent, model_ids, raw_params, images)
+            prepared, providers = self._prepare(
+                intent,
+                model_ids,
+                raw_params,
+                images,
+                shared_parameters=shared_parameters,
+                native_parameters=native_parameters,
+            )
             plans = plan_output(
                 model_ids=model_ids,
                 variants=variants,
@@ -138,6 +163,9 @@ class ImageApplication:
         model_ids: list[str],
         raw_params: list[str] | None,
         images: tuple[LocalImage, ...],
+        *,
+        shared_parameters: SharedImageParams | None = None,
+        native_parameters: ProviderParams | None = None,
     ) -> tuple[dict[ModelId, PreparedImageRequest], dict[ModelId, ImageProvider]]:
         parsed_params = parse_params(raw_params or [], set(model_ids))
         unscoped = parsed_params.get(None, {})
@@ -154,6 +182,17 @@ class ImageApplication:
                     f"model {mid} does not support {intent.operation.value}",
                 )
             params = {**unscoped, **parsed_params.get(mid, {})}
+            if native_parameters is not None:
+                params = native_parameters.model_dump(exclude_none=True)
+            elif shared_parameters is not None and shared_parameters.aspect_ratio is not None:
+                params.update(
+                    _resolve_shared_parameters(
+                        provider,
+                        model_spec.id,
+                        intent.operation,
+                        shared_parameters,
+                    )
+                )
             overlapping = set(intent.params).intersection(params)
             if overlapping:
                 names = ", ".join(sorted(overlapping))
@@ -231,6 +270,43 @@ def _load_images(paths: tuple[Path, ...]) -> tuple[LocalImage, ...]:
         return tuple(load_image(path) for path in paths)
     except ImageInputError as exc:
         raise PixgenError(ErrorCode.INVALID_REQUEST, str(exc)) from exc
+
+
+def _resolve_shared_parameters(
+    provider: ImageProvider,
+    model_id: ModelId,
+    operation: ImageOperation,
+    shared: SharedImageParams,
+) -> JsonObject:
+    """Resolve shared parameters through a provider-owned model definition."""
+    definitions = getattr(provider, "definitions", None)
+    if definitions is None:
+        raise PixgenError(
+            ErrorCode.INVALID_REQUEST,
+            f"model {model_id} does not support shared aspect ratios",
+        )
+    definition = next((item for item in definitions() if item.spec.id == model_id), None)
+    if definition is None:
+        raise PixgenError(
+            ErrorCode.MODEL_NOT_FOUND,
+            f"model {model_id!r} is not in the provider catalogue",
+        )
+    operation_definition = definition.operations.get(operation)
+    if operation_definition is None:
+        raise PixgenError(
+            ErrorCode.INVALID_REQUEST,
+            f"model {model_id} does not support {operation.value}",
+        )
+    try:
+        parameters = operation_definition.resolve(shared)
+    except ValueError as exc:
+        supported = ", ".join(sorted(operation_definition.aspect_ratios))
+        raise PixgenError(
+            ErrorCode.INVALID_REQUEST,
+            f"model {model_id} does not support aspect ratio {shared.aspect_ratio}; "
+            f"supported ratios: {supported}",
+        ) from exc
+    return parameters.model_dump(exclude_none=True)
 
 
 def _validate_media(request: ValidatedImageRequest, images: tuple[LocalImage, ...]) -> None:

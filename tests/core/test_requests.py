@@ -6,12 +6,21 @@ import pytest
 from pydantic import ValidationError
 
 from pixgen.core.models import ImageOperation
+from pixgen.core.parameters import ProviderParams, SharedImageParams
 from pixgen.core.requests import (
     ImageCreateIntent,
     ImageEditIntent,
     ImageIntent,
+    NativeSelection,
+    SharedSelection,
     ValidatedImageRequest,
 )
+
+
+class DemoParams(ProviderParams):
+    """Concrete provider parameters used by typed request tests."""
+
+    colour: str
 
 
 class TestImageCreateIntent:
@@ -110,3 +119,29 @@ class TestValidatedImageRequest:
         request = ValidatedImageRequest(intent=intent, model=model_spec, parameters={})
         with pytest.raises(ValidationError):
             request.parameters = {"x": 1}
+
+    def test_native_parameters_retain_concrete_fields(self, model_spec) -> None:
+        request = ValidatedImageRequest(
+            intent=ImageCreateIntent(prompt="test"),
+            model=model_spec,
+            parameters={"colour": "blue"},
+            native_parameters=DemoParams(colour="blue"),
+        )
+        assert request.native_parameters is not None
+        assert request.native_parameters.model_dump() == {"colour": "blue"}
+        assert request.model_dump()["native_parameters"] == {"colour": "blue"}
+
+
+class TestSelections:
+    """Tests for typed parameter selections."""
+
+    def test_shared_selection_defaults_to_all_models(self) -> None:
+        selection = SharedSelection(parameters=SharedImageParams(aspect_ratio="21:9"))
+        assert selection.models is None
+        assert selection.parameters.aspect_ratio == "7:3"
+
+    def test_native_selection_preserves_concrete_parameters(self) -> None:
+        selection = NativeSelection(
+            model="openai/gpt-image-2", parameters=DemoParams(colour="blue")
+        )
+        assert selection.parameters.model_dump() == {"colour": "blue"}
