@@ -42,6 +42,11 @@ class TestOperationDefinition:
         with pytest.raises(ValueError, match="unsupported aspect ratio"):
             definition.resolve(SharedImageParams(aspect_ratio="3:2"))
 
+    def test_empty_ratio_override_preserves_native_defaults(self) -> None:
+        definition = make_operation(**{"1:1": {}})
+
+        assert definition.resolve(SharedImageParams(aspect_ratio="1:1")).size == "small"
+
     def test_invalid_override_is_rejected_at_construction(self) -> None:
         with pytest.raises(ValidationError):
             make_operation(**{"1:1": {"size": "invalid"}})

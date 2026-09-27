@@ -54,9 +54,10 @@ class OperationDefinition[P: ProviderParams](BaseModel):
         """Apply a shared request to defaults and validate native parameters."""
         override: JsonObject = {}
         if shared.aspect_ratio is not None:
-            override = self.aspect_ratios.get(shared.aspect_ratio, {})
-            if not override:
+            mapped_override = self.aspect_ratios.get(shared.aspect_ratio)
+            if mapped_override is None:
                 raise ValueError(f"unsupported aspect ratio: {shared.aspect_ratio}")
+            override = mapped_override
         return self.parameter_type.model_validate({**self.defaults.model_dump(), **override})
 
 
