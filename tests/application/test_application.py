@@ -269,13 +269,15 @@ class TestImageApplication:
     async def test_fatal_job_failure_cancels_sibling_jobs(self, tmp_path: Path) -> None:
         from tests.factories import make_model_spec
 
-        fatal_model = make_model_spec(model_id="fake/fatal")
-        slow_model = make_model_spec(model_id="fake/slow")
+        fatal_model = make_model_spec(model_id="fatal/fatal")
+        slow_model = make_model_spec(model_id="slow/slow")
         slow_provider = CancellableProvider(slow_model)
         fatal_provider = FatalProvider(fatal_model, slow_provider.started)
+        fatal_provider.name = "fatal"
+        slow_provider.name = "slow"
         registry = ProviderRegistry((fatal_provider, slow_provider))
         settings = Settings(
-            defaults=Defaults(image_create_models=("fake/fatal", "fake/slow")),
+            defaults=Defaults(image_create_models=("fatal/fatal", "slow/slow")),
             generation=GenerationSettings(output_dir=tmp_path, max_parallel_requests=2),
         )
 
