@@ -1,6 +1,6 @@
 # Provider-owned image parameters and CLI
 
-**Status:** Written spec awaiting user review
+**Status:** Approved by the user; implementation plan awaiting review
 
 **Date:** 2026-09-27
 
