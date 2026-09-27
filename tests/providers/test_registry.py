@@ -3,6 +3,7 @@
 import pytest
 
 from pixgen.core.errors import PixgenError
+from pixgen.core.models import ImageOperation
 from pixgen.providers.gemini import GEMINI_MODELS, GeminiProvider
 from pixgen.providers.openai import OPENAI_MODELS, OpenAIProvider
 from pixgen.providers.registry import ProviderRegistry
@@ -43,3 +44,27 @@ class TestProviderRegistry:
         registry = ProviderRegistry((OpenAIProvider(None),))
         with pytest.raises(PixgenError, match="not in the curated catalog"):
             registry.get_model("unknown/model")
+
+    def test_providers_returns_registered_order(self) -> None:
+        openai = OpenAIProvider(None)
+        gemini = GeminiProvider(None)
+        registry = ProviderRegistry((openai, gemini))
+
+        assert registry.providers() == (openai, gemini)
+
+    def test_rejects_duplicate_provider_names(self) -> None:
+        with pytest.raises(ValueError, match="duplicate provider name"):
+            ProviderRegistry((OpenAIProvider(None), OpenAIProvider(None)))
+
+    def test_rejects_model_owned_by_another_provider(self) -> None:
+        provider = OpenAIProvider(None)
+        provider.name = "gemini"
+        with pytest.raises(ValueError, match="not owned by provider"):
+            ProviderRegistry((provider,))
+
+    def test_shared_aspect_ratios_are_projected_from_provider_definitions(self) -> None:
+        registry = ProviderRegistry((OpenAIProvider(None),))
+
+        assert "16:9" in registry.shared_aspect_ratios(
+            "openai/gpt-image-2", ImageOperation.IMAGE_CREATE
+        )

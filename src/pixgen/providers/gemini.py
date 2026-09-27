@@ -178,6 +178,12 @@ class GeminiProvider:
     def models(self) -> tuple[ModelSpec, ...]:
         return GEMINI_MODELS
 
+    def cli_factory(self) -> object:
+        """Return the Gemini-owned CLI factory."""
+        from pixgen.providers.gemini_cli import GeminiCliFactory
+
+        return GeminiCliFactory()
+
     def definition_catalogue(self) -> ProviderDefinition[ModelDefinition[GeminiParams]]:
         """Return the composed Gemini model catalogue."""
         return _make_gemini_definitions()

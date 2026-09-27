@@ -1,90 +1,114 @@
+"""Build root image operation apps and shared multi-model commands."""
+
 from pathlib import Path  # noqa: TC003
 from typing import TYPE_CHECKING
 
 from cyclopts import App
 
-from pixgen.cli.render import render_command_result
-from pixgen.core.requests import ImageCreateIntent, ImageEditIntent
+from pixgen.cli.invoke import CommandInvoker
+from pixgen.cli.options import ExecutionOptions
+from pixgen.core.models import ImageOperation
+from pixgen.core.parameters import SharedImageParams
+from pixgen.core.requests import ImageCreateIntent, ImageEditIntent, SharedSelection
 
 if TYPE_CHECKING:
     from pixgen.application import ImageApplication
+    from pixgen.cli.contracts import ProviderCliFactory
 
-__all__: list[str] = [
-    "build_image_app",
-]
+__all__: list[str] = ["build_image_app", "build_operation_app"]
 
 
-def build_image_app(application: ImageApplication) -> App:
-    """Build the image sub-app."""
-    app = App(name="image", help="Image creation and editing commands")
+def build_operation_app(
+    operation: ImageOperation,
+    invoker: CommandInvoker,
+    factories: tuple[ProviderCliFactory, ...],
+) -> App:
+    """Build one root operation app with shared and native commands."""
+    app = App(name="create" if operation is ImageOperation.IMAGE_CREATE else "edit")
 
-    @app.command
-    async def create(
-        prompt: str,
-        *,
-        reference: list[Path] | None = None,
-        model: list[str] | None = None,
-        variants: int = 1,
-        param: list[str] | None = None,
-        output: Path | None = None,
-        output_dir: Path | None = None,
-        timeout_seconds: int | None = None,
-        mkdir: bool = False,
-        force: bool = False,
-        json: bool = False,
-    ) -> None:
-        """Create images from a prompt and optional references."""
-        references = tuple(reference or [])
-        intent = ImageCreateIntent(prompt=prompt, references=references)
-        model_ids = model or None
+    if operation is ImageOperation.IMAGE_CREATE:
 
-        outcome = await application.run(
-            intent,
-            models=model_ids,
-            variants=variants,
-            output=output,
-            output_dir=output_dir,
-            mkdir=mkdir,
-            force=force,
-            timeout_seconds=timeout_seconds,
-            raw_params=param,
-        )
+        @app.default
+        async def create(
+            prompt: str,
+            *,
+            reference: list[Path] | None = None,
+            model: list[str] | None = None,
+            aspect_ratio: str | None = None,
+            variants: int = 1,
+            output: Path | None = None,
+            output_dir: Path | None = None,
+            mkdir: bool = False,
+            force: bool = False,
+            timeout_seconds: int | None = None,
+            json: bool = False,
+        ) -> None:
+            """Create images using shared parameters across selected models."""
+            await invoker.invoke(
+                ImageCreateIntent(prompt=prompt, references=tuple(reference or ())),
+                SharedSelection(
+                    models=tuple(model) if model else None,
+                    parameters=SharedImageParams(aspect_ratio=aspect_ratio),
+                ),
+                ExecutionOptions(
+                    variants=variants,
+                    output=output,
+                    output_dir=output_dir,
+                    mkdir=mkdir,
+                    force=force,
+                    timeout_seconds=timeout_seconds,
+                    json=json,
+                ),
+            )
 
-        render_command_result(outcome.result, as_json=json)
-        raise SystemExit(outcome.exit_code)
+    else:
 
-    @app.command
-    async def edit(
-        prompt: str,
-        *,
-        image: list[Path],
-        model: list[str] | None = None,
-        variants: int = 1,
-        param: list[str] | None = None,
-        output: Path | None = None,
-        output_dir: Path | None = None,
-        timeout_seconds: int | None = None,
-        mkdir: bool = False,
-        force: bool = False,
-        json: bool = False,
-    ) -> None:
-        """Edit one or more source images through a prompt."""
-        intent = ImageEditIntent(prompt=prompt, images=tuple(image))
-        model_ids = model or None
+        @app.default
+        async def edit(
+            prompt: str,
+            *,
+            image: list[Path],
+            model: list[str] | None = None,
+            aspect_ratio: str | None = None,
+            variants: int = 1,
+            output: Path | None = None,
+            output_dir: Path | None = None,
+            mkdir: bool = False,
+            force: bool = False,
+            timeout_seconds: int | None = None,
+            json: bool = False,
+        ) -> None:
+            """Edit images using shared parameters across selected models."""
+            await invoker.invoke(
+                ImageEditIntent(prompt=prompt, images=tuple(image)),
+                SharedSelection(
+                    models=tuple(model) if model else None,
+                    parameters=SharedImageParams(aspect_ratio=aspect_ratio),
+                ),
+                ExecutionOptions(
+                    variants=variants,
+                    output=output,
+                    output_dir=output_dir,
+                    mkdir=mkdir,
+                    force=force,
+                    timeout_seconds=timeout_seconds,
+                    json=json,
+                ),
+            )
 
-        outcome = await application.run(
-            intent,
-            models=model_ids,
-            variants=variants,
-            output=output,
-            output_dir=output_dir,
-            mkdir=mkdir,
-            force=force,
-            timeout_seconds=timeout_seconds,
-            raw_params=param,
-        )
+    for factory in factories:
+        if operation in factory.operations:
+            app.command(factory.build(operation, invoker))
+    return app
 
-        render_command_result(outcome.result, as_json=json)
-        raise SystemExit(outcome.exit_code)
 
+def build_image_app(
+    application: ImageApplication,
+    factories: tuple[ProviderCliFactory, ...] = (),
+) -> App:
+    """Build the two root image operation apps for compatibility."""
+    invoker = CommandInvoker(application)
+    app = App(name="pixgen")
+    app.command(build_operation_app(ImageOperation.IMAGE_CREATE, invoker, factories))
+    app.command(build_operation_app(ImageOperation.IMAGE_EDIT, invoker, factories))
     return app

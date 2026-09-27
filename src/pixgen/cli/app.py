@@ -5,11 +5,14 @@ from typing import TYPE_CHECKING
 
 from cyclopts import App
 
-from pixgen.cli.image import build_image_app
+from pixgen.cli.image import build_operation_app
+from pixgen.cli.invoke import CommandInvoker
 from pixgen.cli.model import build_model_app
+from pixgen.core.models import ImageOperation
 
 if TYPE_CHECKING:
     from pixgen.application import ImageApplication
+    from pixgen.cli.contracts import ProviderCliFactory
     from pixgen.providers.registry import ProviderRegistry
 
 __all__: list[str] = [
@@ -28,6 +31,7 @@ def _get_version() -> str:
 def build_app(
     application: ImageApplication,
     registry: ProviderRegistry,
+    factories: tuple[ProviderCliFactory, ...] | None = None,
 ) -> App:
     """Build the Pixgen app."""
     app = App(
@@ -35,7 +39,10 @@ def build_app(
         help="Generate and edit images with curated AI models.",
         version=_get_version,
     )
-    app.command(build_image_app(application))
+    resolved_factories = tuple(factories) if factories is not None else registry.cli_factories()
+    invoker = CommandInvoker(application)
+    app.command(build_operation_app(ImageOperation.IMAGE_CREATE, invoker, resolved_factories))
+    app.command(build_operation_app(ImageOperation.IMAGE_EDIT, invoker, resolved_factories))
     app.command(build_model_app(registry))
     return app
 
