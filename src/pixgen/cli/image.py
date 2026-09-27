@@ -5,17 +5,16 @@ from typing import TYPE_CHECKING
 
 from cyclopts import App
 
-from pixgen.cli.invoke import CommandInvoker
 from pixgen.cli.options import ExecutionOptions
 from pixgen.core.models import ImageOperation
 from pixgen.core.parameters import SharedImageParams
 from pixgen.core.requests import ImageCreateIntent, ImageEditIntent, SharedSelection
 
 if TYPE_CHECKING:
-    from pixgen.application import ImageApplication
     from pixgen.cli.contracts import ProviderCliFactory
+    from pixgen.cli.invoke import CommandInvoker
 
-__all__: list[str] = ["build_image_app", "build_operation_app"]
+__all__: list[str] = ["build_operation_app"]
 
 
 def build_operation_app(
@@ -99,16 +98,4 @@ def build_operation_app(
     for factory in factories:
         if operation in factory.operations:
             app.command(factory.build(operation, invoker))
-    return app
-
-
-def build_image_app(
-    application: ImageApplication,
-    factories: tuple[ProviderCliFactory, ...] = (),
-) -> App:
-    """Build the two root image operation apps for compatibility."""
-    invoker = CommandInvoker(application)
-    app = App(name="pixgen")
-    app.command(build_operation_app(ImageOperation.IMAGE_CREATE, invoker, factories))
-    app.command(build_operation_app(ImageOperation.IMAGE_EDIT, invoker, factories))
     return app

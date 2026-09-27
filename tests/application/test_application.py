@@ -8,7 +8,8 @@ import pytest
 from pixgen.application import ImageApplication
 from pixgen.config.models import Defaults, GenerationSettings, Settings
 from pixgen.core.errors import ErrorCode
-from pixgen.core.requests import ImageCreateIntent
+from pixgen.core.parameters import SharedImageParams
+from pixgen.core.requests import ImageCreateIntent, SharedSelection
 from pixgen.providers.base import PreparedImageRequest, ProviderImage
 from pixgen.providers.openai import OpenAIProvider
 from pixgen.providers.registry import ProviderRegistry
@@ -124,8 +125,10 @@ class TestImageApplication:
         )
         outcome = await ImageApplication(registry, settings).run(
             ImageCreateIntent(prompt="test"),
-            models=["openai/gpt-image-2", "openai/gpt-image-1-mini"],
-            aspect_ratio="16:9",
+            selection=SharedSelection(
+                models=("openai/gpt-image-2", "openai/gpt-image-1-mini"),
+                parameters=SharedImageParams(aspect_ratio="16:9"),
+            ),
         )
 
         assert outcome.exit_code == 2
@@ -148,7 +151,7 @@ class TestImageApplication:
 
         outcome = await ImageApplication(registry, settings).run(
             ImageCreateIntent(prompt="test"),
-            models=["fake/model", "fake/model"],
+            selection=SharedSelection(models=("fake/model", "fake/model")),
         )
 
         assert outcome.exit_code == 2
