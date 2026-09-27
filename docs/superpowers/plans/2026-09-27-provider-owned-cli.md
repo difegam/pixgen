@@ -73,6 +73,7 @@ For every task below, complete red, green, and affected-suite verification per b
 - `OperationDefinition[P: ProviderParams]`: `parameter_type: type[P]`, `defaults: P`, `media: Mapping[MediaRole, MediaRoleSpec]`, `aspect_ratios: Mapping[AspectRatio, JsonObject]`.
 - `OperationDefinition.resolve(shared: SharedImageParams) -> P`: merge only the mapped override into defaults and validate through `parameter_type`; unsupported ratio raises `ValueError` for the provider boundary to contextualise.
 - `ModelDefinition[P: ProviderParams]`: `spec: ModelSpec`, `operations: Mapping[ImageOperation, OperationDefinition[P]]`; validate declared operation/media agreement with the public spec.
+- `ProviderDefinition[M: ModelDefinition]`: frozen catalogue with `name: str` and `models: tuple[M, ...]`; validate unique IDs and matching provider prefixes. Bind concrete types or provider-local unions, never a central provider union. Keep clients, credentials, and apps outside this model.
 
 Definitions remain pure data plus pure validation. Exclude class objects from public catalogue output. Copy incoming mappings and nested override dictionaries; do not expose mutation as a supported capability-editing API. Validate defaults against their declared parameter type and every mapped payload merged with defaults at construction.
 
@@ -82,6 +83,7 @@ Definitions remain pure data plus pure validation. Exclude class objects from pu
 - [ ] Run the same test target and confirm all cases pass.
 - [ ] Add `TestOperationDefinition` tests: omission returns default values; matching ratio changes only mapped fields; unsupported ratio fails; invalid native override fails at construction; canonical-key collisions such as `16:9` and `32:18` fail rather than overwrite. Add a test mutating the input dictionary after construction and assert the definition remains unchanged. Add operation/media consistency tests for `ModelDefinition`.
 - [ ] Run `uv run pytest tests/core/test_definitions.py -v`, observe red, implement composed definitions, then rerun to green.
+- [ ] Add provider-catalogue tests for duplicate IDs, mismatched ownership, and preservation of different concrete native schemas in one provider-local union. Observe red, implement `ProviderDefinition`, and rerun the same definitions target to green.
 - [ ] Run `uv run pytest tests/core/test_aspect_ratio.py tests/core/test_definitions.py -v` and `just type-check`.
 - [ ] Commit the focused data-contract changes as `feat: define shared ratios and composed model definitions`.
 
@@ -90,7 +92,7 @@ Definitions remain pure data plus pure validation. Exclude class objects from pu
 **Files:** Replace `providers/openai.py` and `providers/gemini.py` with the packages listed above, initially without CLI modules. Modify `tests/providers/test_openai.py`, `test_gemini.py`; create `tests/providers/test_definitions.py`.
 
 **Interfaces:**
-- Both providers add `definitions() -> tuple[ModelDefinition[...], ...]`, with their concrete native parameter types. Preserve existing `models()` as the public `ModelSpec` projection.
+- Both providers own a concrete `ProviderDefinition` catalogue and add `definitions() -> tuple[ModelDefinition[...], ...]` projecting its models. Gemini uses a provider-local union for its regular and Lite schemas. Preserve existing `models()` as the public `ModelSpec` projection; derive provider names from the catalogue.
 - Expose typed definitions from each provider's `definitions.py`; existing catalogue constants remain public projections if existing callers need them.
 - `OpenAIParams`, `GeminiParams`, and `GeminiLiteParams` extend `ProviderParams`. Operation definitions bind concrete models, including the Lite restriction.
 - `parameter_schema(model: ModelId, operation: ImageOperation) -> JsonSchema` delegates to the exact operation definition, with unknown model/operation errors instead of fallback.

@@ -114,6 +114,8 @@ Strictness means the provider supports the requested named ratio and Pixgen does
 
 Use a frozen generic Pydantic `ModelDefinition[Params]` to associate existing catalogue metadata with operation definitions. Each operation definition contains its concrete native parameter type, validated provider defaults, input restrictions, and shared-ratio conversion map. Retain the existing public model metadata as a serialisable projection rather than serialising Python classes.
 
+A frozen `ProviderDefinition[Model]` composes the provider name and a tuple of concrete model definitions. Providers with different native parameter schemas use provider-local unions of concretely parameterised model definitions. No central union enumerates providers. Validate unique model IDs and matching provider prefixes within this catalogue. The catalogue holds no credentials, clients, or CLI apps; adapters and CLI factories remain separate executable contracts.
+
 Native parameter models use frozen Pydantic models with forbidden extras. Provider-local inheritance/composition may share fields across related models. Concrete model/operation definitions remain authoritative for restrictions. Avoid a central union listing every provider's parameter model.
 
 Keep a separate executable Python protocol for providers and a CLI-factory contract. Pydantic models do not contain Cyclopts apps, network clients, or orchestration callbacks.
