@@ -65,6 +65,14 @@ class TestOpenAIParams:
         assert exc_info.value.code == ErrorCode.INVALID_REQUEST
         assert "bogus" not in str(exc_info.value)
 
+    def test_mini_model_rejects_unsupported_native_size(self) -> None:
+        provider = OpenAIProvider(None)
+        with pytest.raises(Exception, match="invalid parameters"):
+            provider.validate(
+                intent=ImageCreateIntent(prompt="test", params={"size": "1536x864"}),
+                model=OPENAI_MODELS[1],
+            )
+
 
 class TestOpenAIProvider:
     """Tests for OpenAIProvider."""

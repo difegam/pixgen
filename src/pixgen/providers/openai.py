@@ -176,6 +176,13 @@ def _make_openai_definitions() -> ProviderDefinition[ModelDefinition[OpenAIParam
     )
 
 
+def _parameter_model(model: ModelId) -> type[OpenAIParams]:
+    """Return the native parameter model for an OpenAI model."""
+    if model == "openai/gpt-image-1-mini":
+        return OpenAIMiniParams
+    return OpenAIParams
+
+
 class OpenAIProvider:
     """OpenAI image generation provider."""
 
@@ -206,6 +213,12 @@ class OpenAIProvider:
     def models(self) -> tuple[ModelSpec, ...]:
         return OPENAI_MODELS
 
+    def cli_factory(self) -> object:
+        """Return the OpenAI-owned CLI factory."""
+        from pixgen.providers.openai_cli import OpenAICliFactory
+
+        return OpenAICliFactory()
+
     def definition_catalogue(self) -> ProviderDefinition[ModelDefinition[OpenAIParams]]:
         """Return the composed OpenAI model catalogue."""
         return _make_openai_definitions()
@@ -229,7 +242,7 @@ class OpenAIProvider:
         model: ModelSpec,
     ) -> ValidatedImageRequest:
         try:
-            params = OpenAIParams.model_validate(intent.params)
+            params = _parameter_model(model.id).model_validate(intent.params)
         except ValidationError as exc:
             raise PixgenError(ErrorCode.INVALID_REQUEST, validation_message(exc)) from exc
         parameters: JsonObject = params.model_dump(exclude_none=True)
