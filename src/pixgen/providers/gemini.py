@@ -3,8 +3,9 @@
 from datetime import date
 from typing import TYPE_CHECKING, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import ConfigDict, Field, ValidationError
 
+from pixgen.core.definitions import ModelDefinition, OperationDefinition, ProviderDefinition
 from pixgen.core.errors import ErrorCode, PixgenError, ProviderError, validation_message
 from pixgen.core.models import (
     ImageOperation,
@@ -15,6 +16,7 @@ from pixgen.core.models import (
     ModelId,
     ModelSpec,
 )
+from pixgen.core.parameters import ProviderParams
 from pixgen.core.requests import ImageIntent, ValidatedImageRequest
 from pixgen.providers.base import PreparedImageRequest, ProviderImage
 
@@ -25,6 +27,7 @@ if TYPE_CHECKING:
 
 __all__: list[str] = [
     "GEMINI_MODELS",
+    "GeminiParams",
     "GeminiProvider",
 ]
 
@@ -32,7 +35,7 @@ type AspectRatio = Literal["1:1", "2:3", "3:2", "3:4", "4:3", "9:16", "16:9", "2
 type ImageSize = Literal["1K", "2K", "4K"]
 
 
-class GeminiParams(BaseModel):
+class GeminiParams(ProviderParams):
     """Validated parameters for Gemini image models."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -104,6 +107,46 @@ _GEMINI_IMAGE_SIZES: dict[ModelId, tuple[str, ...]] = {
     "gemini/gemini-3-pro-image": ("1K", "2K", "4K"),
 }
 
+_GEMINI_SHARED_RATIOS = ("1:1", "2:3", "3:2", "3:4", "4:3", "9:16", "16:9", "7:3")
+
+
+def _gemini_operation(
+    spec: ModelSpec,
+    parameter_type: type[GeminiParams],
+) -> OperationDefinition[GeminiParams]:
+    """Build one Gemini operation definition."""
+    return OperationDefinition[GeminiParams](
+        parameter_type=parameter_type,
+        defaults=parameter_type(),
+        media=spec.media,
+        aspect_ratios={
+            ratio: {"aspect_ratio": "21:9" if ratio == "7:3" else ratio}
+            for ratio in _GEMINI_SHARED_RATIOS
+        },
+    )
+
+
+def _make_gemini_definitions() -> ProviderDefinition[ModelDefinition[GeminiParams]]:
+    """Build the Gemini provider catalogue."""
+    definitions: list[ModelDefinition[GeminiParams]] = []
+    for spec in GEMINI_MODELS:
+        parameter_type: type[GeminiParams] = (
+            GeminiLiteParams if spec.id == "gemini/gemini-3.1-flash-lite-image" else GeminiParams
+        )
+        definitions.append(
+            ModelDefinition[GeminiParams](
+                spec=spec,
+                operations={
+                    operation: _gemini_operation(spec, parameter_type)
+                    for operation in spec.operations
+                },
+            )
+        )
+    return ProviderDefinition[ModelDefinition[GeminiParams]](
+        name="gemini",
+        models=tuple(definitions),
+    )
+
 
 class GeminiProvider:
     """Gemini image generation provider."""
@@ -135,12 +178,21 @@ class GeminiProvider:
     def models(self) -> tuple[ModelSpec, ...]:
         return GEMINI_MODELS
 
+    def definition_catalogue(self) -> ProviderDefinition[ModelDefinition[GeminiParams]]:
+        """Return the composed Gemini model catalogue."""
+        return _make_gemini_definitions()
+
+    def definitions(self) -> tuple[ModelDefinition[GeminiParams], ...]:
+        """Return composed Gemini model definitions."""
+        return self.definition_catalogue().models
+
     def parameter_schema(
         self,
         model: ModelId,
-        operation: ImageOperation,  # noqa: ARG002
+        operation: ImageOperation,
     ) -> JsonSchema:
-        return _parameter_model(model).model_json_schema()
+        definition = next(item for item in self.definitions() if item.spec.id == model)
+        return definition.operations[operation].parameter_type.model_json_schema()
 
     def validate(
         self,

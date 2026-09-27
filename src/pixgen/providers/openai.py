@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, ValidationError
 
+from pixgen.core.definitions import ModelDefinition, OperationDefinition, ProviderDefinition
 from pixgen.core.errors import ErrorCode, PixgenError, ProviderError, validation_message
 from pixgen.core.models import (
     ImageOperation,
@@ -18,6 +19,7 @@ from pixgen.core.models import (
     ModelId,
     ModelSpec,
 )
+from pixgen.core.parameters import ProviderParams
 from pixgen.core.requests import (
     ImageCreateIntent,
     ImageEditIntent,
@@ -36,13 +38,14 @@ if TYPE_CHECKING:
 
 __all__: list[str] = [
     "OPENAI_MODELS",
+    "OpenAIParams",
     "OpenAIProvider",
 ]
 
 _OPENAI_BASE_URL = "https://api.openai.com/v1"
 
 
-class OpenAIParams(BaseModel):
+class OpenAIParams(ProviderParams):
     """Validated parameters for OpenAI image models."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -62,6 +65,15 @@ class OpenAIParams(BaseModel):
     )
     moderation: Literal["auto", "low"] | None = Field(
         default=None, description="Content moderation level"
+    )
+
+
+class OpenAIMiniParams(OpenAIParams):
+    """Parameters supported by the GPT Image 1 Mini model."""
+
+    size: Literal["1024x1024", "1024x1536", "1536x1024"] | None = Field(
+        default=None,
+        description="Image size preset",
     )
 
 
@@ -114,6 +126,55 @@ OPENAI_MODELS: tuple[ModelSpec, ...] = (
     _make_openai_spec("openai/gpt-image-1-mini", "GPT Image 1 Mini"),
 )
 
+_OPENAI_RATIO_SIZES: dict[str, str] = {
+    "1:1": "1024x1024",
+    "2:3": "1024x1536",
+    "3:2": "1536x1024",
+    "3:4": "864x1152",
+    "4:3": "1152x864",
+    "9:16": "864x1536",
+    "16:9": "1536x864",
+    "7:3": "1792x768",
+}
+
+
+def _openai_operation(
+    spec: ModelSpec,
+    parameter_type: type[OpenAIParams],
+    sizes: dict[str, str],
+) -> OperationDefinition[OpenAIParams]:
+    """Build one OpenAI operation definition."""
+    return OperationDefinition[OpenAIParams](
+        parameter_type=parameter_type,
+        defaults=parameter_type(),
+        media=spec.media,
+        aspect_ratios={ratio: {"size": size} for ratio, size in sizes.items()},
+    )
+
+
+def _make_openai_definitions() -> ProviderDefinition[ModelDefinition[OpenAIParams]]:
+    """Build the OpenAI provider catalogue."""
+    definitions: list[ModelDefinition[OpenAIParams]] = []
+    for spec in OPENAI_MODELS:
+        sizes = _OPENAI_RATIO_SIZES
+        parameter_type: type[OpenAIParams] = OpenAIParams
+        if spec.id == "openai/gpt-image-1-mini":
+            sizes = {key: _OPENAI_RATIO_SIZES[key] for key in ("1:1", "2:3", "3:2")}
+            parameter_type = OpenAIMiniParams
+        definitions.append(
+            ModelDefinition[OpenAIParams](
+                spec=spec,
+                operations={
+                    operation: _openai_operation(spec, parameter_type, sizes)
+                    for operation in spec.operations
+                },
+            )
+        )
+    return ProviderDefinition[ModelDefinition[OpenAIParams]](
+        name="openai",
+        models=tuple(definitions),
+    )
+
 
 class OpenAIProvider:
     """OpenAI image generation provider."""
@@ -145,12 +206,21 @@ class OpenAIProvider:
     def models(self) -> tuple[ModelSpec, ...]:
         return OPENAI_MODELS
 
+    def definition_catalogue(self) -> ProviderDefinition[ModelDefinition[OpenAIParams]]:
+        """Return the composed OpenAI model catalogue."""
+        return _make_openai_definitions()
+
+    def definitions(self) -> tuple[ModelDefinition[OpenAIParams], ...]:
+        """Return composed OpenAI model definitions."""
+        return self.definition_catalogue().models
+
     def parameter_schema(
         self,
-        model: ModelId,  # noqa: ARG002
-        operation: ImageOperation,  # noqa: ARG002
+        model: ModelId,
+        operation: ImageOperation,
     ) -> JsonSchema:
-        return OpenAIParams.model_json_schema()
+        definition = next(item for item in self.definitions() if item.spec.id == model)
+        return definition.operations[operation].parameter_type.model_json_schema()
 
     def validate(
         self,
