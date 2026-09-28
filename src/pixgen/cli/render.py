@@ -1,7 +1,9 @@
 """Render command results for human and JSON output."""
 
 import json
+import os
 import sys
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from rich import box
@@ -25,7 +27,12 @@ _stdout_console = Console(highlight=False, markup=False)
 _stderr_console = Console(stderr=True, highlight=False, markup=False)
 
 
-def render_command_result(result: CommandResult, *, as_json: bool) -> None:
+def render_command_result(
+    result: CommandResult,
+    *,
+    as_json: bool,
+    relative_output_paths: bool = False,
+) -> None:
     """Render a CommandResult to stdout."""
     if as_json:
         sys.stdout.write(result.model_dump_json(indent=2) + "\n")
@@ -36,7 +43,7 @@ def render_command_result(result: CommandResult, *, as_json: bool) -> None:
         return
 
     if _stdout_console.is_interactive:
-        _render_interactive_command_result(result)
+        _render_interactive_command_result(result, relative_output_paths=relative_output_paths)
         return
 
     _stdout_console.print(f"Run ID: {result.run_id}")
@@ -62,7 +69,9 @@ def create_generation_progress(*, as_json: bool) -> GenerationProgress | None:
     return GenerationProgress(_stderr_console)
 
 
-def _render_interactive_command_result(result: CommandResult) -> None:
+def _render_interactive_command_result(
+    result: CommandResult, *, relative_output_paths: bool
+) -> None:
     _stdout_console.print(f"Run ID: {result.run_id}")
     table = Table(
         "Model",
@@ -77,14 +86,28 @@ def _render_interactive_command_result(result: CommandResult) -> None:
         if target.error is not None:
             status = Text("Failed", style="red")
             detail = Text(target.error.message)
-        elif target.warnings:
-            status = Text("Saved with warnings", style="yellow")
-            detail = Text("\n".join((str(target.artifact_path), *target.warnings)))
         else:
-            status = Text("Saved", style="green")
-            detail = Text(str(target.artifact_path))
+            artifact_path = target.artifact_path
+            if artifact_path is None:
+                raise RuntimeError("successful target is missing its artifact path")
+            output_path = _display_output_path(
+                artifact_path,
+                relative_output_paths=relative_output_paths,
+            )
+            if target.warnings:
+                status = Text("Saved with warnings", style="yellow")
+                detail = Text("\n".join((output_path, *target.warnings)))
+            else:
+                status = Text("Saved", style="green")
+                detail = Text(output_path)
         table.add_row(str(target.model), str(target.variant), status, detail)
     _stdout_console.print(table)
+
+
+def _display_output_path(path: Path, *, relative_output_paths: bool) -> str:
+    if not relative_output_paths:
+        return str(path)
+    return os.path.relpath(path, Path.cwd())
 
 
 def render_model_list_result(result: ModelListResult, *, as_json: bool) -> None:

@@ -41,5 +41,9 @@ class CommandInvoker:
         finally:
             if progress is not None:
                 progress.stop()
-        render_command_result(outcome.result, as_json=options.as_json)
+        render_command_result(
+            outcome.result,
+            as_json=options.as_json,
+            relative_output_paths=options.output is None and options.output_dir is None,
+        )
         raise SystemExit(outcome.exit_code)

@@ -64,6 +64,7 @@ async def test_invoker_stops_progress_before_rendering(monkeypatch) -> None:
 
     def render_result(*_args, **_kwargs) -> None:
         assert progress.stopped
+        assert _kwargs["relative_output_paths"] is True
         events.append("render")
 
     monkeypatch.setattr(invoke, "render_command_result", render_result)
@@ -84,7 +85,7 @@ async def test_invoker_excludes_progress_from_json(monkeypatch) -> None:
     events: list[str] = []
     application = RecordingApplication(_outcome(exit_code=0), events)
     factory_calls: list[bool] = []
-    render_json: list[bool] = []
+    render_options: list[tuple[bool, bool]] = []
 
     def create_progress(*, as_json: bool) -> None:
         factory_calls.append(as_json)
@@ -93,7 +94,9 @@ async def test_invoker_excludes_progress_from_json(monkeypatch) -> None:
     monkeypatch.setattr(
         invoke,
         "render_command_result",
-        lambda _result, *, as_json: render_json.append(as_json),
+        lambda _result, *, as_json, relative_output_paths: render_options.append(
+            (as_json, relative_output_paths)
+        ),
     )
 
     with pytest.raises(SystemExit) as exc_info:
@@ -106,4 +109,33 @@ async def test_invoker_excludes_progress_from_json(monkeypatch) -> None:
     assert exc_info.value.code == 0
     assert factory_calls == [True]
     assert application.observer is None
-    assert render_json == [True]
+    assert render_options == [(True, True)]
+
+
+async def test_invoker_keeps_explicit_output_paths_absolute(monkeypatch, tmp_path) -> None:
+    events: list[str] = []
+    application = RecordingApplication(_outcome(exit_code=0), events)
+    render_options: list[bool] = []
+
+    def create_progress(*, as_json: bool) -> None:
+        del as_json
+
+    def render_result(_result, *, as_json: bool, relative_output_paths: bool) -> None:
+        del as_json
+        render_options.append(relative_output_paths)
+
+    monkeypatch.setattr(invoke, "create_generation_progress", create_progress)
+    monkeypatch.setattr(
+        invoke,
+        "render_command_result",
+        render_result,
+    )
+
+    with pytest.raises(SystemExit):
+        await CommandInvoker(application).invoke(
+            ImageCreateIntent(prompt="test"),
+            SharedSelection(models=("fake/model",)),
+            ExecutionOptions(output_dir=tmp_path / "custom-output"),
+        )
+
+    assert render_options == [False]

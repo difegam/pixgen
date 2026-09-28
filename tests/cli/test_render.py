@@ -63,6 +63,33 @@ def test_render_command_result_uses_table_for_interactive_terminal(monkeypatch) 
     assert "literal [error]" in output
 
 
+def test_render_command_result_shows_default_output_relative_to_current_directory(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    stdout = _console(interactive=True)
+    monkeypatch.setattr(render, "_stdout_console", stdout)
+    monkeypatch.setattr(render, "_stderr_console", _console(interactive=True))
+    artifact_path = tmp_path / "pixgen" / "image.png"
+    result = CommandResult(
+        run_id=uuid.uuid7(),
+        results=(
+            TargetResult(
+                model="fake/model",
+                variant=1,
+                artifact_path=artifact_path,
+                media_type="image/png",
+            ),
+        ),
+    )
+
+    render.render_command_result(result, as_json=False, relative_output_paths=True)
+
+    output = stdout.export_text()
+    assert "pixgen/image.png" in output
+    assert str(artifact_path) not in output
+
+
 def test_render_command_result_preserves_plain_output_when_not_interactive(monkeypatch) -> None:
     stdout = _console(interactive=False)
     stderr = _console(interactive=False)
