@@ -1,7 +1,7 @@
 import asyncio
 import uuid
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from pydantic import ValidationError
 
@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from pixgen.providers.registry import ProviderRegistry
 
 __all__: list[str] = [
+    "GenerationObserver",
     "ImageApplication",
     "RunOutcome",
 ]
@@ -40,6 +41,23 @@ class RunOutcome:
 
     result: CommandResult
     exit_code: int
+
+
+@runtime_checkable
+class GenerationObserver(Protocol):
+    """Receive lifecycle events for one image generation run."""
+
+    def run_started(self, plans: tuple[OutputPlan, ...]) -> None:
+        """Report planned targets after preflight completes."""
+        ...
+
+    def job_started(self, plan: OutputPlan) -> None:
+        """Report a target that acquired generation capacity."""
+        ...
+
+    def job_finished(self, plan: OutputPlan, result: TargetResult) -> None:
+        """Report a target's terminal result."""
+        ...
 
 
 class ImageApplication:
@@ -60,6 +78,7 @@ class ImageApplication:
         mkdir: bool = False,
         force: bool = False,
         timeout_seconds: int | None = None,
+        observer: GenerationObserver | None = None,
     ) -> RunOutcome:
         """Run an image generation command."""
         run_id = uuid.uuid7()
@@ -112,7 +131,9 @@ class ImageApplication:
             )
             return RunOutcome(result, 2)
 
-        results = await self._execute_jobs(plans, prepared, providers, timeout_seconds)
+        if observer is not None:
+            observer.run_started(tuple(plans))
+        results = await self._execute_jobs(plans, prepared, providers, timeout_seconds, observer)
         failures = sum(r.error is not None for r in results)
         if failures == 0:
             exit_code = 0
@@ -214,6 +235,7 @@ class ImageApplication:
         prepared: dict[ModelId, PreparedImageRequest],
         providers: dict[ModelId, ImageProvider],
         timeout_seconds: int | None,
+        observer: GenerationObserver | None,
     ) -> list[TargetResult]:
         generation = self._settings.generation
         semaphore = asyncio.Semaphore(generation.max_parallel_requests)
@@ -233,6 +255,7 @@ class ImageApplication:
                                 providers[plan.model_id],
                                 semaphore,
                                 request_timeout,
+                                observer,
                             )
                         )
                         for plan in plans
@@ -245,16 +268,17 @@ class ImageApplication:
             if not task.cancelled():
                 results.append(task.result())
             else:
-                results.append(
-                    TargetResult(
-                        model=plan.model_id,
-                        variant=plan.variant,
-                        error=PublicError(
-                            code=ErrorCode.TIMEOUT,
-                            message="run deadline exceeded",
-                        ),
-                    )
+                result = TargetResult(
+                    model=plan.model_id,
+                    variant=plan.variant,
+                    error=PublicError(
+                        code=ErrorCode.TIMEOUT,
+                        message="run deadline exceeded",
+                    ),
                 )
+                if observer is not None:
+                    observer.job_finished(plan, result)
+                results.append(result)
         return results
 
 
@@ -308,8 +332,11 @@ async def _run_job(
     provider: ImageProvider,
     semaphore: asyncio.Semaphore,
     request_timeout: int,
+    observer: GenerationObserver | None,
 ) -> TargetResult:
     async with semaphore:
+        if observer is not None:
+            observer.job_started(plan)
         try:
             async with asyncio.timeout(request_timeout):
                 image = await provider.generate(prepared)
@@ -329,11 +356,17 @@ async def _run_job(
                 message="unexpected provider failure",
             )
         else:
-            return TargetResult(
+            result = TargetResult(
                 model=plan.model_id,
                 variant=plan.variant,
                 artifact_path=publication.path,
                 media_type=image.media_type,
                 warnings=publication.warnings,
             )
-    return TargetResult(model=plan.model_id, variant=plan.variant, error=error)
+            if observer is not None:
+                observer.job_finished(plan, result)
+            return result
+        result = TargetResult(model=plan.model_id, variant=plan.variant, error=error)
+        if observer is not None:
+            observer.job_finished(plan, result)
+        return result

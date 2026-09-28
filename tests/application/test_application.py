@@ -86,8 +86,103 @@ class FatalProvider(SlowProvider):
         raise FatalProviderError
 
 
+class RecordingObserver:
+    """Record generation lifecycle events for assertions."""
+
+    def __init__(self) -> None:
+        self.events: list[tuple[str, object, object | None]] = []
+
+    def run_started(self, plans: object) -> None:
+        self.events.append(("run_started", plans, None))
+
+    def job_started(self, plan: object) -> None:
+        self.events.append(("job_started", plan, None))
+
+    def job_finished(self, plan: object, result: object) -> None:
+        self.events.append(("job_finished", plan, result))
+
+
 class TestImageApplication:
     """Test application-level result handling."""
+
+    async def test_reports_each_serialised_job_lifecycle(self, tmp_path: Path) -> None:
+        from tests.factories import make_model_spec
+
+        model = make_model_spec(model_id="fake/model")
+        registry = ProviderRegistry((SlowProvider(model, 0),))
+        settings = Settings(
+            defaults=Defaults(image_create_models=("fake/model",)),
+            generation=GenerationSettings(output_dir=tmp_path, max_parallel_requests=1),
+        )
+        observer = RecordingObserver()
+
+        outcome = await ImageApplication(registry, settings).run(
+            ImageCreateIntent(prompt="test"),
+            variants=2,
+            observer=observer,
+        )
+
+        assert [event[0] for event in observer.events] == [
+            "run_started",
+            "job_started",
+            "job_finished",
+            "job_started",
+            "job_finished",
+        ]
+        planned = observer.events[0][1]
+        assert tuple(plan.variant for plan in planned) == (1, 2)
+        assert [event[1].variant for event in observer.events[1:]] == [1, 1, 2, 2]
+        assert [event[2] for event in observer.events if event[0] == "job_finished"] == list(
+            outcome.result.results
+        )
+
+    async def test_reports_synthetic_run_timeout_result(self, tmp_path: Path) -> None:
+        from tests.factories import make_model_spec
+
+        model = make_model_spec(model_id="fake/model")
+        registry = ProviderRegistry((SlowProvider(model, 0.6),))
+        settings = Settings(
+            defaults=Defaults(image_create_models=("fake/model",)),
+            generation=GenerationSettings(
+                output_dir=tmp_path,
+                max_parallel_requests=1,
+                max_jobs=2,
+                run_timeout_seconds=1,
+            ),
+        )
+        observer = RecordingObserver()
+
+        outcome = await ImageApplication(registry, settings).run(
+            ImageCreateIntent(prompt="test"),
+            variants=2,
+            observer=observer,
+        )
+
+        timed_out = observer.events[-1]
+        assert timed_out[0] == "job_finished"
+        assert timed_out[1].variant == 2
+        assert timed_out[2] == outcome.result.results[1]
+        assert timed_out[2].error is not None
+        assert timed_out[2].error.message == "run deadline exceeded"
+
+    async def test_does_not_report_preflight_failure(self, tmp_path: Path) -> None:
+        from tests.factories import make_model_spec
+
+        model = make_model_spec(model_id="fake/model")
+        registry = ProviderRegistry((UnavailableProvider(model),))
+        settings = Settings(
+            defaults=Defaults(image_create_models=("fake/model",)),
+            generation=GenerationSettings(output_dir=tmp_path),
+        )
+        observer = RecordingObserver()
+
+        outcome = await ImageApplication(registry, settings).run(
+            ImageCreateIntent(prompt="test"),
+            observer=observer,
+        )
+
+        assert outcome.exit_code == 2
+        assert observer.events == []
 
     @pytest.mark.asyncio
     async def test_preserves_preflight_error_code(self, tmp_path: Path) -> None:
