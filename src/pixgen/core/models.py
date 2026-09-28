@@ -12,6 +12,7 @@ from pydantic import (
     Field,
     JsonValue,
     StringConstraints,
+    computed_field,
     model_validator,
 )
 
@@ -25,12 +26,20 @@ __all__: list[str] = [
     "ModelSpec",
 ]
 
+
 type ModelId = Annotated[
     str,
-    StringConstraints(pattern=r"^[a-z0-9][a-z0-9-]*/[a-z0-9][a-z0-9._-]*$"),
+    StringConstraints(
+        min_length=3,
+        max_length=200,
+        pattern=r"^[a-z0-9][a-z0-9-]*/[a-z0-9][a-z0-9._-]*$",
+    ),
 ]
 type JsonObject = dict[str, JsonValue]
 type JsonSchema = dict[str, JsonValue]
+
+type ModelProvider = str
+type ModelName = str
 
 
 class ImageOperation(StrEnum):
@@ -77,3 +86,29 @@ class ModelSpec(BaseModel):
     )
     documentation_url: AnyHttpUrl = Field(description="Vendor documentation URL")
     verified_at: date = Field(description="Date the specification was verified")
+
+    @computed_field
+    @property
+    def provider(self) -> ModelProvider:
+        """Return the provider part of the provider/model identifier."""
+        return self.id.split("/", 1)[0]
+
+    @computed_field
+    @property
+    def model(self) -> ModelName:
+        """Return the model part of the provider/model identifier."""
+        return self.id.split("/", 1)[1]
+
+
+class ProviderModelInfo(BaseModel):
+    id: ModelId = Field(description="Canonical provider/model identifier")
+
+    @computed_field
+    @property
+    def provider(self) -> ModelProvider:
+        return self.id.split("/", 1)[0]
+
+    @computed_field
+    @property
+    def model(self) -> ModelName:
+        return self.id.split("/", 1)[1]

@@ -6,7 +6,13 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from pixgen.core.models import ImageOperation, JsonObject, MediaRole, MediaRoleSpec, ModelSpec
+from pixgen.core.models import (
+    ImageOperation,
+    JsonObject,
+    MediaRole,
+    MediaRoleSpec,
+    ModelSpec,
+)
 from pixgen.core.parameters import ProviderParams, SharedImageParams
 
 __all__: list[str] = ["ModelDefinition", "OperationDefinition", "ProviderDefinition"]
@@ -86,7 +92,7 @@ class ProviderDefinition[M: ModelDefinition[ProviderParams]](BaseModel):
 
     @model_validator(mode="after")
     def _validate_models(self) -> ProviderDefinition[M]:
-        ids = [str(model.spec.id) for model in self.models]
+        ids = [model.spec.id for model in self.models]
         if len(ids) != len(set(ids)):
             raise ValueError("duplicate model ID in provider catalogue")
         for model_id in ids:
