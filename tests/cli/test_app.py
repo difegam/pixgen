@@ -85,6 +85,21 @@ def test_root_shared_create_accepts_repeated_models_and_ratio(app) -> None:
     assert bound.arguments["aspect_ratio"] == "16:9"
 
 
+@pytest.mark.parametrize(
+    ("arguments", "command_name"),
+    [
+        (["create", "A forest"], "create"),
+        (["edit", "--image", "source.png", "Add mist"], "edit"),
+    ],
+)
+def test_shared_operations_keep_generation_feedback_internal(app, arguments, command_name) -> None:
+    command, bound, _ = app.parse_args(arguments, print_error=False, exit_on_error=False)
+
+    assert command.__name__ == command_name
+    assert "verbose" not in bound.arguments
+    assert "progress" not in bound.arguments
+
+
 def test_root_provider_subcommand_owns_native_flags(app) -> None:
     command, bound, _ = app.parse_args(
         ["create", "openai", "--model", "gpt-image-2", "--quality", "high", "A forest"],

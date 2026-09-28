@@ -2,7 +2,7 @@
 
 from typing import TYPE_CHECKING
 
-from pixgen.cli.render import render_command_result
+from pixgen.cli.render import create_generation_progress, render_command_result
 
 if TYPE_CHECKING:
     from pixgen.application import ImageApplication
@@ -25,15 +25,21 @@ class CommandInvoker:
         options: ExecutionOptions,
     ) -> None:
         """Run one typed selection and exit with the application status."""
-        outcome = await self._application.run(
-            intent,
-            selection=selection,
-            variants=options.variants,
-            output=options.output,
-            output_dir=options.output_dir,
-            mkdir=options.mkdir,
-            force=options.force,
-            timeout_seconds=options.timeout_seconds,
-        )
+        progress = create_generation_progress(as_json=options.as_json)
+        try:
+            outcome = await self._application.run(
+                intent,
+                selection=selection,
+                variants=options.variants,
+                output=options.output,
+                output_dir=options.output_dir,
+                mkdir=options.mkdir,
+                force=options.force,
+                timeout_seconds=options.timeout_seconds,
+                observer=progress,
+            )
+        finally:
+            if progress is not None:
+                progress.stop()
         render_command_result(outcome.result, as_json=options.as_json)
         raise SystemExit(outcome.exit_code)
