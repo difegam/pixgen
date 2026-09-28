@@ -4,7 +4,15 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from pixgen.core.models import ImageOperation, JsonSchema, MediaRole, ModelId, ModelSpec
+    from pixgen.core.models import (
+        ImageOperation,
+        JsonObject,
+        JsonSchema,
+        MediaRole,
+        ModelId,
+        ModelSpec,
+    )
+    from pixgen.core.parameters import SharedImageParams
     from pixgen.core.requests import ImageIntent, ValidatedImageRequest
     from pixgen.images.models import LocalImage
 
@@ -61,6 +69,23 @@ class ImageProvider(Protocol):
         operation: ImageOperation,
     ) -> JsonSchema:
         """Return the JSON Schema for a model's parameters."""
+        ...
+
+    def resolve_shared_parameters(
+        self,
+        model: ModelId,
+        operation: ImageOperation,
+        shared: SharedImageParams,
+    ) -> JsonObject:
+        """Resolve portable parameters for one model operation."""
+        ...
+
+    def shared_aspect_ratios(
+        self,
+        model: ModelId,
+        operation: ImageOperation,
+    ) -> tuple[str, ...]:
+        """Return portable aspect ratios supported by one model operation."""
         ...
 
     def validate(

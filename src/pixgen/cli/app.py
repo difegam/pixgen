@@ -31,18 +31,18 @@ def _get_version() -> str:
 def build_app(
     application: ImageApplication,
     registry: ProviderRegistry,
-    factories: tuple[ProviderCliFactory, ...] | None = None,
+    factories: tuple[ProviderCliFactory, ...],
 ) -> App:
     """Build the Pixgen app."""
+    _validate_factories(registry, factories)
     app = App(
         name="pixgen",
         help="Generate and edit images with curated AI models.",
         version=_get_version,
     )
-    resolved_factories = tuple(factories) if factories is not None else registry.cli_factories()
     invoker = CommandInvoker(application)
-    app.command(build_operation_app(ImageOperation.IMAGE_CREATE, invoker, resolved_factories))
-    app.command(build_operation_app(ImageOperation.IMAGE_EDIT, invoker, resolved_factories))
+    app.command(build_operation_app(ImageOperation.IMAGE_CREATE, invoker, factories))
+    app.command(build_operation_app(ImageOperation.IMAGE_EDIT, invoker, factories))
     app.command(build_model_app(registry))
     return app
 
@@ -51,6 +51,34 @@ def main() -> None:
     """Console entry point for pixgen."""
     from pixgen.runtime import build_runtime
 
-    application, registry, _settings = build_runtime()
-    app = build_app(application, registry)
+    runtime = build_runtime()
+    app = build_app(runtime.application, runtime.registry, runtime.cli_factories)
     app()
+
+
+def _validate_factories(
+    registry: ProviderRegistry,
+    factories: tuple[ProviderCliFactory, ...],
+) -> None:
+    """Validate that CLI factories exactly cover registered providers."""
+    providers = {provider.name: provider for provider in registry.providers()}
+    factory_names: set[str] = set()
+    for factory in factories:
+        if factory.name in factory_names:
+            raise ValueError(f"duplicate provider CLI name: {factory.name!r}")
+        provider = providers.get(factory.name)
+        if provider is None:
+            raise ValueError(f"CLI factory {factory.name!r} is not registered")
+        supported_operations = {
+            operation for spec in provider.models() for operation in spec.operations
+        }
+        unsupported_operations = factory.operations - supported_operations
+        if unsupported_operations:
+            raise ValueError(
+                f"CLI factory {factory.name!r} declares unsupported operations: "
+                f"{sorted(operation.value for operation in unsupported_operations)!r}"
+            )
+        factory_names.add(factory.name)
+    missing = set(providers) - factory_names
+    if missing:
+        raise ValueError(f"registered providers lack CLI factories: {sorted(missing)!r}")

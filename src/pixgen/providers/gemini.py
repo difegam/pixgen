@@ -16,7 +16,7 @@ from pixgen.core.models import (
     ModelId,
     ModelSpec,
 )
-from pixgen.core.parameters import ProviderParams
+from pixgen.core.parameters import ProviderParams, SharedImageParams
 from pixgen.core.requests import ImageIntent, ValidatedImageRequest
 from pixgen.providers.base import PreparedImageRequest, ProviderImage
 
@@ -178,12 +178,6 @@ class GeminiProvider:
     def models(self) -> tuple[ModelSpec, ...]:
         return GEMINI_MODELS
 
-    def cli_factory(self) -> object:
-        """Return the Gemini-owned CLI factory."""
-        from pixgen.providers.gemini_cli import GeminiCliFactory
-
-        return GeminiCliFactory()
-
     def definition_catalogue(self) -> ProviderDefinition[ModelDefinition[GeminiParams]]:
         """Return the composed Gemini model catalogue."""
         return _make_gemini_definitions()
@@ -197,8 +191,54 @@ class GeminiProvider:
         model: ModelId,
         operation: ImageOperation,
     ) -> JsonSchema:
-        definition = next(item for item in self.definitions() if item.spec.id == model)
-        return definition.operations[operation].parameter_type.model_json_schema()
+        return self._operation_definition(model, operation).parameter_type.model_json_schema()
+
+    def resolve_shared_parameters(
+        self,
+        model: ModelId,
+        operation: ImageOperation,
+        shared: SharedImageParams,
+    ) -> JsonObject:
+        """Resolve portable parameters for one Gemini model operation."""
+        definition = self._operation_definition(model, operation)
+        try:
+            parameters = definition.resolve(shared)
+        except ValueError as exc:
+            supported = ", ".join(sorted(definition.aspect_ratios))
+            raise PixgenError(
+                ErrorCode.INVALID_REQUEST,
+                f"model {model} does not support aspect ratio {shared.aspect_ratio}; "
+                f"supported ratios: {supported}",
+            ) from exc
+        return parameters.model_dump(exclude_none=True)
+
+    def shared_aspect_ratios(
+        self,
+        model: ModelId,
+        operation: ImageOperation,
+    ) -> tuple[str, ...]:
+        """Return portable aspect ratios supported by one Gemini model operation."""
+        return tuple(sorted(self._operation_definition(model, operation).aspect_ratios))
+
+    def _operation_definition(
+        self,
+        model: ModelId,
+        operation: ImageOperation,
+    ) -> OperationDefinition[GeminiParams]:
+        """Return one Gemini operation definition."""
+        definition = next((item for item in self.definitions() if item.spec.id == model), None)
+        if definition is None:
+            raise PixgenError(
+                ErrorCode.MODEL_NOT_FOUND,
+                f"model {model!r} is not in the provider catalogue",
+            )
+        operation_definition = definition.operations.get(operation)
+        if operation_definition is None:
+            raise PixgenError(
+                ErrorCode.INVALID_REQUEST,
+                f"model {model} does not support {operation.value}",
+            )
+        return operation_definition
 
     def validate(
         self,

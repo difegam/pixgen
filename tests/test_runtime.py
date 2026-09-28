@@ -18,7 +18,10 @@ def test_build_runtime_does_not_construct_clients_for_catalogue_commands() -> No
         patch("pixgen.runtime.load_settings", return_value=settings),
         patch("pixgen.runtime.httpx2.AsyncClient", autospec=True) as async_client,
     ):
-        _, registry, _ = build_runtime()
+        runtime = build_runtime()
 
     assert async_client.call_count == 0
-    assert all(registry.provider_for(model.id).available for model in registry.models())
+    assert all(
+        runtime.registry.provider_for(model.id).available for model in runtime.registry.models()
+    )
+    assert tuple(factory.name for factory in runtime.cli_factories) == ("openai", "gemini")

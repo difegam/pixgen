@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from pixgen.config.models import Settings
-    from pixgen.core.models import ImageOperation, JsonObject, ModelId
+    from pixgen.core.models import JsonObject, ModelId
     from pixgen.providers.registry import ProviderRegistry
 
 __all__: list[str] = [
@@ -180,8 +180,7 @@ class ImageApplication:
                 params = native_parameters.model_dump(exclude_none=True)
             elif shared_parameters is not None and shared_parameters.aspect_ratio is not None:
                 params.update(
-                    _resolve_shared_parameters(
-                        provider,
+                    provider.resolve_shared_parameters(
                         model_spec.id,
                         intent.operation,
                         shared_parameters,
@@ -264,43 +263,6 @@ def _load_images(paths: tuple[Path, ...]) -> tuple[LocalImage, ...]:
         return tuple(load_image(path) for path in paths)
     except ImageInputError as exc:
         raise PixgenError(ErrorCode.INVALID_REQUEST, str(exc)) from exc
-
-
-def _resolve_shared_parameters(
-    provider: ImageProvider,
-    model_id: ModelId,
-    operation: ImageOperation,
-    shared: SharedImageParams,
-) -> JsonObject:
-    """Resolve shared parameters through a provider-owned model definition."""
-    definitions = getattr(provider, "definitions", None)
-    if definitions is None:
-        raise PixgenError(
-            ErrorCode.INVALID_REQUEST,
-            f"model {model_id} does not support shared aspect ratios",
-        )
-    definition = next((item for item in definitions() if item.spec.id == model_id), None)
-    if definition is None:
-        raise PixgenError(
-            ErrorCode.MODEL_NOT_FOUND,
-            f"model {model_id!r} is not in the provider catalogue",
-        )
-    operation_definition = definition.operations.get(operation)
-    if operation_definition is None:
-        raise PixgenError(
-            ErrorCode.INVALID_REQUEST,
-            f"model {model_id} does not support {operation.value}",
-        )
-    try:
-        parameters = operation_definition.resolve(shared)
-    except ValueError as exc:
-        supported = ", ".join(sorted(operation_definition.aspect_ratios))
-        raise PixgenError(
-            ErrorCode.INVALID_REQUEST,
-            f"model {model_id} does not support aspect ratio {shared.aspect_ratio}; "
-            f"supported ratios: {supported}",
-        ) from exc
-    return parameters.model_dump(exclude_none=True)
 
 
 def _validate_media(request: ValidatedImageRequest, images: tuple[LocalImage, ...]) -> None:

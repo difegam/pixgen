@@ -1,26 +1,64 @@
 """Tests for the root Pixgen command tree."""
 
-from typing import TYPE_CHECKING
-
 import pytest
+from cyclopts import App
 from cyclopts.exceptions import UnknownCommandError, UnknownOptionError
 
 from pixgen.application import ImageApplication
 from pixgen.cli.app import build_app
 from pixgen.config.models import Settings
+from pixgen.core.models import ImageOperation, ModelSpec
 from pixgen.providers.gemini import GeminiProvider
+from pixgen.providers.gemini_cli import GeminiCliFactory
 from pixgen.providers.openai import OpenAIProvider
+from pixgen.providers.openai_cli import OpenAICliFactory
 from pixgen.providers.registry import ProviderRegistry
 
-if TYPE_CHECKING:
-    from cyclopts import App
+
+class UnregisteredFactory:
+    """Factory whose provider is absent from the registry."""
+
+    name = "example"
+    operations = frozenset({ImageOperation.IMAGE_CREATE})
+
+    def build(self, _operation: ImageOperation, _invoker: object) -> App:
+        """Build a placeholder provider app."""
+        return App(name=self.name)
+
+
+class CreateOnlyProvider:
+    """Provider catalogue entry used to validate factory operations."""
+
+    name = "example"
+
+    def models(self) -> tuple[ModelSpec, ...]:
+        """Return one create-only model."""
+        from tests.factories import make_model_spec
+
+        return (
+            make_model_spec(
+                model_id="example/demo",
+                operations=frozenset({ImageOperation.IMAGE_CREATE}),
+            ),
+        )
+
+
+class EditOnlyFactory(UnregisteredFactory):
+    """Factory that declares an operation its provider does not support."""
+
+    name = "example"
+    operations = frozenset({ImageOperation.IMAGE_EDIT})
 
 
 @pytest.fixture
 def app() -> App:
     """Build a credential-free root app for parser tests."""
     registry = ProviderRegistry((OpenAIProvider(None), GeminiProvider(None)))
-    return build_app(ImageApplication(registry, Settings()), registry)
+    return build_app(
+        ImageApplication(registry, Settings()),
+        registry,
+        (OpenAICliFactory(), GeminiCliFactory()),
+    )
 
 
 def test_root_shared_create_accepts_repeated_models_and_ratio(app) -> None:
@@ -76,4 +114,48 @@ def test_removed_image_group_and_raw_parameter_option_are_rejected(app) -> None:
             ["create", "--param", "quality=high", "A forest"],
             print_error=False,
             exit_on_error=False,
+        )
+
+
+def test_root_app_rejects_factory_without_registered_provider() -> None:
+    registry = ProviderRegistry((OpenAIProvider(None), GeminiProvider(None)))
+
+    with pytest.raises(ValueError, match="is not registered"):
+        build_app(
+            ImageApplication(registry, Settings()),
+            registry,
+            (OpenAICliFactory(), GeminiCliFactory(), UnregisteredFactory()),
+        )
+
+
+def test_root_app_rejects_missing_provider_factory() -> None:
+    registry = ProviderRegistry((OpenAIProvider(None), GeminiProvider(None)))
+
+    with pytest.raises(ValueError, match="lack CLI factories"):
+        build_app(
+            ImageApplication(registry, Settings()),
+            registry,
+            (OpenAICliFactory(),),
+        )
+
+
+def test_root_app_rejects_duplicate_factory_names() -> None:
+    registry = ProviderRegistry((OpenAIProvider(None), GeminiProvider(None)))
+
+    with pytest.raises(ValueError, match="duplicate provider CLI name"):
+        build_app(
+            ImageApplication(registry, Settings()),
+            registry,
+            (OpenAICliFactory(), OpenAICliFactory(), GeminiCliFactory()),
+        )
+
+
+def test_root_app_rejects_factory_operation_absent_from_provider() -> None:
+    registry = ProviderRegistry((CreateOnlyProvider(),))
+
+    with pytest.raises(ValueError, match="declares unsupported operations"):
+        build_app(
+            ImageApplication(registry, Settings()),
+            registry,
+            (EditOnlyFactory(),),
         )

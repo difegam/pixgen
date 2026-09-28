@@ -19,7 +19,7 @@ from pixgen.core.models import (
     ModelId,
     ModelSpec,
 )
-from pixgen.core.parameters import ProviderParams
+from pixgen.core.parameters import ProviderParams, SharedImageParams
 from pixgen.core.requests import (
     ImageCreateIntent,
     ImageEditIntent,
@@ -213,12 +213,6 @@ class OpenAIProvider:
     def models(self) -> tuple[ModelSpec, ...]:
         return OPENAI_MODELS
 
-    def cli_factory(self) -> object:
-        """Return the OpenAI-owned CLI factory."""
-        from pixgen.providers.openai_cli import OpenAICliFactory
-
-        return OpenAICliFactory()
-
     def definition_catalogue(self) -> ProviderDefinition[ModelDefinition[OpenAIParams]]:
         """Return the composed OpenAI model catalogue."""
         return _make_openai_definitions()
@@ -232,8 +226,54 @@ class OpenAIProvider:
         model: ModelId,
         operation: ImageOperation,
     ) -> JsonSchema:
-        definition = next(item for item in self.definitions() if item.spec.id == model)
-        return definition.operations[operation].parameter_type.model_json_schema()
+        return self._operation_definition(model, operation).parameter_type.model_json_schema()
+
+    def resolve_shared_parameters(
+        self,
+        model: ModelId,
+        operation: ImageOperation,
+        shared: SharedImageParams,
+    ) -> JsonObject:
+        """Resolve portable parameters for one OpenAI model operation."""
+        definition = self._operation_definition(model, operation)
+        try:
+            parameters = definition.resolve(shared)
+        except ValueError as exc:
+            supported = ", ".join(sorted(definition.aspect_ratios))
+            raise PixgenError(
+                ErrorCode.INVALID_REQUEST,
+                f"model {model} does not support aspect ratio {shared.aspect_ratio}; "
+                f"supported ratios: {supported}",
+            ) from exc
+        return parameters.model_dump(exclude_none=True)
+
+    def shared_aspect_ratios(
+        self,
+        model: ModelId,
+        operation: ImageOperation,
+    ) -> tuple[str, ...]:
+        """Return portable aspect ratios supported by one OpenAI model operation."""
+        return tuple(sorted(self._operation_definition(model, operation).aspect_ratios))
+
+    def _operation_definition(
+        self,
+        model: ModelId,
+        operation: ImageOperation,
+    ) -> OperationDefinition[OpenAIParams]:
+        """Return one OpenAI operation definition."""
+        definition = next((item for item in self.definitions() if item.spec.id == model), None)
+        if definition is None:
+            raise PixgenError(
+                ErrorCode.MODEL_NOT_FOUND,
+                f"model {model!r} is not in the provider catalogue",
+            )
+        operation_definition = definition.operations.get(operation)
+        if operation_definition is None:
+            raise PixgenError(
+                ErrorCode.INVALID_REQUEST,
+                f"model {model} does not support {operation.value}",
+            )
+        return operation_definition
 
     def validate(
         self,

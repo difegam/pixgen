@@ -40,6 +40,15 @@ class TestOpenAIDefinitions:
             is None
         )
 
+    def test_resolves_shared_parameters_through_provider_contract(self) -> None:
+        provider = OpenAIProvider(None)
+
+        assert provider.resolve_shared_parameters(
+            "openai/gpt-image-2",
+            ImageOperation.IMAGE_CREATE,
+            SharedImageParams(aspect_ratio="16:9"),
+        ) == {"size": "1536x864"}
+
 
 class TestGeminiDefinitions:
     """Test Gemini ratio mappings."""
@@ -63,3 +72,11 @@ class TestGeminiDefinitions:
             if item.spec.id == "gemini/gemini-3.1-flash-lite-image"
         )
         assert definition.operations[ImageOperation.IMAGE_CREATE].defaults.image_size is None
+
+    def test_lists_shared_ratios_through_provider_contract(self) -> None:
+        provider = GeminiProvider(None)
+
+        assert "7:3" in provider.shared_aspect_ratios(
+            "gemini/gemini-3.1-flash-image",
+            ImageOperation.IMAGE_CREATE,
+        )
