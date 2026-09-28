@@ -58,3 +58,23 @@ def test_generation_progress_stop_is_safe_before_run_started() -> None:
     progress = GenerationProgress(Console(file=StringIO(), force_terminal=True))
 
     progress.stop()
+
+
+def test_generation_progress_starts_timer_when_target_begins_generating() -> None:
+    console = Console(file=StringIO(), force_terminal=True, force_interactive=True)
+    first = OutputPlan(model_id="fake/first", variant=1, path=Path("first.png"))
+    second = OutputPlan(model_id="fake/second", variant=1, path=Path("second.png"))
+    progress = GenerationProgress(console)
+
+    progress.run_started((first, second))
+
+    first_task = progress._progress.tasks[progress._task_ids[("fake/first", 1)]]
+    second_task = progress._progress.tasks[progress._task_ids[("fake/second", 1)]]
+    assert not first_task.started
+    assert not second_task.started
+
+    progress.job_started(first)
+
+    assert first_task.started
+    assert not second_task.started
+    progress.stop()

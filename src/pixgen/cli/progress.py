@@ -30,12 +30,21 @@ class _StatusColumn(ProgressColumn):
         return Text(str(task.fields["status"]), style=str(task.fields["status_style"]))
 
 
+class _GenerationSpinnerColumn(SpinnerColumn):
+    """Render a static marker until a target starts generating."""
+
+    def render(self, task: Task) -> RenderableType:
+        if not task.started:
+            return Text("·", style="dim")
+        return super().render(task)
+
+
 class GenerationProgress:
     """Render lifecycle events as a transient Rich progress display."""
 
     def __init__(self, console: Console) -> None:
         self._progress = Progress(
-            SpinnerColumn(finished_text="✓"),
+            _GenerationSpinnerColumn(finished_text="✓"),
             TextColumn("{task.fields[ordinal]}", markup=False),
             TextColumn("{task.description}", markup=False),
             _StatusColumn(),
@@ -62,6 +71,7 @@ class GenerationProgress:
             self._task_ids[_target_key(plan)] = self._progress.add_task(
                 f"{plan.model_id} v{plan.variant}",
                 total=None,
+                start=False,
                 ordinal=f"{index}/{total}",
                 status="Queued",
                 status_style="dim",
@@ -70,8 +80,10 @@ class GenerationProgress:
 
     def job_started(self, plan: OutputPlan) -> None:
         """Show a target currently generating."""
+        task_id = self._task_ids[_target_key(plan)]
+        self._progress.start_task(task_id)
         self._progress.update(
-            self._task_ids[_target_key(plan)],
+            task_id,
             status="Generating",
             status_style="cyan",
         )

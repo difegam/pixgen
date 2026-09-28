@@ -1,6 +1,7 @@
 import uuid
 from io import StringIO
 
+import pytest
 from rich.console import Console
 
 from pixgen.cli import render
@@ -82,4 +83,16 @@ def test_create_generation_progress_excludes_json_and_noninteractive_output(monk
     monkeypatch.setattr(render, "_stderr_console", _console(interactive=False))
 
     assert render.create_generation_progress(as_json=True) is None
+    assert render.create_generation_progress(as_json=False) is None
+
+
+@pytest.mark.parametrize(
+    ("stdout_interactive", "stderr_interactive"), [(False, True), (True, False)]
+)
+def test_create_generation_progress_requires_both_interactive_streams(
+    monkeypatch, stdout_interactive, stderr_interactive
+) -> None:
+    monkeypatch.setattr(render, "_stdout_console", _console(interactive=stdout_interactive))
+    monkeypatch.setattr(render, "_stderr_console", _console(interactive=stderr_interactive))
+
     assert render.create_generation_progress(as_json=False) is None
