@@ -4,10 +4,10 @@ from pathlib import Path  # noqa: TC003
 from typing import TYPE_CHECKING, Annotated
 
 from cyclopts import App, Parameter
-from pydantic import ValidationError
 
-from pixgen.cli.invoke import render_validation_error
 from pixgen.cli.options import ExecutionOptions
+from pixgen.cli.outcome import CliOutcome, cli_command
+from pixgen.core.errors import ErrorCode, PixgenError
 from pixgen.core.models import ImageOperation
 from pixgen.core.requests import ImageCreateIntent, ImageEditIntent, NativeSelection
 from pixgen.providers.openai import OpenAIParams
@@ -25,7 +25,9 @@ def _model_id(value: str) -> str:
     if value.startswith("openai/"):
         return value
     if "/" in value:
-        raise ValueError("OpenAI native commands require an OpenAI model name")
+        raise PixgenError(
+            ErrorCode.INVALID_REQUEST, "OpenAI native commands require an OpenAI model name"
+        )
     return f"openai/{value}"
 
 
@@ -36,6 +38,7 @@ def build_openai_app(operation: ImageOperation, invoker: CommandInvoker) -> App:
     if operation is ImageOperation.IMAGE_CREATE:
 
         @app.default
+        @cli_command()
         async def create(
             prompt: str,
             *,
@@ -48,27 +51,25 @@ def build_openai_app(operation: ImageOperation, invoker: CommandInvoker) -> App:
             force: bool = False,
             timeout_seconds: int | None = None,
             json: bool = False,
-        ) -> None:
+        ) -> CliOutcome:
             """Create an image with OpenAI native parameters."""
-            try:
-                intent = ImageCreateIntent(prompt=prompt)
-                selection = NativeSelection(model=_model_id(model), parameters=params)
-                options = ExecutionOptions(
-                    variants=variants,
-                    output=output,
-                    output_dir=output_dir,
-                    mkdir=mkdir,
-                    force=force,
-                    timeout_seconds=timeout_seconds,
-                    json=json,
-                )
-            except ValidationError as exc:
-                render_validation_error(exc, as_json=json)
-            await invoker.invoke(intent, selection, options)
+            intent = ImageCreateIntent(prompt=prompt)
+            selection = NativeSelection(model=_model_id(model), parameters=params)
+            options = ExecutionOptions(
+                variants=variants,
+                output=output,
+                output_dir=output_dir,
+                mkdir=mkdir,
+                force=force,
+                timeout_seconds=timeout_seconds,
+                json=json,
+            )
+            return await invoker.invoke(intent, selection, options)
 
     else:
 
         @app.default
+        @cli_command()
         async def edit(
             prompt: str,
             *,
@@ -82,23 +83,20 @@ def build_openai_app(operation: ImageOperation, invoker: CommandInvoker) -> App:
             force: bool = False,
             timeout_seconds: int | None = None,
             json: bool = False,
-        ) -> None:
+        ) -> CliOutcome:
             """Edit images with OpenAI native parameters."""
-            try:
-                intent = ImageEditIntent(prompt=prompt, images=tuple(image))
-                selection = NativeSelection(model=_model_id(model), parameters=params)
-                options = ExecutionOptions(
-                    variants=variants,
-                    output=output,
-                    output_dir=output_dir,
-                    mkdir=mkdir,
-                    force=force,
-                    timeout_seconds=timeout_seconds,
-                    json=json,
-                )
-            except ValidationError as exc:
-                render_validation_error(exc, as_json=json)
-            await invoker.invoke(intent, selection, options)
+            intent = ImageEditIntent(prompt=prompt, images=tuple(image))
+            selection = NativeSelection(model=_model_id(model), parameters=params)
+            options = ExecutionOptions(
+                variants=variants,
+                output=output,
+                output_dir=output_dir,
+                mkdir=mkdir,
+                force=force,
+                timeout_seconds=timeout_seconds,
+                json=json,
+            )
+            return await invoker.invoke(intent, selection, options)
 
     return app
 

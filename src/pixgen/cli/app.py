@@ -1,6 +1,7 @@
 """Root CLI app builder and console entry point."""
 
 import importlib.metadata
+import sys
 from typing import TYPE_CHECKING
 
 from cyclopts import App
@@ -8,6 +9,8 @@ from cyclopts import App
 from pixgen.cli.image import build_operation_app
 from pixgen.cli.invoke import CommandInvoker
 from pixgen.cli.model import build_model_app
+from pixgen.cli.outcome import RESULT_ACTION, failure_outcome, render_outcome
+from pixgen.core.errors import PixgenError
 from pixgen.core.models import ImageOperation
 
 if TYPE_CHECKING:
@@ -39,6 +42,7 @@ def build_app(
         name="pixgen",
         help="Generate and edit images with curated AI models.",
         version=_get_version,
+        result_action=RESULT_ACTION,
     )
     invoker = CommandInvoker(application)
     app.command(build_operation_app(ImageOperation.IMAGE_CREATE, invoker, factories))
@@ -51,7 +55,11 @@ def main() -> None:
     """Console entry point for pixgen."""
     from pixgen.runtime import build_runtime
 
-    runtime = build_runtime()
+    try:
+        runtime = build_runtime()
+    except PixgenError as exc:
+        outcome = render_outcome(failure_outcome(exc, as_json="--json" in sys.argv[1:]))
+        sys.exit(outcome.__cyclopts_returncode__())
     app = build_app(runtime.application, runtime.registry, runtime.cli_factories)
     app()
 

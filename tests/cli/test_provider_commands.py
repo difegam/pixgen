@@ -3,6 +3,8 @@
 import pytest
 from cyclopts.exceptions import UnknownOptionError
 
+from pixgen.cli.outcome import ExitStatus, exit_status
+from pixgen.core.errors import ErrorCode
 from pixgen.core.models import ImageOperation
 from pixgen.providers.gemini_cli import build_gemini_app
 from pixgen.providers.openai_cli import build_openai_app
@@ -67,7 +69,24 @@ async def test_provider_apps_reject_invalid_prompt_without_invoking(build_app, a
     app = build_app(ImageOperation.IMAGE_CREATE, FailingInvoker())
     command, bound, _ = app.parse_args(argv, print_error=False, exit_on_error=False)
 
-    with pytest.raises(SystemExit) as exc_info:
-        await command(*bound.args, **bound.kwargs)
+    outcome = await command(*bound.args, **bound.kwargs)
 
-    assert exc_info.value.code == 2
+    assert exit_status(outcome.result) is ExitStatus.REJECTED
+    assert outcome.result.error.code == ErrorCode.INVALID_REQUEST
+
+
+@pytest.mark.parametrize(
+    ("build_app", "argv"),
+    [
+        (build_openai_app, ["--model", "gemini/gemini-3.1-flash-image", "A forest"]),
+        (build_gemini_app, ["--model", "openai/gpt-image-2", "A forest"]),
+    ],
+)
+async def test_provider_apps_reject_foreign_model_without_invoking(build_app, argv) -> None:
+    app = build_app(ImageOperation.IMAGE_CREATE, FailingInvoker())
+    command, bound, _ = app.parse_args(argv, print_error=False, exit_on_error=False)
+
+    outcome = await command(*bound.args, **bound.kwargs)
+
+    assert outcome.result.error.code == ErrorCode.INVALID_REQUEST
+    assert "native commands require" in outcome.result.error.message

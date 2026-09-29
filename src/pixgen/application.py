@@ -1,12 +1,9 @@
 import asyncio
 import uuid
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from pydantic import ValidationError
-
 from pixgen.artifacts import OutputPlan, plan_output, save_artifact
-from pixgen.core.errors import ErrorCode, PixgenError, ProviderError, validation_message
+from pixgen.core.errors import ErrorCode, PixgenError, ProviderError
 from pixgen.core.parameters import ProviderParams, SharedImageParams
 from pixgen.core.requests import (
     ImageCreateIntent,
@@ -31,16 +28,7 @@ if TYPE_CHECKING:
 __all__: list[str] = [
     "GenerationObserver",
     "ImageApplication",
-    "RunOutcome",
 ]
-
-
-@dataclass(frozen=True, slots=True)
-class RunOutcome:
-    """Result of an image generation run."""
-
-    result: CommandResult
-    exit_code: int
 
 
 @runtime_checkable
@@ -79,7 +67,7 @@ class ImageApplication:
         force: bool = False,
         timeout_seconds: int | None = None,
         observer: GenerationObserver | None = None,
-    ) -> RunOutcome:
+    ) -> CommandResult:
         """Run an image generation command."""
         run_id = uuid.uuid7()
         try:
@@ -122,23 +110,15 @@ class ImageApplication:
                 },
             )
         except PixgenError as exc:
-            result = CommandResult(
+            return CommandResult(
                 run_id=run_id,
                 error=PublicError(code=exc.code, message=exc.message),
             )
-            return RunOutcome(result, 2)
 
         if observer is not None:
             observer.run_started(tuple(plans))
         results = await self._execute_jobs(plans, prepared, providers, timeout_seconds, observer)
-        failures = sum(r.error is not None for r in results)
-        if failures == 0:
-            exit_code = 0
-        elif failures == len(results):
-            exit_code = 3
-        else:
-            exit_code = 4
-        return RunOutcome(CommandResult(run_id=run_id, results=tuple(results)), exit_code)
+        return CommandResult(run_id=run_id, results=tuple(results))
 
     def _resolve_models(self, intent: ImageIntent, explicit: list[str] | None) -> list[str]:
         if explicit:
@@ -192,14 +172,7 @@ class ImageApplication:
                     ErrorCode.INVALID_REQUEST,
                     f"model {mid} does not support {intent.operation.value}",
                 )
-            try:
-                request = provider.validate(
-                    intent=intent,
-                    model=model_spec,
-                    parameters=parameters,
-                )
-            except ValidationError as exc:
-                raise PixgenError(ErrorCode.INVALID_REQUEST, validation_message(exc)) from exc
+            request = provider.validate(intent=intent, model=model_spec, parameters=parameters)
             _validate_media(request, images)
             prepared[mid] = PreparedImageRequest(request=request, media=media)
         return prepared, providers

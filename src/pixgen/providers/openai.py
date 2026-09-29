@@ -142,7 +142,11 @@ def _openai_definition(
 
 
 OPENAI_CATALOGUE: tuple[ModelDefinition[OpenAIParams], ...] = (
-    _openai_definition("openai/gpt-image-2", "GPT Image 2", parameter_type=OpenAIParams),
+    _openai_definition(
+        "openai/gpt-image-2",
+        "GPT Image 2",
+        parameter_type=OpenAIParams,
+    ),
     _openai_definition(
         "openai/gpt-image-1-mini",
         "GPT Image 1 Mini",

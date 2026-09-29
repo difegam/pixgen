@@ -1,34 +1,20 @@
 """Invoke typed image requests through the application."""
 
-import uuid
-from typing import TYPE_CHECKING, NoReturn
+from typing import TYPE_CHECKING
 
-from pixgen.cli.render import create_generation_progress, render_command_result
-from pixgen.core.errors import ErrorCode, validation_message
-from pixgen.core.results import CommandResult, PublicError
+from pixgen.cli.outcome import CliOutcome
+from pixgen.cli.render import create_generation_progress
 
 if TYPE_CHECKING:
-    from pydantic import ValidationError
-
     from pixgen.application import ImageApplication
     from pixgen.cli.options import ExecutionOptions
     from pixgen.core.requests import ImageIntent, ParameterSelection
 
-__all__: list[str] = ["CommandInvoker", "render_validation_error"]
-
-
-def render_validation_error(exc: ValidationError, *, as_json: bool) -> NoReturn:
-    """Render a pre-invoke request validation failure and exit like a command error."""
-    result = CommandResult(
-        run_id=uuid.uuid7(),
-        error=PublicError(code=ErrorCode.INVALID_REQUEST, message=validation_message(exc)),
-    )
-    render_command_result(result, as_json=as_json)
-    raise SystemExit(2) from exc
+__all__: list[str] = ["CommandInvoker"]
 
 
 class CommandInvoker:
-    """Bridge provider commands to shared orchestration and rendering."""
+    """Bridge image commands to shared orchestration."""
 
     def __init__(self, application: ImageApplication) -> None:
         self._application = application
@@ -38,11 +24,11 @@ class CommandInvoker:
         intent: ImageIntent,
         selection: ParameterSelection,
         options: ExecutionOptions,
-    ) -> None:
-        """Run one typed selection and exit with the application status."""
+    ) -> CliOutcome:
+        """Run one typed selection and return its outcome for rendering."""
         progress = create_generation_progress(as_json=options.as_json)
         try:
-            outcome = await self._application.run(
+            result = await self._application.run(
                 intent,
                 selection=selection,
                 variants=options.variants,
@@ -56,9 +42,8 @@ class CommandInvoker:
         finally:
             if progress is not None:
                 progress.stop()
-        render_command_result(
-            outcome.result,
+        return CliOutcome(
+            result,
             as_json=options.as_json,
             relative_output_paths=options.output is None and options.output_dir is None,
         )
-        raise SystemExit(outcome.exit_code)

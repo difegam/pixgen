@@ -4,8 +4,7 @@ from typing import TYPE_CHECKING
 
 from cyclopts import App
 
-from pixgen.cli.render import render_model_get_result, render_model_list_result
-from pixgen.core.errors import ErrorCode
+from pixgen.cli.outcome import CliOutcome, cli_command
 from pixgen.core.results import ModelGetResult, ModelListResult, PublicError
 
 if TYPE_CHECKING:
@@ -16,34 +15,29 @@ __all__: list[str] = [
 ]
 
 
+def _model_get_error(error: PublicError) -> ModelGetResult:
+    """Wrap a lookup failure in a model get result."""
+    return ModelGetResult(error=error)
+
+
 def build_model_app(registry: ProviderRegistry) -> App:
     """Build the model sub-app."""
     app = App(name="model", help="Offline curated-model catalogue")
 
     @app.command(name="list", alias=["ls"])
-    def list_models(*, json: bool = False) -> None:
+    def list_models(*, json: bool = False) -> CliOutcome:
         """List available models and supported operations."""
-        models = registry.models()
-        result = ModelListResult(models=models)
-        render_model_list_result(result, as_json=json)
+        return CliOutcome(ModelListResult(models=registry.models()), as_json=json)
 
     @app.command(name="get")
+    @cli_command(_model_get_error)
     def get_model(
         model_id: str,
         *,
         json: bool = False,
-    ) -> None:
+    ) -> CliOutcome:
         """Show one model's input and parameter schema."""
-
-        try:
-            spec = registry.get_model(model_id)
-        except Exception as exc:
-            result = ModelGetResult(
-                error=PublicError(code=ErrorCode.MODEL_NOT_FOUND, message=str(exc))
-            )
-            render_model_get_result(result, as_json=json)
-            raise SystemExit(2) from exc
-
+        spec = registry.get_model(model_id)
         provider = registry.provider_for(spec.id)
         schemas = {}
         shared_aspect_ratios = {}
@@ -58,6 +52,6 @@ def build_model_app(registry: ProviderRegistry) -> App:
             parameter_schemas=schemas,
             shared_aspect_ratios=shared_aspect_ratios,
         )
-        render_model_get_result(result, as_json=json)
+        return CliOutcome(result, as_json=json)
 
     return app

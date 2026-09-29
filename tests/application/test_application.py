@@ -128,7 +128,7 @@ class TestImageApplication:
         )
         observer = RecordingObserver()
 
-        outcome = await ImageApplication(registry, settings).run(
+        result = await ImageApplication(registry, settings).run(
             ImageCreateIntent(prompt="test"),
             variants=2,
             observer=observer,
@@ -145,7 +145,7 @@ class TestImageApplication:
         assert tuple(plan.variant for plan in planned) == (1, 2)
         assert [event[1].variant for event in observer.events[1:]] == [1, 1, 2, 2]
         assert [event[2] for event in observer.events if event[0] == "job_finished"] == list(
-            outcome.result.results
+            result.results
         )
 
     async def test_reports_synthetic_run_timeout_result(self, tmp_path: Path) -> None:
@@ -164,7 +164,7 @@ class TestImageApplication:
         )
         observer = RecordingObserver()
 
-        outcome = await ImageApplication(registry, settings).run(
+        result = await ImageApplication(registry, settings).run(
             ImageCreateIntent(prompt="test"),
             variants=2,
             observer=observer,
@@ -173,7 +173,7 @@ class TestImageApplication:
         timed_out = observer.events[-1]
         assert timed_out[0] == "job_finished"
         assert timed_out[1].variant == 2
-        assert timed_out[2] == outcome.result.results[1]
+        assert timed_out[2] == result.results[1]
         assert timed_out[2].error is not None
         assert timed_out[2].error.message == "run deadline exceeded"
 
@@ -188,12 +188,12 @@ class TestImageApplication:
         )
         observer = RecordingObserver()
 
-        outcome = await ImageApplication(registry, settings).run(
+        result = await ImageApplication(registry, settings).run(
             ImageCreateIntent(prompt="test"),
             observer=observer,
         )
 
-        assert outcome.exit_code == 2
+        assert result.error is not None
         assert observer.events == []
 
     @pytest.mark.asyncio
@@ -206,12 +206,12 @@ class TestImageApplication:
             defaults=Defaults(image_create_models=("fake/model",)),
             generation=GenerationSettings(output_dir=tmp_path),
         )
-        outcome = await ImageApplication(registry, settings).run(
+        result = await ImageApplication(registry, settings).run(
             ImageCreateIntent(prompt="test"),
         )
 
-        assert outcome.result.error is not None
-        assert outcome.result.error.code == ErrorCode.CREDENTIAL_UNAVAILABLE
+        assert result.error is not None
+        assert result.error.code == ErrorCode.CREDENTIAL_UNAVAILABLE
 
     @pytest.mark.asyncio
     async def test_rejects_incompatible_shared_ratio_before_generation(
@@ -230,7 +230,7 @@ class TestImageApplication:
             defaults=Defaults(image_create_models=("openai/gpt-image-2",)),
             generation=GenerationSettings(output_dir=tmp_path),
         )
-        outcome = await ImageApplication(registry, settings).run(
+        result = await ImageApplication(registry, settings).run(
             ImageCreateIntent(prompt="test"),
             selection=SharedSelection(
                 models=("openai/gpt-image-2", "openai/gpt-image-1-mini"),
@@ -238,9 +238,9 @@ class TestImageApplication:
             ),
         )
 
-        assert outcome.exit_code == 2
-        assert outcome.result.error is not None
-        assert "gpt-image-1-mini" in outcome.result.error.message
+        assert result.error is not None
+        assert result.error is not None
+        assert "gpt-image-1-mini" in result.error.message
         assert calls == 0
         assert await asyncio.to_thread(lambda: tuple(tmp_path.iterdir())) == ()
 
@@ -256,14 +256,14 @@ class TestImageApplication:
             generation=GenerationSettings(output_dir=tmp_path),
         )
 
-        outcome = await ImageApplication(registry, settings).run(
+        result = await ImageApplication(registry, settings).run(
             ImageCreateIntent(prompt="test"),
             selection=SharedSelection(models=("fake/model", "fake/model")),
         )
 
-        assert outcome.exit_code == 2
-        assert outcome.result.error is not None
-        assert outcome.result.error.code == ErrorCode.INVALID_REQUEST
+        assert result.error is not None
+        assert result.error is not None
+        assert result.error.code == ErrorCode.INVALID_REQUEST
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -295,12 +295,13 @@ class TestImageApplication:
             generation=GenerationSettings(output_dir=tmp_path),
         )
 
-        outcome = await ImageApplication(registry, settings).run(
+        result = await ImageApplication(registry, settings).run(
             ImageCreateIntent(prompt="test"),
             selection=selection,
         )
 
-        assert outcome.exit_code == 0
+        assert result.error is None
+        assert all(target.error is None for target in result.results)
         assert provider.parameters == expected
 
     @pytest.mark.asyncio
@@ -315,14 +316,14 @@ class TestImageApplication:
             generation=GenerationSettings(output_dir=tmp_path),
         )
 
-        outcome = await ImageApplication(registry, settings).run(
+        result = await ImageApplication(registry, settings).run(
             ImageCreateIntent(prompt="test"),
             timeout_seconds=0,
         )
 
-        assert outcome.exit_code == 2
-        assert outcome.result.error is not None
-        assert outcome.result.error.code == ErrorCode.INVALID_REQUEST
+        assert result.error is not None
+        assert result.error is not None
+        assert result.error.code == ErrorCode.INVALID_REQUEST
 
     @pytest.mark.asyncio
     async def test_run_timeout_is_shared_by_all_jobs(self, tmp_path: Path) -> None:
@@ -340,14 +341,14 @@ class TestImageApplication:
             ),
         )
 
-        outcome = await ImageApplication(registry, settings).run(
+        result = await ImageApplication(registry, settings).run(
             ImageCreateIntent(prompt="test"),
             variants=2,
         )
 
-        assert outcome.result.results[0].artifact_path is not None
-        assert outcome.result.results[1].error is not None
-        assert outcome.result.results[1].error.code == ErrorCode.TIMEOUT
+        assert result.results[0].artifact_path is not None
+        assert result.results[1].error is not None
+        assert result.results[1].error.code == ErrorCode.TIMEOUT
 
     @pytest.mark.asyncio
     async def test_request_timeout_cancels_provider_job(self, tmp_path: Path) -> None:
@@ -364,12 +365,12 @@ class TestImageApplication:
             ),
         )
 
-        outcome = await ImageApplication(registry, settings).run(
+        result = await ImageApplication(registry, settings).run(
             ImageCreateIntent(prompt="test"),
         )
 
-        assert outcome.result.results[0].error is not None
-        assert outcome.result.results[0].error.code == ErrorCode.TIMEOUT
+        assert result.results[0].error is not None
+        assert result.results[0].error.code == ErrorCode.TIMEOUT
         assert provider.cancelled.is_set()
 
     @pytest.mark.asyncio

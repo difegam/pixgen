@@ -1,9 +1,7 @@
-import pytest
-
-from pixgen.application import RunOutcome
 from pixgen.cli import invoke
 from pixgen.cli.invoke import CommandInvoker
 from pixgen.cli.options import ExecutionOptions
+from pixgen.cli.outcome import ExitStatus, exit_status
 from pixgen.core.requests import ImageCreateIntent, SharedSelection
 from pixgen.core.results import CommandResult, TargetResult
 
@@ -21,40 +19,38 @@ class RecordingProgress:
 
 
 class RecordingApplication:
-    """Return a fixed outcome while retaining invocation arguments."""
+    """Return a fixed result while retaining invocation arguments."""
 
-    def __init__(self, outcome: RunOutcome, events: list[str]) -> None:
-        self._outcome = outcome
+    def __init__(self, result: CommandResult, events: list[str]) -> None:
+        self._result = result
         self._events = events
         self.observer: object | None = None
 
-    async def run(self, *_args, **kwargs) -> RunOutcome:
+    async def run(self, *_args, **kwargs) -> CommandResult:
         self.observer = kwargs.get("observer")
         self._events.append("run")
-        return self._outcome
+        return self._result
 
 
-def _outcome(exit_code: int = 4) -> RunOutcome:
-    return RunOutcome(
-        result=CommandResult(
-            run_id="019cb94c-af33-7e3a-80c1-03d0294010b8",
-            results=(
-                TargetResult(
-                    model="fake/model",
-                    variant=1,
-                    artifact_path="output.png",
-                    media_type="image/png",
-                ),
+def _result() -> CommandResult:
+    return CommandResult(
+        run_id="019cb94c-af33-7e3a-80c1-03d0294010b8",
+        results=(
+            TargetResult(
+                model="fake/model",
+                variant=1,
+                artifact_path="output.png",
+                media_type="image/png",
             ),
         ),
-        exit_code=exit_code,
     )
 
 
-async def test_invoker_stops_progress_before_rendering(monkeypatch) -> None:
+async def test_invoker_stops_progress_and_returns_outcome(monkeypatch) -> None:
     events: list[str] = []
     progress = RecordingProgress(events)
-    application = RecordingApplication(_outcome(), events)
+    result = _result()
+    application = RecordingApplication(result, events)
 
     monkeypatch.setattr(
         invoke,
@@ -62,80 +58,48 @@ async def test_invoker_stops_progress_before_rendering(monkeypatch) -> None:
         lambda *, as_json: None if as_json else progress,
     )
 
-    def render_result(*_args, **_kwargs) -> None:
-        assert progress.stopped
-        assert _kwargs["relative_output_paths"] is True
-        events.append("render")
+    outcome = await CommandInvoker(application).invoke(
+        ImageCreateIntent(prompt="test"),
+        SharedSelection(models=("fake/model",)),
+        ExecutionOptions(),
+    )
 
-    monkeypatch.setattr(invoke, "render_command_result", render_result)
-
-    with pytest.raises(SystemExit) as exc_info:
-        await CommandInvoker(application).invoke(
-            ImageCreateIntent(prompt="test"),
-            SharedSelection(models=("fake/model",)),
-            ExecutionOptions(),
-        )
-
-    assert exc_info.value.code == 4
+    assert outcome.result is result
+    assert outcome.as_json is False
+    assert outcome.relative_output_paths is True
+    assert exit_status(outcome.result) is ExitStatus.SUCCESS
     assert application.observer is progress
-    assert events == ["run", "stop", "render"]
+    assert events == ["run", "stop"]
 
 
 async def test_invoker_excludes_progress_from_json(monkeypatch) -> None:
-    events: list[str] = []
-    application = RecordingApplication(_outcome(exit_code=0), events)
+    application = RecordingApplication(_result(), [])
     factory_calls: list[bool] = []
-    render_options: list[tuple[bool, bool]] = []
 
     def create_progress(*, as_json: bool) -> None:
         factory_calls.append(as_json)
 
     monkeypatch.setattr(invoke, "create_generation_progress", create_progress)
-    monkeypatch.setattr(
-        invoke,
-        "render_command_result",
-        lambda _result, *, as_json, relative_output_paths: render_options.append(
-            (as_json, relative_output_paths)
-        ),
+
+    outcome = await CommandInvoker(application).invoke(
+        ImageCreateIntent(prompt="test"),
+        SharedSelection(models=("fake/model",)),
+        ExecutionOptions(json=True),
     )
 
-    with pytest.raises(SystemExit) as exc_info:
-        await CommandInvoker(application).invoke(
-            ImageCreateIntent(prompt="test"),
-            SharedSelection(models=("fake/model",)),
-            ExecutionOptions(json=True),
-        )
-
-    assert exc_info.value.code == 0
     assert factory_calls == [True]
     assert application.observer is None
-    assert render_options == [(True, True)]
+    assert outcome.as_json is True
 
 
 async def test_invoker_keeps_explicit_output_paths_absolute(monkeypatch, tmp_path) -> None:
-    events: list[str] = []
-    application = RecordingApplication(_outcome(exit_code=0), events)
-    render_options: list[bool] = []
+    application = RecordingApplication(_result(), [])
+    monkeypatch.setattr(invoke, "create_generation_progress", lambda **_kwargs: None)
 
-    def create_progress(*, as_json: bool) -> None:
-        del as_json
-
-    def render_result(_result, *, as_json: bool, relative_output_paths: bool) -> None:
-        del as_json
-        render_options.append(relative_output_paths)
-
-    monkeypatch.setattr(invoke, "create_generation_progress", create_progress)
-    monkeypatch.setattr(
-        invoke,
-        "render_command_result",
-        render_result,
+    outcome = await CommandInvoker(application).invoke(
+        ImageCreateIntent(prompt="test"),
+        SharedSelection(models=("fake/model",)),
+        ExecutionOptions(output_dir=tmp_path / "custom-output"),
     )
 
-    with pytest.raises(SystemExit):
-        await CommandInvoker(application).invoke(
-            ImageCreateIntent(prompt="test"),
-            SharedSelection(models=("fake/model",)),
-            ExecutionOptions(output_dir=tmp_path / "custom-output"),
-        )
-
-    assert render_options == [False]
+    assert outcome.relative_output_paths is False
