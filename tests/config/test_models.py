@@ -114,5 +114,5 @@ class TestLoadSettings:
 
     def test_load_settings_invalid_config(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("PIXGEN_CONFIG", "relative/path.toml")
-        with pytest.raises((PixgenError, ValueError), match="must be an absolute path"):
+        with pytest.raises(PixgenError, match="must be an absolute path"):
             load_settings()

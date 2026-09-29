@@ -274,7 +274,7 @@ class GeminiProvider:
             else request.request.model.id
         )
 
-        contents: list[types.Content | types.Part | str] = [intent.prompt]
+        contents: list[types.PartUnionDict] = [intent.prompt]
         contents.extend(
             types.Part.from_bytes(
                 data=media.image.content,

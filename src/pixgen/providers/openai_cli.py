@@ -4,7 +4,9 @@ from pathlib import Path  # noqa: TC003
 from typing import TYPE_CHECKING, Annotated
 
 from cyclopts import App, Parameter
+from pydantic import ValidationError
 
+from pixgen.cli.invoke import render_validation_error
 from pixgen.cli.options import ExecutionOptions
 from pixgen.core.models import ImageOperation
 from pixgen.core.requests import ImageCreateIntent, ImageEditIntent, NativeSelection
@@ -48,20 +50,21 @@ def build_openai_app(operation: ImageOperation, invoker: CommandInvoker) -> App:
             json: bool = False,
         ) -> None:
             """Create an image with OpenAI native parameters."""
-            options = ExecutionOptions(
-                variants=variants,
-                output=output,
-                output_dir=output_dir,
-                mkdir=mkdir,
-                force=force,
-                timeout_seconds=timeout_seconds,
-                json=json,
-            )
-            await invoker.invoke(
-                ImageCreateIntent(prompt=prompt),
-                NativeSelection(model=_model_id(model), parameters=params),
-                options,
-            )
+            try:
+                intent = ImageCreateIntent(prompt=prompt)
+                selection = NativeSelection(model=_model_id(model), parameters=params)
+                options = ExecutionOptions(
+                    variants=variants,
+                    output=output,
+                    output_dir=output_dir,
+                    mkdir=mkdir,
+                    force=force,
+                    timeout_seconds=timeout_seconds,
+                    json=json,
+                )
+            except ValidationError as exc:
+                render_validation_error(exc, as_json=json)
+            await invoker.invoke(intent, selection, options)
 
     else:
 
@@ -81,20 +84,21 @@ def build_openai_app(operation: ImageOperation, invoker: CommandInvoker) -> App:
             json: bool = False,
         ) -> None:
             """Edit images with OpenAI native parameters."""
-            options = ExecutionOptions(
-                variants=variants,
-                output=output,
-                output_dir=output_dir,
-                mkdir=mkdir,
-                force=force,
-                timeout_seconds=timeout_seconds,
-                json=json,
-            )
-            await invoker.invoke(
-                ImageEditIntent(prompt=prompt, images=tuple(image)),
-                NativeSelection(model=_model_id(model), parameters=params),
-                options,
-            )
+            try:
+                intent = ImageEditIntent(prompt=prompt, images=tuple(image))
+                selection = NativeSelection(model=_model_id(model), parameters=params)
+                options = ExecutionOptions(
+                    variants=variants,
+                    output=output,
+                    output_dir=output_dir,
+                    mkdir=mkdir,
+                    force=force,
+                    timeout_seconds=timeout_seconds,
+                    json=json,
+                )
+            except ValidationError as exc:
+                render_validation_error(exc, as_json=json)
+            await invoker.invoke(intent, selection, options)
 
     return app
 

@@ -4,7 +4,9 @@ from pathlib import Path  # noqa: TC003
 from typing import TYPE_CHECKING, Annotated
 
 from cyclopts import App, Parameter
+from pydantic import ValidationError
 
+from pixgen.cli.invoke import render_validation_error
 from pixgen.cli.options import ExecutionOptions
 from pixgen.core.models import ImageOperation
 from pixgen.core.requests import ImageCreateIntent, ImageEditIntent, NativeSelection
@@ -48,12 +50,10 @@ def build_gemini_app(operation: ImageOperation, invoker: CommandInvoker) -> App:
             json: bool = False,
         ) -> None:
             """Create an image with Gemini native parameters."""
-            await _invoke(
-                invoker,
-                ImageCreateIntent(prompt=prompt),
-                _model_id(model),
-                params,
-                ExecutionOptions(
+            try:
+                intent = ImageCreateIntent(prompt=prompt)
+                selection = NativeSelection(model=_model_id(model), parameters=params)
+                options = ExecutionOptions(
                     variants=variants,
                     output=output,
                     output_dir=output_dir,
@@ -61,8 +61,10 @@ def build_gemini_app(operation: ImageOperation, invoker: CommandInvoker) -> App:
                     force=force,
                     timeout_seconds=timeout_seconds,
                     json=json,
-                ),
-            )
+                )
+            except ValidationError as exc:
+                render_validation_error(exc, as_json=json)
+            await invoker.invoke(intent, selection, options)
 
     else:
 
@@ -82,12 +84,10 @@ def build_gemini_app(operation: ImageOperation, invoker: CommandInvoker) -> App:
             json: bool = False,
         ) -> None:
             """Edit images with Gemini native parameters."""
-            await _invoke(
-                invoker,
-                ImageEditIntent(prompt=prompt, images=tuple(image)),
-                _model_id(model),
-                params,
-                ExecutionOptions(
+            try:
+                intent = ImageEditIntent(prompt=prompt, images=tuple(image))
+                selection = NativeSelection(model=_model_id(model), parameters=params)
+                options = ExecutionOptions(
                     variants=variants,
                     output=output,
                     output_dir=output_dir,
@@ -95,21 +95,12 @@ def build_gemini_app(operation: ImageOperation, invoker: CommandInvoker) -> App:
                     force=force,
                     timeout_seconds=timeout_seconds,
                     json=json,
-                ),
-            )
+                )
+            except ValidationError as exc:
+                render_validation_error(exc, as_json=json)
+            await invoker.invoke(intent, selection, options)
 
     return app
-
-
-async def _invoke(
-    invoker: CommandInvoker,
-    intent,
-    model: str,
-    params: GeminiParams,
-    options: ExecutionOptions,
-) -> None:
-    """Invoke a Gemini typed command."""
-    await invoker.invoke(intent, NativeSelection(model=model, parameters=params), options)
 
 
 class GeminiCliFactory:

@@ -1,8 +1,9 @@
-"""Load and inspect local image files without Pillow."""
+"""Load and inspect local image files."""
 
+from io import BytesIO
 from typing import TYPE_CHECKING
 
-import filetype
+from PIL import Image, UnidentifiedImageError
 
 from pixgen.images.models import ImageInputError, LocalImage
 
@@ -15,11 +16,15 @@ __all__: list[str] = [
 
 _MAX_INPUT_BYTES = 52_428_800  # 50 MiB
 
-_SUPPORTED_MEDIA_TYPES = frozenset({"image/png", "image/jpeg", "image/webp"})
+_FORMAT_TO_MEDIA_TYPE: dict[str, str] = {
+    "PNG": "image/png",
+    "JPEG": "image/jpeg",
+    "WEBP": "image/webp",
+}
 
 
 def load_image(path: Path, *, max_bytes: int = _MAX_INPUT_BYTES) -> LocalImage:
-    """Load a local image file and return a LocalImage."""
+    """Load, decode-verify, and return a local image file as a LocalImage."""
     if not path.is_file():
         raise ImageInputError(path, "file does not exist or is not a regular file")
 
@@ -42,13 +47,23 @@ def load_image(path: Path, *, max_bytes: int = _MAX_INPUT_BYTES) -> LocalImage:
     except OSError as exc:
         raise ImageInputError(path, f"cannot read file: {exc}") from exc
 
-    kind = filetype.guess(content)
-    if kind is None or kind.mime not in _SUPPORTED_MEDIA_TYPES:
-        raise ImageInputError(path, "unsupported or unrecognised image format")
-
     return LocalImage(
         source_path=path,
         filename=path.name,
         content=content,
-        media_type=kind.mime,
+        media_type=_identify_media_type(path, content),
     )
+
+
+def _identify_media_type(path: Path, content: bytes) -> str:
+    """Decode-verify image bytes and return the matching media type."""
+    try:
+        with Image.open(BytesIO(content)) as image:
+            media_type = _FORMAT_TO_MEDIA_TYPE.get(image.format or "")
+            image.verify()
+    except (UnidentifiedImageError, OSError, ValueError) as exc:
+        raise ImageInputError(path, "unsupported, unrecognised, or corrupt image format") from exc
+
+    if media_type is None:
+        raise ImageInputError(path, "unsupported or unrecognised image format")
+    return media_type

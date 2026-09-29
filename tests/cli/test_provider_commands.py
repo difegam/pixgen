@@ -47,3 +47,27 @@ def test_provider_apps_reject_foreign_native_options() -> None:
             print_error=False,
             exit_on_error=False,
         )
+
+
+class FailingInvoker:
+    """Fail the test if a validation-rejected request ever reaches invoke()."""
+
+    async def invoke(self, *_args, **_kwargs) -> None:
+        pytest.fail("invoker.invoke() must not be called for an invalid request")
+
+
+@pytest.mark.parametrize(
+    ("build_app", "argv"),
+    [
+        (build_openai_app, ["--model", "gpt-image-2", "   "]),
+        (build_gemini_app, ["--model", "gemini-3.1-flash-image", "   "]),
+    ],
+)
+async def test_provider_apps_reject_invalid_prompt_without_invoking(build_app, argv) -> None:
+    app = build_app(ImageOperation.IMAGE_CREATE, FailingInvoker())
+    command, bound, _ = app.parse_args(argv, print_error=False, exit_on_error=False)
+
+    with pytest.raises(SystemExit) as exc_info:
+        await command(*bound.args, **bound.kwargs)
+
+    assert exc_info.value.code == 2

@@ -1,15 +1,30 @@
 """Invoke typed image requests through the application."""
 
-from typing import TYPE_CHECKING
+import uuid
+from typing import TYPE_CHECKING, NoReturn
 
 from pixgen.cli.render import create_generation_progress, render_command_result
+from pixgen.core.errors import ErrorCode, validation_message
+from pixgen.core.results import CommandResult, PublicError
 
 if TYPE_CHECKING:
+    from pydantic import ValidationError
+
     from pixgen.application import ImageApplication
     from pixgen.cli.options import ExecutionOptions
     from pixgen.core.requests import ImageIntent, ParameterSelection
 
-__all__: list[str] = ["CommandInvoker"]
+__all__: list[str] = ["CommandInvoker", "render_validation_error"]
+
+
+def render_validation_error(exc: ValidationError, *, as_json: bool) -> NoReturn:
+    """Render a pre-invoke request validation failure and exit like a command error."""
+    result = CommandResult(
+        run_id=uuid.uuid7(),
+        error=PublicError(code=ErrorCode.INVALID_REQUEST, message=validation_message(exc)),
+    )
+    render_command_result(result, as_json=as_json)
+    raise SystemExit(2) from exc
 
 
 class CommandInvoker:
