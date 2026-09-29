@@ -38,11 +38,10 @@ def build_model_app(registry: ProviderRegistry) -> App:
     ) -> CliOutcome:
         """Show one model's input and parameter schema."""
         spec = registry.get_model(model_id)
-        provider = registry.provider_for(spec.id)
         schemas = {}
         shared_aspect_ratios = {}
         for op in spec.operations:
-            schemas[op.value] = provider.parameter_schema(spec.id, op)
+            schemas[op.value] = registry.parameter_schema(spec.id, op)
             ratios = registry.shared_aspect_ratios(spec.id, op)
             if ratios:
                 shared_aspect_ratios[op.value] = ratios

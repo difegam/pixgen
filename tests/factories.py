@@ -2,13 +2,16 @@
 
 from datetime import date
 
+from pixgen.core.definitions import ModelDefinition
 from pixgen.core.models import (
     ImageOperation,
+    JsonObject,
     MediaRole,
     MediaRoleSpec,
     ModelId,
     ModelSpec,
 )
+from pixgen.core.parameters import ProviderParams
 
 
 def make_media_role_spec(
@@ -46,4 +49,19 @@ def make_model_spec(
         media=media,
         documentation_url=documentation_url,
         verified_at=verified_at,
+    )
+
+
+def make_model_definition[P: ProviderParams](
+    *,
+    spec: ModelSpec | None = None,
+    parameter_type: type[P] = ProviderParams,
+    aspect_ratios: dict[str, JsonObject] | None = None,
+) -> ModelDefinition[P]:
+    """Create a ModelDefinition with default native parameters."""
+    return ModelDefinition[parameter_type](
+        spec=spec if spec is not None else make_model_spec(),
+        parameter_type=parameter_type,
+        defaults=parameter_type(),
+        aspect_ratios=aspect_ratios or {},
     )

@@ -17,6 +17,7 @@ from pixgen.providers.gemini_cli import GeminiCliFactory
 from pixgen.providers.openai import OpenAIProvider
 from pixgen.providers.openai_cli import OpenAICliFactory
 from pixgen.providers.registry import ProviderRegistry
+from tests.factories import make_model_definition, make_model_spec
 
 
 class UnregisteredFactory:
@@ -35,16 +36,14 @@ class CreateOnlyProvider:
 
     name = "example"
 
-    def models(self) -> tuple[ModelSpec, ...]:
-        """Return one create-only model."""
-        from tests.factories import make_model_spec
-
-        return (
-            make_model_spec(
+    catalogue = (
+        make_model_definition(
+            spec=make_model_spec(
                 model_id="example/demo",
                 operations=frozenset({ImageOperation.IMAGE_CREATE}),
-            ),
-        )
+            )
+        ),
+    )
 
 
 class EditOnlyFactory(UnregisteredFactory):

@@ -112,6 +112,8 @@ def _target_key(plan: OutputPlan) -> tuple[str, int]:
 
 
 def _result_details(result: TargetResult) -> tuple[str, str, str]:
+    """Return the status, status style, and detail string for a target result."""
+
     if result.error is not None:
         return "Failed", "red", result.error.message
     if result.warnings:

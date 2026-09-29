@@ -165,14 +165,8 @@ class ImageApplication:
         providers = {mid: self._registry.provider_for(mid) for mid in model_ids}
 
         prepared: dict[ModelId, PreparedImageRequest] = {}
-        for mid, provider in providers.items():
-            model_spec = self._registry.get_model(mid)
-            if intent.operation not in model_spec.operations:
-                raise PixgenError(
-                    ErrorCode.INVALID_REQUEST,
-                    f"model {mid} does not support {intent.operation.value}",
-                )
-            request = provider.validate(intent=intent, model=model_spec, parameters=parameters)
+        for mid in providers:
+            request = self._registry.validate(intent=intent, model_id=mid, parameters=parameters)
             _validate_media(request, images)
             prepared[mid] = PreparedImageRequest(request=request, media=media)
         return prepared, providers

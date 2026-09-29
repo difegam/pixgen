@@ -13,6 +13,7 @@ from pixgen.core.requests import ImageCreateIntent, NativeSelection, SharedSelec
 from pixgen.providers.base import PreparedImageRequest, ProviderImage
 from pixgen.providers.openai import OpenAIProvider
 from pixgen.providers.registry import ProviderRegistry
+from tests.factories import make_model_definition
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -32,34 +33,17 @@ class SlowProvider:
     name = "fake"
 
     def __init__(self, model: ModelSpec, delay: float) -> None:
-        self._model = model
+        self.catalogue = (make_model_definition(spec=model),)
         self._delay = delay
 
     @property
     def available(self) -> bool:
         return True
 
-    def models(self) -> tuple[ModelSpec, ...]:
-        return (self._model,)
-
-    def parameter_schema(self, _model: str, _operation: object) -> dict[str, object]:
-        return {}
-
-    def validate(
-        self,
-        *,
-        intent: object,
-        model: ModelSpec,
-        parameters: object = None,  # noqa: ARG002
-    ) -> object:
-        from pixgen.core.requests import ValidatedImageRequest
-
-        return ValidatedImageRequest(intent=intent, model=model, parameters=ProviderParams())
-
     def declared_media_type(self, _request: object) -> str:
         return "image/png"
 
-    async def generate(self, _request: PreparedImageRequest) -> ProviderImage:
+    async def generate(self, request: PreparedImageRequest) -> ProviderImage:  # noqa: ARG002
         await asyncio.sleep(self._delay)
         return ProviderImage(b"png", "image/png")
 
@@ -72,7 +56,7 @@ class CancellableProvider(SlowProvider):
         self.started = asyncio.Event()
         self.cancelled = asyncio.Event()
 
-    async def generate(self, _request: PreparedImageRequest) -> ProviderImage:
+    async def generate(self, request: PreparedImageRequest) -> ProviderImage:  # noqa: ARG002
         self.started.set()
         try:
             await asyncio.sleep(60)
@@ -93,7 +77,7 @@ class FatalProvider(SlowProvider):
         super().__init__(model, 0)
         self._sibling_started = sibling_started
 
-    async def generate(self, _request: PreparedImageRequest) -> ProviderImage:
+    async def generate(self, request: PreparedImageRequest) -> ProviderImage:  # noqa: ARG002
         await self._sibling_started.wait()
         raise FatalProviderError
 
@@ -239,7 +223,6 @@ class TestImageApplication:
         )
 
         assert result.error is not None
-        assert result.error is not None
         assert "gpt-image-1-mini" in result.error.message
         assert calls == 0
         assert await asyncio.to_thread(lambda: tuple(tmp_path.iterdir())) == ()
@@ -262,7 +245,6 @@ class TestImageApplication:
         )
 
         assert result.error is not None
-        assert result.error is not None
         assert result.error.code == ErrorCode.INVALID_REQUEST
 
     @pytest.mark.asyncio
@@ -276,13 +258,13 @@ class TestImageApplication:
             ),
             pytest.param(
                 SharedSelection(parameters=SharedImageParams(aspect_ratio="16:9")),
-                SharedImageParams(aspect_ratio="16:9"),
+                CapturedParams(),
                 id="shared",
             ),
-            pytest.param(None, SharedImageParams(), id="none"),
+            pytest.param(None, CapturedParams(), id="none"),
         ],
     )
-    async def test_passes_selection_parameters_to_provider(
+    async def test_provider_generates_with_resolved_selection_parameters(
         self, tmp_path: Path, selection, expected
     ) -> None:
         from tests.factories import make_model_spec
@@ -321,7 +303,6 @@ class TestImageApplication:
             timeout_seconds=0,
         )
 
-        assert result.error is not None
         assert result.error is not None
         assert result.error.code == ErrorCode.INVALID_REQUEST
 
@@ -430,12 +411,17 @@ class UnavailableProvider(SlowProvider):
 
 
 class ParameterCapturingProvider(SlowProvider):
-    """Provider that records the parameters the application asks it to validate."""
+    """Provider that records the resolved parameters it is asked to generate with."""
 
     def __init__(self, model: ModelSpec) -> None:
         super().__init__(model, 0)
+        self.catalogue = (
+            make_model_definition(
+                spec=model, parameter_type=CapturedParams, aspect_ratios={"16:9": {}}
+            ),
+        )
         self.parameters: object = None
 
-    def validate(self, *, intent: object, model: ModelSpec, parameters: object = None) -> object:
-        self.parameters = parameters
-        return super().validate(intent=intent, model=model, parameters=parameters)
+    async def generate(self, request: PreparedImageRequest) -> ProviderImage:
+        self.parameters = request.request.parameters
+        return await super().generate(request)

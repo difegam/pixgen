@@ -6,10 +6,11 @@ import pytest
 
 from pixgen.core.errors import PixgenError
 from pixgen.core.models import ImageOperation, MediaRole
-from pixgen.core.requests import ImageCreateIntent
+from pixgen.core.requests import ImageCreateIntent, ValidatedImageRequest
 from pixgen.images.models import LocalImage
 from pixgen.providers.base import PreparedImageRequest, PreparedMedia
-from pixgen.providers.gemini import GEMINI_MODELS, GeminiParams, GeminiProvider
+from pixgen.providers.gemini import GEMINI_CATALOGUE, GEMINI_MODELS, GeminiParams, GeminiProvider
+from pixgen.providers.registry import ProviderRegistry
 
 
 def _make_local_image(
@@ -24,6 +25,12 @@ def _make_local_image(
         content=content,
         media_type=media_type,
     )
+
+
+def _validate(*, intent, model, parameters=None) -> ValidatedImageRequest:
+    """Validate a request through a registry holding the Gemini adapter."""
+    registry = ProviderRegistry((GeminiProvider(None),))
+    return registry.validate(intent=intent, model_id=model.id, parameters=parameters)
 
 
 class TestGeminiParams:
@@ -43,11 +50,10 @@ class TestGeminiParams:
             GeminiParams(image_size="8K")
 
     def test_lite_model_rejects_sizes_above_1k(self) -> None:
-        provider = GeminiProvider(None)
         intent = ImageCreateIntent(prompt="test")
 
         with pytest.raises(PixgenError, match="invalid parameters"):
-            provider.validate(
+            _validate(
                 intent=intent, model=GEMINI_MODELS[1], parameters=GeminiParams(image_size="2K")
             )
 
@@ -57,32 +63,29 @@ class TestGeminiProvider:
 
     def test_models_returns_catalog(self) -> None:
         provider = GeminiProvider(None)
-        assert provider.models() == GEMINI_MODELS
-        assert len(provider.models()) == 3
+        assert provider.catalogue == GEMINI_CATALOGUE
+        assert len(provider.catalogue) == 3
 
     def test_available_false_without_client(self) -> None:
         provider = GeminiProvider(None)
         assert provider.available is False
 
     def test_validate_returns_validated_request(self) -> None:
-        provider = GeminiProvider(None)
         intent = ImageCreateIntent(prompt="test")
         model = GEMINI_MODELS[0]
-        result = provider.validate(
-            intent=intent, model=model, parameters=GeminiParams(aspect_ratio="1:1")
-        )
+        result = _validate(intent=intent, model=model, parameters=GeminiParams(aspect_ratio="1:1"))
         assert result.parameters == GeminiParams(aspect_ratio="1:1")
 
     def test_declared_media_type_always_none(self) -> None:
         provider = GeminiProvider(None)
         intent = ImageCreateIntent(prompt="test")
         model = GEMINI_MODELS[0]
-        request = provider.validate(intent=intent, model=model)
+        request = _validate(intent=intent, model=model)
         assert provider.declared_media_type(request) is None
 
     def test_parameter_schema_returns_json_schema(self) -> None:
         provider = GeminiProvider(None)
-        schema = provider.parameter_schema(
+        schema = ProviderRegistry((provider,)).parameter_schema(
             "gemini/gemini-3.1-flash-image", ImageOperation.IMAGE_CREATE
         )
         assert "properties" in schema
@@ -90,7 +93,7 @@ class TestGeminiProvider:
 
     def test_lite_parameter_schema_only_allows_1k(self) -> None:
         provider = GeminiProvider(None)
-        schema = provider.parameter_schema(
+        schema = ProviderRegistry((provider,)).parameter_schema(
             "gemini/gemini-3.1-flash-lite-image", ImageOperation.IMAGE_CREATE
         )
 
@@ -103,7 +106,7 @@ class TestGeminiProvider:
         provider = GeminiProvider(None)
         intent = ImageCreateIntent(prompt="test")
         model = GEMINI_MODELS[0]
-        request = provider.validate(intent=intent, model=model)
+        request = _validate(intent=intent, model=model)
         prepared = PreparedImageRequest(request=request, media=())
         with pytest.raises(Exception, match="credential"):
             await provider.generate(prepared)
@@ -125,7 +128,7 @@ class TestGeminiProvider:
         provider = GeminiProvider(mock_client)
         intent = ImageCreateIntent(prompt="test prompt")
         model = GEMINI_MODELS[0]
-        request = provider.validate(intent=intent, model=model)
+        request = _validate(intent=intent, model=model)
         prepared = PreparedImageRequest(request=request, media=())
 
         result = await provider.generate(prepared)
@@ -149,7 +152,7 @@ class TestGeminiProvider:
         provider = GeminiProvider(mock_client)
         intent = ImageCreateIntent(prompt="test")
         model = GEMINI_MODELS[0]
-        request = provider.validate(intent=intent, model=model)
+        request = _validate(intent=intent, model=model)
         local_image = _make_local_image()
         media = (PreparedMedia(role=MediaRole.REFERENCE, image=local_image),)
         prepared = PreparedImageRequest(request=request, media=media)
@@ -171,7 +174,7 @@ class TestGeminiProvider:
         provider = GeminiProvider(mock_client)
         intent = ImageCreateIntent(prompt="test")
         model = GEMINI_MODELS[0]
-        request = provider.validate(intent=intent, model=model)
+        request = _validate(intent=intent, model=model)
         prepared = PreparedImageRequest(request=request, media=())
 
         with pytest.raises(Exception, match="no image"):

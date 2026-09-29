@@ -70,9 +70,10 @@ def create_generation_progress(*, as_json: bool) -> GenerationProgress | None:
 
 
 def _render_interactive_command_result(
-    result: CommandResult, *, relative_output_paths: bool
+    result: CommandResult,
+    *,
+    relative_output_paths: bool,
 ) -> None:
-    _stdout_console.print(f"Run ID: {result.run_id}")
     table = Table(
         "Model",
         "Variant",
@@ -81,6 +82,8 @@ def _render_interactive_command_result(
         box=box.SIMPLE,
         header_style="bold",
         highlight=False,
+        footer_style="dim",
+        caption=f"Interactive Command Result - Run ID: {result.run_id}",
     )
     for target in result.results:
         if target.error is not None:

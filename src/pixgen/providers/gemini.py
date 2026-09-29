@@ -9,20 +9,19 @@ from pixgen.core.definitions import ModelDefinition
 from pixgen.core.errors import ErrorCode, PixgenError, ProviderError
 from pixgen.core.models import (
     ImageOperation,
-    JsonSchema,
     MediaRole,
     MediaRoleSpec,
-    ModelId,
     ModelSpec,
 )
-from pixgen.core.parameters import ProviderParams, SharedImageParams
-from pixgen.core.requests import ImageIntent, ValidatedImageRequest
+from pixgen.core.parameters import ProviderParams
 from pixgen.providers.base import PreparedImageRequest, ProviderImage
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from google.genai import Client
+
+    from pixgen.core.requests import ValidatedImageRequest
 
 __all__: list[str] = [
     "GEMINI_CATALOGUE",
@@ -135,6 +134,7 @@ class GeminiProvider:
     """Gemini image generation provider."""
 
     name = "gemini"
+    catalogue = GEMINI_CATALOGUE
 
     def __init__(
         self,
@@ -157,60 +157,6 @@ class GeminiProvider:
                 )
             self._client = self._client_factory()
         return self._client
-
-    def models(self) -> tuple[ModelSpec, ...]:
-        return GEMINI_MODELS
-
-    def parameter_schema(
-        self,
-        model: ModelId,
-        operation: ImageOperation,
-    ) -> JsonSchema:
-        return self._definition(model, operation).parameter_type.model_json_schema()
-
-    def shared_aspect_ratios(
-        self,
-        model: ModelId,
-        operation: ImageOperation,
-    ) -> tuple[str, ...]:
-        """Return portable aspect ratios supported by one Gemini model operation."""
-        return tuple(sorted(self._definition(model, operation).aspect_ratios))
-
-    def _definition(
-        self,
-        model: ModelId,
-        operation: ImageOperation,
-    ) -> ModelDefinition[GeminiParams]:
-        """Return the definition of a catalogued model that supports an operation."""
-        definition = next(
-            (defined_model for defined_model in GEMINI_CATALOGUE if defined_model.spec.id == model),
-            None,
-        )
-        if definition is None:
-            raise PixgenError(
-                ErrorCode.MODEL_NOT_FOUND,
-                f"model {model!r} is not in the provider catalogue",
-            )
-        if operation not in definition.spec.operations:
-            raise PixgenError(
-                ErrorCode.INVALID_REQUEST,
-                f"model {model} does not support {operation.value}",
-            )
-        return definition
-
-    def validate(
-        self,
-        *,
-        intent: ImageIntent,
-        model: ModelSpec,
-        parameters: SharedImageParams | ProviderParams | None = None,
-    ) -> ValidatedImageRequest:
-        definition = self._definition(model.id, intent.operation)
-        return ValidatedImageRequest(
-            intent=intent,
-            model=model,
-            parameters=definition.resolve_parameters(parameters),
-        )
 
     def declared_media_type(self, request: ValidatedImageRequest) -> str | None:  # noqa: ARG002
         return None

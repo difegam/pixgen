@@ -78,7 +78,9 @@ def _validate_factories(
         if provider is None:
             raise ValueError(f"CLI factory {factory.name!r} is not registered")
         supported_operations = {
-            operation for spec in provider.models() for operation in spec.operations
+            operation
+            for definition in provider.catalogue
+            for operation in definition.spec.operations
         }
         unsupported_operations = factory.operations - supported_operations
         if unsupported_operations:

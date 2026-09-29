@@ -17,6 +17,7 @@ from pixgen.providers.openai import (
     OpenAIParams,
     OpenAIProvider,
 )
+from pixgen.providers.registry import ProviderRegistry
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -34,58 +35,53 @@ _INTENTS = [
 ]
 
 
+_REGISTRY = ProviderRegistry((OpenAIProvider(None), GeminiProvider(None)))
+
 _CATALOGUE_CASES = [
-    pytest.param(OpenAIProvider(None), definition, id=definition.spec.id)
-    for definition in OPENAI_CATALOGUE
-] + [
-    pytest.param(GeminiProvider(None), definition, id=definition.spec.id)
-    for definition in GEMINI_CATALOGUE
+    pytest.param(definition, id=definition.spec.id)
+    for definition in OPENAI_CATALOGUE + GEMINI_CATALOGUE
 ]
 
 
 class TestCatalogueAgreement:
     """Published schemas and validation read the same model definition."""
 
-    @pytest.mark.parametrize(("provider", "definition"), _CATALOGUE_CASES)
-    def test_models_project_catalogue_specs(self, provider, definition) -> None:
-        assert definition.spec in provider.models()
+    @pytest.mark.parametrize("definition", _CATALOGUE_CASES)
+    def test_registry_lists_catalogue_specs(self, definition) -> None:
+        assert definition.spec in _REGISTRY.models()
 
-    @pytest.mark.parametrize(("provider", "definition"), _CATALOGUE_CASES)
-    def test_schema_matches_definition_parameter_type(self, provider, definition) -> None:
+    @pytest.mark.parametrize("definition", _CATALOGUE_CASES)
+    def test_schema_matches_definition_parameter_type(self, definition) -> None:
         for operation in definition.spec.operations:
             assert (
-                provider.parameter_schema(definition.spec.id, operation)
+                _REGISTRY.parameter_schema(definition.spec.id, operation)
                 == definition.parameter_type.model_json_schema()
             )
 
     @pytest.mark.parametrize(
-        ("provider", "model_id", "params"),
+        ("model_id", "params"),
         [
             pytest.param(
-                OpenAIProvider(None),
                 "openai/gpt-image-1-mini",
                 OpenAIParams(size="1792x768"),
                 id="mini-rejects-wide-size",
             ),
             pytest.param(
-                GeminiProvider(None),
                 "gemini/gemini-3.1-flash-lite-image",
                 GeminiParams(image_size="4K"),
                 id="lite-rejects-4k",
             ),
             pytest.param(
-                GeminiProvider(None),
                 "gemini/gemini-3.1-flash-image",
                 OpenAIParams(quality="high"),
                 id="gemini-rejects-openai-params",
             ),
         ],
     )
-    def test_validate_enforces_model_parameter_type(self, provider, model_id, params) -> None:
-        spec = _definition(OPENAI_CATALOGUE + GEMINI_CATALOGUE, model_id).spec
+    def test_validate_enforces_model_parameter_type(self, model_id, params) -> None:
         with pytest.raises(PixgenError, match="invalid parameters"):
-            provider.validate(
-                intent=ImageCreateIntent(prompt="test"), model=spec, parameters=params
+            _REGISTRY.validate(
+                intent=ImageCreateIntent(prompt="test"), model_id=model_id, parameters=params
             )
 
 
@@ -107,9 +103,9 @@ class TestOpenAICatalogue:
 
     @pytest.mark.parametrize("intent", _INTENTS)
     def test_validate_resolves_shared_ratio(self, intent: ImageIntent) -> None:
-        request = OpenAIProvider(None).validate(
+        request = _REGISTRY.validate(
             intent=intent,
-            model=_definition(OPENAI_CATALOGUE, "openai/gpt-image-2").spec,
+            model_id="openai/gpt-image-2",
             parameters=SharedImageParams(aspect_ratio="16:9"),
         )
         assert isinstance(request.parameters, OpenAIParams)
@@ -117,16 +113,16 @@ class TestOpenAICatalogue:
 
     def test_validate_rejects_unsupported_shared_ratio(self) -> None:
         with pytest.raises(PixgenError, match="supported ratios: 1:1, 2:3, 3:2"):
-            OpenAIProvider(None).validate(
+            _REGISTRY.validate(
                 intent=ImageCreateIntent(prompt="test"),
-                model=_definition(OPENAI_CATALOGUE, "openai/gpt-image-1-mini").spec,
+                model_id="openai/gpt-image-1-mini",
                 parameters=SharedImageParams(aspect_ratio="16:9"),
             )
 
     def test_validate_without_parameters_uses_model_defaults(self) -> None:
         definition = _definition(OPENAI_CATALOGUE, "openai/gpt-image-1-mini")
-        request = OpenAIProvider(None).validate(
-            intent=ImageCreateIntent(prompt="test"), model=definition.spec
+        request = _REGISTRY.validate(
+            intent=ImageCreateIntent(prompt="test"), model_id=definition.spec.id
         )
         assert request.parameters == definition.defaults
         assert isinstance(request.parameters, OpenAIMiniParams)
@@ -145,8 +141,8 @@ class TestGeminiCatalogue:
         assert definition.defaults.image_size is None
 
     @pytest.mark.parametrize("operation", list(ImageOperation))
-    def test_lists_shared_ratios_through_provider_contract(self, operation: ImageOperation) -> None:
-        assert "7:3" in GeminiProvider(None).shared_aspect_ratios(
+    def test_lists_shared_ratios_through_registry(self, operation: ImageOperation) -> None:
+        assert "7:3" in _REGISTRY.shared_aspect_ratios(
             "gemini/gemini-3.1-flash-image",
             operation,
         )

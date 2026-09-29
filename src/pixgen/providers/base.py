@@ -1,18 +1,12 @@
 """Provider protocol and internal data types."""
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from pixgen.core.models import (
-        ImageOperation,
-        JsonSchema,
-        MediaRole,
-        ModelId,
-        ModelSpec,
-    )
-    from pixgen.core.parameters import ProviderParams, SharedImageParams
-    from pixgen.core.requests import ImageIntent, ValidatedImageRequest
+    from pixgen.core.definitions import ModelDefinition
+    from pixgen.core.models import MediaRole
+    from pixgen.core.requests import ValidatedImageRequest
     from pixgen.images.models import LocalImage
 
 __all__: list[str] = [
@@ -49,43 +43,18 @@ class ProviderImage:
 
 @runtime_checkable
 class ImageProvider(Protocol):
-    """Structural interface for image generation providers."""
+    """Generate images for the models in the provider's catalogue."""
 
     name: str
 
     @property
+    def catalogue(self) -> tuple[ModelDefinition[Any], ...]:
+        """Return the definitions of the models this provider generates with."""
+        ...
+
+    @property
     def available(self) -> bool:
         """Return whether the provider has credentials configured."""
-        ...
-
-    def models(self) -> tuple[ModelSpec, ...]:
-        """Return the curated model specifications."""
-        ...
-
-    def parameter_schema(
-        self,
-        model: ModelId,
-        operation: ImageOperation,
-    ) -> JsonSchema:
-        """Return the JSON Schema for a model's parameters."""
-        ...
-
-    def shared_aspect_ratios(
-        self,
-        model: ModelId,
-        operation: ImageOperation,
-    ) -> tuple[str, ...]:
-        """Return portable aspect ratios supported by one model operation."""
-        ...
-
-    def validate(
-        self,
-        *,
-        intent: ImageIntent,
-        model: ModelSpec,
-        parameters: SharedImageParams | ProviderParams | None = None,
-    ) -> ValidatedImageRequest:
-        """Resolve parameters against a model and return a validated request."""
         ...
 
     def declared_media_type(self, request: ValidatedImageRequest) -> str | None:

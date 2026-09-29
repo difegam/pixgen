@@ -1,12 +1,22 @@
 """Tests for providers.registry."""
 
+from pathlib import Path
+from typing import TYPE_CHECKING
+
 import pytest
 
-from pixgen.core.errors import PixgenError
+from pixgen.core.errors import ErrorCode, PixgenError
 from pixgen.core.models import ImageOperation
+from pixgen.core.parameters import ProviderParams, SharedImageParams
+from pixgen.core.requests import ImageCreateIntent, ImageEditIntent
+from pixgen.providers.base import ProviderImage
 from pixgen.providers.gemini import GEMINI_MODELS, GeminiProvider
 from pixgen.providers.openai import OPENAI_MODELS, OpenAIProvider
 from pixgen.providers.registry import ProviderRegistry
+from tests.factories import make_model_definition, make_model_spec
+
+if TYPE_CHECKING:
+    from pixgen.core.definitions import ModelDefinition
 
 
 class TestProviderRegistry:
@@ -68,3 +78,85 @@ class TestProviderRegistry:
         assert "16:9" in registry.shared_aspect_ratios(
             "openai/gpt-image-2", ImageOperation.IMAGE_CREATE
         )
+
+
+class CatalogueOnlyProvider:
+    """Provider exposing only the narrowed generation protocol."""
+
+    name = "fake"
+
+    def __init__(self, *definitions: ModelDefinition) -> None:
+        self.catalogue = definitions
+
+    @property
+    def available(self) -> bool:
+        return True
+
+    def declared_media_type(self, _request: object) -> None:
+        return None
+
+    async def generate(self, _request: object) -> ProviderImage:
+        return ProviderImage(b"png", "image/png")
+
+
+class RatioParams(ProviderParams):
+    """Native parameters with one ratio-controlled field."""
+
+    size: str | None = None
+
+
+def _fake_registry() -> ProviderRegistry:
+    create_only = make_model_spec(
+        model_id="fake/create-only", operations=frozenset({ImageOperation.IMAGE_CREATE})
+    )
+    return ProviderRegistry(
+        (
+            CatalogueOnlyProvider(
+                make_model_definition(
+                    spec=make_model_spec(model_id="fake/model"),
+                    parameter_type=RatioParams,
+                    aspect_ratios={"16:9": {"size": "wide"}, "1:1": {"size": "square"}},
+                ),
+                make_model_definition(spec=create_only),
+            ),
+        )
+    )
+
+
+class TestRegistryCatalogue:
+    """The registry answers catalogue questions from provider definitions."""
+
+    def test_accepts_provider_with_only_generation_protocol(self) -> None:
+        registry = _fake_registry()
+        assert [spec.id for spec in registry.models()] == ["fake/model", "fake/create-only"]
+        assert isinstance(registry.provider_for("fake/model"), CatalogueOnlyProvider)
+
+    def test_parameter_schema_reads_definition(self) -> None:
+        schema = _fake_registry().parameter_schema("fake/model", ImageOperation.IMAGE_CREATE)
+        assert schema == RatioParams.model_json_schema()
+
+    def test_shared_aspect_ratios_read_definition(self) -> None:
+        ratios = _fake_registry().shared_aspect_ratios("fake/model", ImageOperation.IMAGE_EDIT)
+        assert ratios == ("16:9", "1:1")
+
+    def test_validate_resolves_shared_ratio(self) -> None:
+        request = _fake_registry().validate(
+            intent=ImageCreateIntent(prompt="test"),
+            model_id="fake/model",
+            parameters=SharedImageParams(aspect_ratio="16:9"),
+        )
+        assert request.model.id == "fake/model"
+        assert request.parameters == RatioParams(size="wide")
+
+    def test_validate_rejects_unsupported_operation(self) -> None:
+        with pytest.raises(PixgenError, match="does not support image-edit") as exc_info:
+            _fake_registry().validate(
+                intent=ImageEditIntent(prompt="test", images=(Path("in.png"),)),
+                model_id="fake/create-only",
+            )
+        assert exc_info.value.code == ErrorCode.INVALID_REQUEST
+
+    def test_validate_rejects_unknown_model(self) -> None:
+        with pytest.raises(PixgenError) as exc_info:
+            _fake_registry().validate(intent=ImageCreateIntent(prompt="test"), model_id="fake/nope")
+        assert exc_info.value.code == ErrorCode.MODEL_NOT_FOUND
