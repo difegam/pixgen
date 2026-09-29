@@ -98,17 +98,3 @@ class ModelSpec(BaseModel):
     def model(self) -> ModelName:
         """Return the model part of the provider/model identifier."""
         return self.id.split("/", 1)[1]
-
-
-class ProviderModelInfo(BaseModel):
-    id: ModelId = Field(description="Canonical provider/model identifier")
-
-    @computed_field
-    @property
-    def provider(self) -> ModelProvider:
-        return self.id.split("/", 1)[0]
-
-    @computed_field
-    @property
-    def model(self) -> ModelName:
-        return self.id.split("/", 1)[1]

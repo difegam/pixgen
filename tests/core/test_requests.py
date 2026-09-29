@@ -108,28 +108,32 @@ class TestValidatedImageRequest:
         request = ValidatedImageRequest(
             intent=intent,
             model=model_spec,
-            parameters={"quality": "high"},
+            parameters=DemoParams(colour="blue"),
         )
         assert request.intent.prompt == "test"
         assert request.model.id == "openai/gpt-image-2"
-        assert request.parameters == {"quality": "high"}
+        assert request.parameters == DemoParams(colour="blue")
 
     def test_frozen_raises_on_assignment(self, model_spec) -> None:
         intent = ImageCreateIntent(prompt="test")
-        request = ValidatedImageRequest(intent=intent, model=model_spec, parameters={})
+        request = ValidatedImageRequest(
+            intent=intent, model=model_spec, parameters=DemoParams(colour="blue")
+        )
         with pytest.raises(ValidationError):
-            request.parameters = {"x": 1}
+            request.parameters = DemoParams(colour="red")
 
-    def test_native_parameters_retain_concrete_fields(self, model_spec) -> None:
+    def test_parameters_retain_concrete_fields(self, model_spec) -> None:
         request = ValidatedImageRequest(
             intent=ImageCreateIntent(prompt="test"),
             model=model_spec,
-            parameters={"colour": "blue"},
-            native_parameters=DemoParams(colour="blue"),
+            parameters=DemoParams(colour="blue"),
         )
-        assert request.native_parameters is not None
-        assert request.native_parameters.model_dump() == {"colour": "blue"}
-        assert request.model_dump()["native_parameters"] == {"colour": "blue"}
+        assert isinstance(request.parameters, DemoParams)
+        assert request.model_dump()["parameters"] == {"colour": "blue"}
+
+    def test_intent_rejects_raw_params(self) -> None:
+        with pytest.raises(ValidationError, match="params"):
+            ImageCreateIntent(prompt="test", params={"quality": "high"})
 
 
 class TestSelections:

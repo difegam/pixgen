@@ -8,8 +8,8 @@ from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, ValidationError
 
-from pixgen.core.definitions import ModelDefinition, OperationDefinition, ProviderDefinition
-from pixgen.core.errors import ErrorCode, PixgenError, ProviderError, validation_message
+from pixgen.core.definitions import ModelDefinition
+from pixgen.core.errors import ErrorCode, PixgenError, ProviderError
 from pixgen.core.models import (
     ImageOperation,
     JsonObject,
@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     import httpx2
 
 __all__: list[str] = [
+    "OPENAI_CATALOGUE",
     "OPENAI_MODELS",
     "OpenAIParams",
     "OpenAIProvider",
@@ -47,8 +48,6 @@ _OPENAI_BASE_URL = "https://api.openai.com/v1"
 
 class OpenAIParams(ProviderParams):
     """Validated parameters for OpenAI image models."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
 
     size: str | None = Field(default=None, description="Image size preset or WxH")
     quality: Literal["low", "medium", "high", "auto"] | None = Field(
@@ -94,38 +93,6 @@ class _OpenAIImageResponse(BaseModel):
     output_format: Literal["png", "jpeg", "webp"] = "png"
 
 
-def _make_openai_spec(
-    model_id: str,
-    display_name: str,
-) -> ModelSpec:
-    """Create an OpenAI model specification."""
-    media_spec = MediaRoleSpec(
-        minimum=0,
-        maximum=16,
-        formats=frozenset({"png", "jpeg", "webp"}),
-        max_bytes=52_428_800,
-    )
-    image_spec = MediaRoleSpec(
-        minimum=1,
-        maximum=16,
-        formats=frozenset({"png", "jpeg", "webp"}),
-        max_bytes=52_428_800,
-    )
-    return ModelSpec(
-        id=model_id,
-        display_name=display_name,
-        operations=frozenset({ImageOperation.IMAGE_CREATE, ImageOperation.IMAGE_EDIT}),
-        media={MediaRole.REFERENCE: media_spec, MediaRole.IMAGE: image_spec},
-        documentation_url="https://platform.openai.com/docs/guides/images",
-        verified_at=date(2026, 9, 24),
-    )
-
-
-OPENAI_MODELS: tuple[ModelSpec, ...] = (
-    _make_openai_spec("openai/gpt-image-2", "GPT Image 2"),
-    _make_openai_spec("openai/gpt-image-1-mini", "GPT Image 1 Mini"),
-)
-
 _OPENAI_RATIO_SIZES: dict[str, str] = {
     "1:1": "1024x1024",
     "2:3": "1024x1536",
@@ -138,49 +105,53 @@ _OPENAI_RATIO_SIZES: dict[str, str] = {
 }
 
 
-def _openai_operation(
-    spec: ModelSpec,
+def _openai_definition(
+    model_id: str,
+    display_name: str,
+    *,
     parameter_type: type[OpenAIParams],
-    sizes: dict[str, str],
-) -> OperationDefinition[OpenAIParams]:
-    """Build one OpenAI operation definition."""
-    return OperationDefinition[OpenAIParams](
+    ratios: tuple[str, ...] = tuple(_OPENAI_RATIO_SIZES),
+) -> ModelDefinition[OpenAIParams]:
+    """Define one OpenAI model."""
+    reference_spec = MediaRoleSpec(
+        minimum=0,
+        maximum=16,
+        formats=frozenset({"png", "jpeg", "webp"}),
+        max_bytes=52_428_800,
+    )
+    image_spec = MediaRoleSpec(
+        minimum=1,
+        maximum=16,
+        formats=frozenset({"png", "jpeg", "webp"}),
+        max_bytes=52_428_800,
+    )
+    spec = ModelSpec(
+        id=model_id,
+        display_name=display_name,
+        operations=frozenset({ImageOperation.IMAGE_CREATE, ImageOperation.IMAGE_EDIT}),
+        media={MediaRole.REFERENCE: reference_spec, MediaRole.IMAGE: image_spec},
+        documentation_url="https://platform.openai.com/docs/guides/images",
+        verified_at=date(2026, 9, 24),
+    )
+    return ModelDefinition[OpenAIParams](
+        spec=spec,
         parameter_type=parameter_type,
         defaults=parameter_type(),
-        media=spec.media,
-        aspect_ratios={ratio: {"size": size} for ratio, size in sizes.items()},
+        aspect_ratios={ratio: {"size": _OPENAI_RATIO_SIZES[ratio]} for ratio in ratios},
     )
 
 
-def _make_openai_definitions() -> ProviderDefinition[ModelDefinition[OpenAIParams]]:
-    """Build the OpenAI provider catalogue."""
-    definitions: list[ModelDefinition[OpenAIParams]] = []
-    for spec in OPENAI_MODELS:
-        sizes = _OPENAI_RATIO_SIZES
-        parameter_type: type[OpenAIParams] = OpenAIParams
-        if spec.id == "openai/gpt-image-1-mini":
-            sizes = {key: _OPENAI_RATIO_SIZES[key] for key in ("1:1", "2:3", "3:2")}
-            parameter_type = OpenAIMiniParams
-        definitions.append(
-            ModelDefinition[OpenAIParams](
-                spec=spec,
-                operations={
-                    operation: _openai_operation(spec, parameter_type, sizes)
-                    for operation in spec.operations
-                },
-            )
-        )
-    return ProviderDefinition[ModelDefinition[OpenAIParams]](
-        name="openai",
-        models=tuple(definitions),
-    )
+OPENAI_CATALOGUE: tuple[ModelDefinition[OpenAIParams], ...] = (
+    _openai_definition("openai/gpt-image-2", "GPT Image 2", parameter_type=OpenAIParams),
+    _openai_definition(
+        "openai/gpt-image-1-mini",
+        "GPT Image 1 Mini",
+        parameter_type=OpenAIMiniParams,
+        ratios=("1:1", "2:3", "3:2"),
+    ),
+)
 
-
-def _parameter_model(model: ModelId) -> type[OpenAIParams]:
-    """Return the native parameter model for an OpenAI model."""
-    if model == "openai/gpt-image-1-mini":
-        return OpenAIMiniParams
-    return OpenAIParams
+OPENAI_MODELS: tuple[ModelSpec, ...] = tuple(definition.spec for definition in OPENAI_CATALOGUE)
 
 
 class OpenAIProvider:
@@ -213,39 +184,12 @@ class OpenAIProvider:
     def models(self) -> tuple[ModelSpec, ...]:
         return OPENAI_MODELS
 
-    def definition_catalogue(self) -> ProviderDefinition[ModelDefinition[OpenAIParams]]:
-        """Return the composed OpenAI model catalogue."""
-        return _make_openai_definitions()
-
-    def definitions(self) -> tuple[ModelDefinition[OpenAIParams], ...]:
-        """Return composed OpenAI model definitions."""
-        return self.definition_catalogue().models
-
     def parameter_schema(
         self,
         model: ModelId,
         operation: ImageOperation,
     ) -> JsonSchema:
-        return self._operation_definition(model, operation).parameter_type.model_json_schema()
-
-    def resolve_shared_parameters(
-        self,
-        model: ModelId,
-        operation: ImageOperation,
-        shared: SharedImageParams,
-    ) -> JsonObject:
-        """Resolve portable parameters for one OpenAI model operation."""
-        definition = self._operation_definition(model, operation)
-        try:
-            parameters = definition.resolve(shared)
-        except ValueError as exc:
-            supported = ", ".join(sorted(definition.aspect_ratios))
-            raise PixgenError(
-                ErrorCode.INVALID_REQUEST,
-                f"model {model} does not support aspect ratio {shared.aspect_ratio}; "
-                f"supported ratios: {supported}",
-            ) from exc
-        return parameters.model_dump(exclude_none=True)
+        return self._definition(model, operation).parameter_type.model_json_schema()
 
     def shared_aspect_ratios(
         self,
@@ -253,55 +197,50 @@ class OpenAIProvider:
         operation: ImageOperation,
     ) -> tuple[str, ...]:
         """Return portable aspect ratios supported by one OpenAI model operation."""
-        return tuple(sorted(self._operation_definition(model, operation).aspect_ratios))
+        return tuple(sorted(self._definition(model, operation).aspect_ratios))
 
-    def _operation_definition(
+    def _definition(
         self,
         model: ModelId,
         operation: ImageOperation,
-    ) -> OperationDefinition[OpenAIParams]:
-        """Return one OpenAI operation definition."""
-        definition = next((item for item in self.definitions() if item.spec.id == model), None)
+    ) -> ModelDefinition[OpenAIParams]:
+        """Return the definition of a catalogued model that supports an operation."""
+        definition = next((item for item in OPENAI_CATALOGUE if item.spec.id == model), None)
         if definition is None:
             raise PixgenError(
                 ErrorCode.MODEL_NOT_FOUND,
                 f"model {model!r} is not in the provider catalogue",
             )
-        operation_definition = definition.operations.get(operation)
-        if operation_definition is None:
+        if operation not in definition.spec.operations:
             raise PixgenError(
                 ErrorCode.INVALID_REQUEST,
                 f"model {model} does not support {operation.value}",
             )
-        return operation_definition
+        return definition
 
     def validate(
         self,
         *,
         intent: ImageIntent,
         model: ModelSpec,
+        parameters: SharedImageParams | ProviderParams | None = None,
     ) -> ValidatedImageRequest:
-        try:
-            params = _parameter_model(model.id).model_validate(intent.params)
-        except ValidationError as exc:
-            raise PixgenError(ErrorCode.INVALID_REQUEST, validation_message(exc)) from exc
-        parameters: JsonObject = params.model_dump(exclude_none=True)
+        definition = self._definition(model.id, intent.operation)
         return ValidatedImageRequest(
             intent=intent,
             model=model,
-            parameters=parameters,
-            native_parameters=params,
+            parameters=definition.resolve_parameters(parameters),
         )
 
     def declared_media_type(self, request: ValidatedImageRequest) -> str | None:
-        output_format = request.parameters.get("output_format")
+        output_format = request.parameters.model_dump().get("output_format")
         if output_format:
             return f"image/{output_format}"
         return None
 
     async def generate(self, request: PreparedImageRequest) -> ProviderImage:
         intent = request.request.intent
-        params = request.request.parameters
+        params = request.request.parameters.model_dump(exclude_none=True)
         model_id = request.request.model.id.split("/", 1)[-1]
 
         if isinstance(intent, ImageCreateIntent) and not intent.references:
@@ -330,7 +269,7 @@ class OpenAIProvider:
     async def _generate_multipart(self, request: PreparedImageRequest) -> ProviderImage:
         client = self._get_client()
         intent = request.request.intent
-        params = request.request.parameters
+        params = request.request.parameters.model_dump(exclude_none=True)
 
         files: list[tuple[str, tuple[str, bytes, str]]] = []
         if isinstance(intent, (ImageCreateIntent, ImageEditIntent)):

@@ -3,7 +3,7 @@ from typing import Annotated, ClassVar, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, SerializeAsAny, model_validator
 
-from pixgen.core.models import ImageOperation, JsonObject, MediaRole, ModelSpec
+from pixgen.core.models import ImageOperation, MediaRole, ModelSpec
 from pixgen.core.parameters import ProviderParams, SharedImageParams
 
 __all__: list[str] = [
@@ -44,7 +44,6 @@ class ImageIntentBase(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     prompt: str = Field(min_length=1, description="Prompt for image generation")
-    params: JsonObject = Field(default_factory=dict, description="Provider-neutral parameters")
 
     @model_validator(mode="after")
     def _validate_prompt(self) -> Self:
@@ -92,8 +91,6 @@ class ValidatedImageRequest(BaseModel):
 
     intent: ImageIntent = Field(description="The caller's intent")
     model: ModelSpec = Field(description="The selected curated model")
-    parameters: JsonObject = Field(description="Validated parameters for the model")
-    native_parameters: SerializeAsAny[ProviderParams] | None = Field(
-        default=None,
-        description="Concrete provider parameters retained for typed adapter boundaries",
+    parameters: SerializeAsAny[ProviderParams] = Field(
+        description="Native parameters validated against the selected model"
     )

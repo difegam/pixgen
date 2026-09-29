@@ -44,10 +44,12 @@ class TestGeminiParams:
 
     def test_lite_model_rejects_sizes_above_1k(self) -> None:
         provider = GeminiProvider(None)
-        intent = ImageCreateIntent(prompt="test", params={"image_size": "2K"})
+        intent = ImageCreateIntent(prompt="test")
 
         with pytest.raises(PixgenError, match="invalid parameters"):
-            provider.validate(intent=intent, model=GEMINI_MODELS[1])
+            provider.validate(
+                intent=intent, model=GEMINI_MODELS[1], parameters=GeminiParams(image_size="2K")
+            )
 
 
 class TestGeminiProvider:
@@ -64,13 +66,12 @@ class TestGeminiProvider:
 
     def test_validate_returns_validated_request(self) -> None:
         provider = GeminiProvider(None)
-        intent = ImageCreateIntent(
-            prompt="test",
-            params={"aspect_ratio": "1:1"},
-        )
+        intent = ImageCreateIntent(prompt="test")
         model = GEMINI_MODELS[0]
-        result = provider.validate(intent=intent, model=model)
-        assert result.parameters["aspect_ratio"] == "1:1"
+        result = provider.validate(
+            intent=intent, model=model, parameters=GeminiParams(aspect_ratio="1:1")
+        )
+        assert result.parameters == GeminiParams(aspect_ratio="1:1")
 
     def test_declared_media_type_always_none(self) -> None:
         provider = GeminiProvider(None)

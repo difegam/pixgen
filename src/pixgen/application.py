@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from pixgen.config.models import Settings
-    from pixgen.core.models import JsonObject, ModelId
+    from pixgen.core.models import ModelId
     from pixgen.providers.registry import ProviderRegistry
 
 __all__: list[str] = [
@@ -83,16 +83,14 @@ class ImageApplication:
         """Run an image generation command."""
         run_id = uuid.uuid7()
         try:
-            native_parameters = None
-            shared_parameters = SharedImageParams()
+            parameters: SharedImageParams | ProviderParams = SharedImageParams()
+            models: list[str] | None = None
             if isinstance(selection, SharedSelection):
                 models = list(selection.models) if selection.models is not None else None
-                shared_parameters = selection.parameters
+                parameters = selection.parameters
             elif isinstance(selection, NativeSelection):
                 models = [selection.model]
-                native_parameters = selection.parameters
-            else:
-                models = None
+                parameters = selection.parameters
             model_ids = self._resolve_models(intent, models)
             if not model_ids:
                 raise PixgenError(ErrorCode.INVALID_REQUEST, "at least one model must be selected")
@@ -107,8 +105,7 @@ class ImageApplication:
                 intent,
                 model_ids,
                 images,
-                shared_parameters=shared_parameters,
-                native_parameters=native_parameters,
+                parameters=parameters,
             )
             plans = plan_output(
                 model_ids=model_ids,
@@ -181,8 +178,7 @@ class ImageApplication:
         model_ids: list[str],
         images: tuple[LocalImage, ...],
         *,
-        shared_parameters: SharedImageParams | None = None,
-        native_parameters: ProviderParams | None = None,
+        parameters: SharedImageParams | ProviderParams,
     ) -> tuple[dict[ModelId, PreparedImageRequest], dict[ModelId, ImageProvider]]:
         media = tuple(PreparedMedia(role=intent.media_role, image=img) for img in images)
 
@@ -196,32 +192,11 @@ class ImageApplication:
                     ErrorCode.INVALID_REQUEST,
                     f"model {mid} does not support {intent.operation.value}",
                 )
-            params: JsonObject = {}
-            if native_parameters is not None:
-                params = native_parameters.model_dump(exclude_none=True)
-            elif shared_parameters is not None and shared_parameters.aspect_ratio is not None:
-                params.update(
-                    provider.resolve_shared_parameters(
-                        model_spec.id,
-                        intent.operation,
-                        shared_parameters,
-                    )
-                )
-            overlapping = set(intent.params).intersection(params)
-            if overlapping:
-                names = ", ".join(sorted(overlapping))
-                raise PixgenError(
-                    ErrorCode.INVALID_REQUEST,
-                    f"parameter already supplied by intent: {names}",
-                )
-            resolved_params = {**intent.params, **params}
-            intent_with_params = type(intent).model_validate(
-                {**intent.model_dump(), "params": resolved_params}
-            )
             try:
                 request = provider.validate(
-                    intent=intent_with_params,
+                    intent=intent,
                     model=model_spec,
+                    parameters=parameters,
                 )
             except ValidationError as exc:
                 raise PixgenError(ErrorCode.INVALID_REQUEST, validation_message(exc)) from exc

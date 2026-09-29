@@ -8,8 +8,8 @@ import pytest
 from pixgen.application import ImageApplication
 from pixgen.config.models import Defaults, GenerationSettings, Settings
 from pixgen.core.errors import ErrorCode
-from pixgen.core.parameters import SharedImageParams
-from pixgen.core.requests import ImageCreateIntent, SharedSelection
+from pixgen.core.parameters import ProviderParams, SharedImageParams
+from pixgen.core.requests import ImageCreateIntent, NativeSelection, SharedSelection
 from pixgen.providers.base import PreparedImageRequest, ProviderImage
 from pixgen.providers.openai import OpenAIProvider
 from pixgen.providers.registry import ProviderRegistry
@@ -18,6 +18,12 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from pixgen.core.models import ModelSpec
+
+
+class CapturedParams(ProviderParams):
+    """Native parameters used to check they reach the provider unchanged."""
+
+    quality: str | None = None
 
 
 class SlowProvider:
@@ -39,10 +45,16 @@ class SlowProvider:
     def parameter_schema(self, _model: str, _operation: object) -> dict[str, object]:
         return {}
 
-    def validate(self, *, intent: object, model: ModelSpec) -> object:
+    def validate(
+        self,
+        *,
+        intent: object,
+        model: ModelSpec,
+        parameters: object = None,  # noqa: ARG002
+    ) -> object:
         from pixgen.core.requests import ValidatedImageRequest
 
-        return ValidatedImageRequest(intent=intent, model=model, parameters={})
+        return ValidatedImageRequest(intent=intent, model=model, parameters=ProviderParams())
 
     def declared_media_type(self, _request: object) -> str:
         return "image/png"
@@ -254,7 +266,25 @@ class TestImageApplication:
         assert outcome.result.error.code == ErrorCode.INVALID_REQUEST
 
     @pytest.mark.asyncio
-    async def test_preserves_intent_parameters(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize(
+        ("selection", "expected"),
+        [
+            pytest.param(
+                NativeSelection(model="fake/model", parameters=CapturedParams(quality="high")),
+                CapturedParams(quality="high"),
+                id="native",
+            ),
+            pytest.param(
+                SharedSelection(parameters=SharedImageParams(aspect_ratio="16:9")),
+                SharedImageParams(aspect_ratio="16:9"),
+                id="shared",
+            ),
+            pytest.param(None, SharedImageParams(), id="none"),
+        ],
+    )
+    async def test_passes_selection_parameters_to_provider(
+        self, tmp_path: Path, selection, expected
+    ) -> None:
         from tests.factories import make_model_spec
 
         model = make_model_spec(model_id="fake/model")
@@ -266,11 +296,12 @@ class TestImageApplication:
         )
 
         outcome = await ImageApplication(registry, settings).run(
-            ImageCreateIntent(prompt="test", params={"quality": "high"}),
+            ImageCreateIntent(prompt="test"),
+            selection=selection,
         )
 
         assert outcome.exit_code == 0
-        assert provider.parameters == {"quality": "high"}
+        assert provider.parameters == expected
 
     @pytest.mark.asyncio
     async def test_rejects_nonpositive_timeout_before_submission(self, tmp_path: Path) -> None:
@@ -398,14 +429,12 @@ class UnavailableProvider(SlowProvider):
 
 
 class ParameterCapturingProvider(SlowProvider):
-    """Provider that records the validated provider parameters."""
+    """Provider that records the parameters the application asks it to validate."""
 
     def __init__(self, model: ModelSpec) -> None:
         super().__init__(model, 0)
-        self.parameters: dict[str, object] = {}
+        self.parameters: object = None
 
-    def validate(self, *, intent: object, model: ModelSpec) -> object:
-        from pixgen.core.requests import ValidatedImageRequest
-
-        self.parameters = dict(intent.params)
-        return ValidatedImageRequest(intent=intent, model=model, parameters=self.parameters)
+    def validate(self, *, intent: object, model: ModelSpec, parameters: object = None) -> object:
+        self.parameters = parameters
+        return super().validate(intent=intent, model=model, parameters=parameters)
