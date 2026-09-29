@@ -1,5 +1,6 @@
 """Build OpenAI-owned Cyclopts image commands."""
 
+from functools import partial
 from pathlib import Path  # noqa: TC003
 from typing import TYPE_CHECKING, Annotated
 
@@ -7,10 +8,10 @@ from cyclopts import App, Parameter
 
 from pixgen.cli.options import ExecutionOptions
 from pixgen.cli.outcome import CliOutcome, cli_command
-from pixgen.core.errors import ErrorCode, PixgenError
 from pixgen.core.models import ImageOperation
 from pixgen.core.requests import ImageCreateIntent, ImageEditIntent, NativeSelection
 from pixgen.providers.openai import OpenAIParams
+from pixgen.providers.shared import normalize_model_id
 
 if TYPE_CHECKING:
     from pixgen.cli.invoke import CommandInvoker
@@ -19,16 +20,11 @@ __all__: list[str] = ["OpenAICliFactory", "build_openai_app"]
 
 _DEFAULT_OPENAI_PARAMS = OpenAIParams()
 
-
-def _model_id(value: str) -> str:
-    """Validate and canonicalise an OpenAI-local model name."""
-    if value.startswith("openai/"):
-        return value
-    if "/" in value:
-        raise PixgenError(
-            ErrorCode.INVALID_REQUEST, "OpenAI native commands require an OpenAI model name"
-        )
-    return f"openai/{value}"
+_model_id = partial(
+    normalize_model_id,
+    prefix="openai",
+    error_message="OpenAI native commands require an OpenAI model name",
+)
 
 
 def build_openai_app(operation: ImageOperation, invoker: CommandInvoker) -> App:

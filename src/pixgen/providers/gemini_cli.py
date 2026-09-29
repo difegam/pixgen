@@ -1,5 +1,6 @@
 """Build Gemini-owned Cyclopts image commands."""
 
+from functools import partial
 from pathlib import Path  # noqa: TC003
 from typing import TYPE_CHECKING, Annotated
 
@@ -7,10 +8,10 @@ from cyclopts import App, Parameter
 
 from pixgen.cli.options import ExecutionOptions
 from pixgen.cli.outcome import CliOutcome, cli_command
-from pixgen.core.errors import ErrorCode, PixgenError
 from pixgen.core.models import ImageOperation
 from pixgen.core.requests import ImageCreateIntent, ImageEditIntent, NativeSelection
 from pixgen.providers.gemini import GeminiParams
+from pixgen.providers.shared import normalize_model_id
 
 if TYPE_CHECKING:
     from pixgen.cli.invoke import CommandInvoker
@@ -19,16 +20,11 @@ __all__: list[str] = ["GeminiCliFactory", "build_gemini_app"]
 
 _DEFAULT_GEMINI_PARAMS = GeminiParams()
 
-
-def _model_id(value: str) -> str:
-    """Validate and canonicalise a Gemini-local model name."""
-    if value.startswith("gemini/"):
-        return value
-    if "/" in value:
-        raise PixgenError(
-            ErrorCode.INVALID_REQUEST, "Gemini native commands require a Gemini model name"
-        )
-    return f"gemini/{value}"
+_model_id = partial(
+    normalize_model_id,
+    prefix="gemini",
+    error_message="Gemini native commands require a Gemini model name",
+)
 
 
 def build_gemini_app(operation: ImageOperation, invoker: CommandInvoker) -> App:

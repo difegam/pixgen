@@ -120,6 +120,8 @@ def cli_command[**P](
     """
 
     def decorate(command: Callable[P, Any]) -> Callable[P, Any]:
+
+        # Handle asynchronous commands.
         if inspect.iscoroutinefunction(command):
 
             @functools.wraps(command)
@@ -133,6 +135,7 @@ def cli_command[**P](
 
             return run_async
 
+        # Handle synchronous commands.
         @functools.wraps(command)
         def run(*args: P.args, **kwargs: P.kwargs) -> Any:
             try:

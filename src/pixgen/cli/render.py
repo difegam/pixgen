@@ -100,7 +100,7 @@ def _render_interactive_command_result(
             else:
                 status = Text("Saved", style="green")
                 detail = Text(output_path)
-        table.add_row(str(target.model), str(target.variant), status, detail)
+        table.add_row(target.model, str(target.variant), status, detail)
     _stdout_console.print(table)
 
 
