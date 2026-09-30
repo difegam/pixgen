@@ -1,48 +1,70 @@
-from typing import Annotated, Literal
+from pathlib import Path
+from typing import Annotated, ClassVar, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from pixgen.core.models import MediaReference, ModelId, Operation
+from pixgen.core.models import ImageOperation, JsonObject, MediaRole, ModelSpec
 
-type JsonScalar = str | int | float | bool | None
-type JsonValue = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
-
-
-class RequestBase(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    prompt: str = Field(min_length=1)
-    model: ModelId
-    params: dict[str, JsonValue] = Field(default_factory=dict)
+__all__: list[str] = [
+    "ImageCreateIntent",
+    "ImageEditIntent",
+    "ImageIntent",
+    "ValidatedImageRequest",
+]
 
 
-class ImageRequestBase(RequestBase):
-    aspect_ratio: str | None = None
-    resolution: str | None = None
-    count: int = Field(default=1, ge=1)
+class ImageIntentBase(BaseModel):
+    """Base for image generation intents."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    prompt: str = Field(min_length=1, description="Prompt for image generation")
+    params: JsonObject = Field(default_factory=dict, description="Provider-neutral parameters")
+
+    @model_validator(mode="after")
+    def _validate_prompt(self) -> Self:
+        if not self.prompt.strip():
+            raise ValueError("prompt must contain a non-whitespace character")
+        return self
 
 
-class ImageCreateRequest(ImageRequestBase):
-    operation: Literal[Operation.IMAGE_CREATE] = Operation.IMAGE_CREATE
-    references: tuple[MediaReference, ...] = ()
+class ImageCreateIntent(ImageIntentBase):
+    """Intent to create an image from a prompt and optional references."""
+
+    media_role: ClassVar[MediaRole] = MediaRole.REFERENCE
+
+    operation: Literal[ImageOperation.IMAGE_CREATE] = ImageOperation.IMAGE_CREATE
+    references: tuple[Path, ...] = Field(default=(), description="Ordered reference image paths")
+
+    @property
+    def input_paths(self) -> tuple[Path, ...]:
+        return self.references
 
 
-class ImageEditRequest(ImageRequestBase):
-    operation: Literal[Operation.IMAGE_EDIT] = Operation.IMAGE_EDIT
-    images: tuple[MediaReference, ...] = Field(min_length=1)
-    mask: MediaReference | None = None
+class ImageEditIntent(ImageIntentBase):
+    """Intent to edit one or more source images."""
+
+    media_role: ClassVar[MediaRole] = MediaRole.IMAGE
+
+    operation: Literal[ImageOperation.IMAGE_EDIT] = ImageOperation.IMAGE_EDIT
+    images: tuple[Path, ...] = Field(min_length=1, description="Ordered source image paths")
+
+    @property
+    def input_paths(self) -> tuple[Path, ...]:
+        return self.images
 
 
-class VideoCreateRequest(RequestBase):
-    operation: Literal[Operation.VIDEO_CREATE] = Operation.VIDEO_CREATE
-    start_frame: MediaReference | None = None
-    aspect_ratio: str | None = None
-    resolution: str | None = None
-    duration: int | None = None
-
-
-# Discriminated union for generation requests
-type GenerationRequest = Annotated[
-    ImageCreateRequest | ImageEditRequest | VideoCreateRequest,
+type ImageIntent = Annotated[
+    ImageCreateIntent | ImageEditIntent,
     Field(discriminator="operation"),
 ]
+
+
+class ValidatedImageRequest(BaseModel):
+    """A validated intent paired with a curated model."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    intent: ImageIntent = Field(description="The caller's intent")
+    model: ModelSpec = Field(description="The selected curated model")
+    parameters: JsonObject = Field(description="Validated parameters for the model")

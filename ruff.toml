@@ -106,5 +106,12 @@ fixable = ["ALL"]
 unfixable = []
 
 [lint.per-file-ignores]
-"tests/*.py" = ["S101"]     # Use of `assert` detected
+"tests/*.py" = ["S101", "E501"]        # Use of `assert` detected
 "**/__init__.py" = ["D104"]
+"__init__.py" = ["D", "E402"]
+"**/{tests,docs}/*" = ["S101", "E402"]
+"*/tests/*" = ["S101", "S106"]
+
+
+[lint.flake8-type-checking]
+runtime-evaluated-base-classes = ["pydantic.BaseModel", "cyclopts.App"]

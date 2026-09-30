@@ -1,1684 +1,430 @@
-# Pixgen 0.1: Product, Architecture, and Implementation Plan
+# Pixgen image MVP contract
 
-Verified and revised: 2026-09-20.
+Verified and revised: 2026-09-24 (provider facts, library behavior, and the
+checked-in code were reviewed).
 
-## 1. Product contract
+## Product contract
 
-Pixgen is an open-source, local, bring-your-own-key CLI for generative images
-and video. Humans, shell scripts, CI jobs, and coding agents get one typed
-interface across independently authenticated providers.
+Pixgen is a local, bring-your-own-key CLI for generating and editing images.
+It gives people, shell scripts, CI jobs, and coding agents one typed command
+shape across OpenAI and Gemini. Pixgen writes explicit local artifacts and
+returns structured results for automation.
+
+The MVP succeeds when a caller can select one or more curated models, create
+or edit images, submit independent variants in parallel, and receive local
+artifact paths or structured errors.
+
+## MVP scope
+
+- Create images from a prompt with ordered reference images.
+- Edit one or more ordered input images through a prompt.
+- Use built-in OpenAI and Gemini adapters.
+- Select repeated models and generate independent variants per model.
+- Discover curated models and their parameter schemas offline.
+- Configure default model lists and local execution limits.
+- Write artifacts atomically and support human output and versioned JSON.
+
+## Command contract
 
 ```text
-human or agent
-    → stable CLI and versioned JSON
-    → typed Pixgen requests
-    → built-in provider adapter
-    → provider API
-    → explicit local artifact
+pixgen image create PROMPT
+  [--reference PATH ...]
+  [--model PROVIDER/MODEL ...]
+  [--variants N]
+  [--param [PROVIDER/MODEL:]NAME=JSON ...]
+  [--output FILE | --output-dir DIRECTORY]
+  [--timeout SECONDS]
+  [--mkdir] [--force] [--json]
+
+pixgen image edit PROMPT
+  --image PATH ...
+  [--model PROVIDER/MODEL ...]
+  [--variants N]
+  [--param [PROVIDER/MODEL:]NAME=JSON ...]
+  [--output FILE | --output-dir DIRECTORY]
+  [--timeout SECONDS]
+  [--mkdir] [--force] [--json]
+
+pixgen model list [--json]
+pixgen model get PROVIDER/MODEL [--json]
 ```
-
-Pixgen doesn't need a hosted service, account, proxy, API key, MCP server, or
-daemon. The provider owns inference, billing, moderation, quotas, and remote
-retention.
-
-### Principles
-
-1. **CLI first.** The CLI is the product contract. Python internals remain free
-   to change until a real public extension API is justified.
-2. **BYOK.** Credentials resolve from secure desktop storage and then the
-   provider-standard environment variable. Pixgen never brokers credentials.
-3. **Typed boundaries.** CLI input, configuration, provider requests, provider
-   results, persistence rows, JSON output, and errors all have explicit types.
-4. **Small common core.** Normalize only concepts that genuinely map across the
-   shipped providers. Validate provider-native options inside the adapter.
-5. **Agent-safe output.** Every command supports `--json`, stable error codes,
-   documented exit statuses, and predictable absolute artifact paths.
-6. **No surprise spending.** Validate locally before submission, never retry an
-   ambiguous paid submission, and make independent variant requests explicit.
-7. **No secret persistence.** Credentials, authorization headers, signed URLs,
-   and unsanitized provider responses never enter configuration, SQLite, output,
-   or logs.
-
-### Design discipline
-
-Pixgen borrows four ideas and avoids the rest.
-
-1. **Functional core, imperative shell.** `core/` is pure: types and
-   `validate_request`. I/O, ordering, and failure handling live in
-   `application.py`. Test the parts that need no fixtures.
-2. **One protocol.** `Provider` is the only protocol because it's the only
-   boundary with two implementations and a likely third. Storage, config, and
-   output are plain modules. One-implementation protocols are guesses dressed
-   as design.
-3. **Composition root.** `runtime.py` builds exactly what the command needs,
-   nothing more. No global singletons, no import-time construction.
-4. **Parse, don't validate.** A `GenerationRequest` is frozen and validated.
-   Downstream code doesn't re-check whether the prompt is empty or model ID is
-   well-formed.
-
-Pixgen doesn't have repositories, DAOs, unit-of-work objects, factories,
-generic services, controllers, dependency-injection containers, event buses, or
-plugin loaders. A new module needs pressure: a second implementation, a missing
-test seam, or a file that's grown too long. "It's the standard pattern" isn't
-pressure. Every layer is something someone has to read.
-
-## 2. Release scope
-
-### Included in 0.1
-
-- Google image creation, reference-guided creation, and editing.
-- Google text-to-video and start-frame-to-video through Gemini Omni Flash.
-- OpenAI image creation, reference-guided creation, and editing.
-- Native image batches where a model supports them.
-- Explicit concurrent image variants as independent paid generations.
-- Curated model discovery and capability inspection.
-- Local validation of operations, media roles, counts, formats, sizes, and
-  provider-native parameters.
-- Secure keyring credentials with provider-standard environment fallback.
-- Persistent generation and artifact history in SQLite.
-- Background video submission, polling, cancellation, and cross-process resume.
-- Atomic local artifact writes and collision protection.
-- Versioned JSON output, stable errors, and stable exit codes.
-- Passive `info`, active `doctor`, and one provider-neutral Agent Skill.****
-
-### Non-goals
-
-Pixgen 0.1 is not a hosted API, provider proxy, billing system, web application,
-workflow engine, gallery, marketplace, cloud-storage service, or generic AI
-orchestration framework.
-
-## 3. CLI contract
 
 ### Command tree
 
 ```text
 pixgen
-├── image
-│   ├── create
-│   └── edit
-├── video
-│   └── create
-├── generation
-│   ├── get
-│   ├── list
-│   ├── wait
-│   └── cancel
-├── model
-│   ├── list
-│   └── get
-├── keys
-│   ├── set
-│   ├── list
-│   └── delete
-├── config
-│   ├── get
-│   └── path
-├── info
-├── doctor
-├── --install-completion
-├── --version
-└── --help
+├── image                         Image creation and editing
+│   ├── create PROMPT              Create from a prompt and optional references
+│   └── edit PROMPT                Transform one or more source images
+├── model                         Offline curated-model catalogue
+│   ├── list                       List models and supported operations
+│   └── get PROVIDER/MODEL         Show one model's input and parameter schema
+├── --help, -h                     Cyclopts-provided help at every tree level
+└── --version                      Print the installed Pixgen version
 ```
 
-The root namespace contains no provider-specific commands. There is no
-`provider` or `plugins` command in 0.1 because the providers are known built-ins
-and model IDs already identify their provider.
+There are deliberately no top-level `config`, `provider`, `history`, `video`,
+or `doctor` commands in the MVP. Configuration stays file and environment
+based; vendor behavior stays behind the provider protocol.
 
-### Prompts
+### Parsing and response contract
 
-The prompt is positional. `--prompt` is an explicit alias for generated command
-lines and prompts beginning with a dash.
+| Surface | Contract |
+| --- | --- |
+| `PROMPT` | Required, non-empty positional text. It remains unmodified by the CLI; adapters translate it for their API. |
+| `--reference PATH` | Repeatable and ordered. It is accepted only by `image create`; zero inputs are valid until a selected model says otherwise. |
+| `--image PATH` | Repeatable and ordered. It is required by `image edit`. |
+| `--model PROVIDER/MODEL` | Repeatable canonical model ID. Explicit values replace configured defaults; omitting it uses the operation-specific configured defaults. |
+| `--variants N` | Positive integer. It is expanded after target validation into independent `(model, variant)` jobs, numbered from one. The job count (models × variants) is capped by `max_jobs`. |
+| `--param [PROVIDER/MODEL:]NAME=JSON` | Repeatable JSON-valued provider parameter. Unscoped, every selected model must accept the parameter and value. Scoped, it applies to that model only, and the scope must name a selected model. A name appears at most once, scoped or unscoped. Non-finite constants (`NaN`, `Infinity`, `-Infinity`) are rejected. |
+| `--output FILE` / `--output-dir DIRECTORY` | Mutually exclusive. A single target may use `--output`; multiple targets require `--output-dir`. An `--output` suffix that conflicts with the target's declared output type fails before submission. |
+| `--timeout SECONDS` | Positive whole-run deadline. It overrides the configured `run_timeout_seconds`. |
+| `--mkdir` / `--force` | `--mkdir` creates a user-named output parent. `--force` replaces an existing `--output FILE`; generated names never collide, so it has no effect with `--output-dir`. Neither affects the implicit default output directory. |
+| `--json` | Selects one machine-readable stdout envelope. It is available on all four leaf commands. |
 
-```bash
-pixgen image create "A modern cabin beside a Norwegian fjord" \
-  --model google/gemini-3.1-flash-image \
-  --aspect-ratio 16:9 \
-  --output cabin.png
+`model list` and `model get` read only the built-in catalogue. They must not
+need network access or provider credentials. `model get` returns the canonical
+model ID, supported operations, media rules, documented provider URL, verified
+date, and the operation-specific JSON Schema that governs `--param`.
+
+Before submission, commands parse options, resolve models, validate all paths,
+parameter values, credentials, and output policy. Invalid input always fails
+the whole command with status `2`, before an image request is made. Once a
+valid target has been submitted, its outcome is reported independently.
+
+Human mode writes a concise success summary and artifact paths to stdout, and
+only errors, warnings, and optional progress to stderr. JSON mode writes
+exactly one UTF-8 JSON value followed by one newline to stdout, and nothing
+else to stdout. The `image` commands use the `CommandResult` envelope; `model
+list` and `model get` use `ModelListResult` and `ModelGetResult`. All three are
+serialized with field names from this document and carry `schema_version` and
+an optional command-level `error`. The `model` field is the canonical
+`provider/model` ID, so a separate provider field is unnecessary. Diagnostics
+still go to stderr in JSON mode. Error responses use the same envelope and
+exit status, so scripts never have to parse human text. A command that fails
+before any target is selected or submitted carries one command-level `error`
+and no `results`; once targets are submitted, each outcome is a
+`TargetResult`. Warnings that affect a target, such as an `--output` suffix
+mismatch, are also recorded in that target's `warnings`, so agents never need
+to read stderr.
+
+The primary caller is a coding agent using `--json`. Human output stays
+minimal: a short summary and artifact paths.
+
+Examples:
+
+```console
+# One target: write the result to an exact file.
+pixgen image create "A paper-cut city at dusk" \
+  --model openai/gpt-image-2 \
+  --output city.png
+
+# Two providers and two variants each: four independent artifacts.
+pixgen image create "An editorial photograph of a fern" \
+  --model openai/gpt-image-2 \
+  --model gemini/gemini-3.1-flash-image \
+  --variants 2 --output-dir ./renders --mkdir
+
+# Parameters are JSON and target one selected model in this invocation.
+pixgen image edit "Make the sky stormy" --image source.png \
+  --model openai/gpt-image-2 \
+  --param 'quality="high"' --json
+
+# Scope provider-specific parameters when models from different providers run together.
+pixgen image create "A lighthouse in fog" \
+  --model openai/gpt-image-2 \
+  --model gemini/gemini-3.1-flash-image \
+  --param 'openai/gpt-image-2:quality="high"' \
+  --param 'gemini/gemini-3.1-flash-image:aspect_ratio="16:9"' \
+  --timeout 110 --json
+
+# Explore the local contract without credentials or a network request.
+pixgen model get openai/gpt-image-2 --json
 ```
 
-The implementation must verify the exact Cyclopts declaration with a CLI test
-covering both forms. The two forms are mutually exclusive when parsed together.
+`image create` uses `--reference` inputs to guide a new composition. `image
+edit` uses `--image` inputs as material to transform. The adapter validates the
+selected model's input counts and formats.
 
-> **Note:** Model IDs used in examples (e.g., `google/gemini-3.1-flash-image`, `openai/gpt-image-2.5-sunburst`) are defined in **§5's provider tables**. See that section for the complete 0.1 model manifest.
+`--model` is repeatable. Explicit values replace the configured model list for
+that operation. Without explicit values, Pixgen uses the configured list. If
+neither exists, the command fails before a provider call.
 
-### Image creation and editing
+`--variants` defaults to one and is limited by `max_variants`, defaulting to
+ten. Pixgen creates one independent request per selected model and variant
+index. Two models with `--variants 3` create six requests. The total job count
+is limited by `max_jobs`, defaulting to ten; a larger fan-out fails before
+submission with status `2` and `invalid_request`, because every job is a paid
+request and no confirmation step exists for agents.
 
-The commands express distinct user intent:
+`--param` is repeatable. Pixgen splits each value at the first `=` and parses
+the right side with `json.loads(..., parse_constant=...)`, rejecting `NaN`,
+`Infinity`, and `-Infinity`; the standard library accepts them by default and
+they cannot be re-serialized as JSON. If the left side contains `:`, the text
+before it is a model scope; model IDs and parameter names never contain `:`.
+An unscoped parameter is global to the invocation, so every selected target
+must validate it. A scoped parameter applies only to that model, and a scope
+that names an unselected model fails. A name may appear only once, scoped or
+unscoped; `quality` and `openai/gpt-image-2:quality` together fail.
+This keeps mixed-provider runs useful while every value is still validated
+before submission.
 
-- `image create` creates a new composition. Repeated `--reference` inputs guide
-  subject, composition, or style.
-- `image edit` transforms one or more repeated `--image` inputs. It may accept
-  one `--mask` when the selected model supports masks.
+`--output FILE` is valid only when a command yields one result. A command with
+several results requires `--output-dir DIRECTORY`. With neither option, Pixgen
+writes to configured `output_dir`, or to `./pixgen/` under the current working
+directory. Pixgen creates only this implicit directory automatically. Explicit
+parents require `--mkdir`, and an existing `--output FILE` requires `--force`.
 
-```bash
-# Text-to-image
-pixgen image create "A ceramic teapot on a walnut table" \
-  --model google/gemini-3.1-flash-image \
-  --output teapot.png
+Generated names in an output directory are
+`{timestamp}-{run_id}-{provider}-{model}-v{variant}.{ext}`, for example
+`20260924T101500Z-a3f9-openai-gpt-image-2.5-sunburst-v1.png`. The timestamp is
+UTC to the second and shared by the run; `run_id` is a short random value also
+reported in `CommandResult`. Names are therefore unique per run and never need
+`--force`; the writer still refuses to replace an existing file.
 
-# New composition from multiple references
-pixgen image create \
-  "Place the product from the first image in the visual style of the second" \
-  --reference product.png \
-  --reference style.png \
-  --model google/gemini-3.1-flash-image \
-  --output campaign.png
+Each adapter reports the output media type a validated request declares (for
+example, OpenAI `output_format="jpeg"`), or `None` when the provider decides.
+Before submission, an `--output` suffix that conflicts with a declared type
+fails with status `2`. After generation, Pixgen writes to the exact `--output`
+path, reports the actual `media_type`, and warns on stderr and in the target's
+`warnings` if it differs from the suffix; a paid result is never discarded for
+its name. Generated names in
+an output directory always use the actual media type's extension.
 
-# Transform an existing image
-pixgen image edit "Replace the background with a neutral studio backdrop" \
-  --image product.png \
-  --mask background-mask.png \
-  --model openai/gpt-image-2.5-sunburst \
-  --output product-studio.png
+## Configuration and credentials
+
+Pydantic Settings reads a user-level PlatformDirs TOML file. `PIXGEN_CONFIG`
+selects a different absolute TOML file. Environment values take precedence over
+the TOML file. The Settings model loads `OPENAI_API_KEY` and `GEMINI_API_KEY`
+into runtime-only `SecretStr` fields through `validation_alias`, because the
+`PIXGEN_` environment prefix does not apply to them.
+
+The TOML path is resolved when settings are constructed, not at import:
+`settings_customise_sources()` reads `PIXGEN_CONFIG` or the PlatformDirs
+default and passes it as `TomlConfigSettingsSource(settings_cls,
+toml_file=path)`. A missing default file is empty configuration; a missing
+`PIXGEN_CONFIG` file is an `invalid_configuration` error. The CLI and tests
+use that one construction path.
+
+```toml
+[defaults]
+image_create_models = ["openai/gpt-image-2"]
+image_edit_models = ["openai/gpt-image-2"]
+
+[generation]
+output_dir = "/absolute/path/optional"
+max_parallel_requests = 4
+max_variants = 10
+max_jobs = 10
+request_timeout_seconds = 300
+run_timeout_seconds = 110   # optional; unset means no whole-run deadline
 ```
 
-The adapter may map both intents to the same provider endpoint. The CLI and core
-do not infer intent from provider endpoint names.
+`output_dir` defaults to `None`; `artifacts.py` resolves `./pixgen/` against
+the working directory at run time. `request_timeout_seconds` bounds one
+provider request: the OpenAI client uses it as the `httpx2` read and write
+timeout, and the Gemini client receives it in milliseconds, the unit of
+`HttpOptions.timeout`. `run_timeout_seconds` defaults to `None` and is
+overridden by `--timeout`; each request is bounded by the smaller of the
+request timeout and the time left before the run deadline. Pixgen does not
+hard-code any agent harness's tool limit. The generated TOML template does not
+write credentials.
+`runtime.py` reads the two `SecretStr` values only while constructing provider
+clients.
 
-### Video creation
+## Architecture
 
-The 0.1 video contract is deliberately small:
+The CLI stays provider-neutral. It produces an image intent, selects model
+targets, and invokes one application operation. The application validates every
+target before submission, schedules jobs, writes artifacts, and creates the
+public result. Adapters keep their transport, parameter models, request
+translation, and response translation private.
 
-```bash
-# Text-to-video; waits by default
-pixgen video create "A slow aerial pass over a volcanic island" \
-  --model google/gemini-omni-1.1-flash \
-  --output island.mp4
-
-# Start-frame-to-video; return after submission
-pixgen video create "Slow dolly toward the cabin while snow falls" \
-  --start-frame cabin.png \
-  --model google/gemini-omni-1.1-flash \
-  --output cabin.mp4 \
-  --no-wait --json
+```mermaid
+flowchart LR
+    user[User] --> cli[Pixgen CLI]
+    agent[Coding agent] --> cli
+    cli -->|model list or get| catalog[Curated model catalog]
+    catalog --> render[Human or JSON renderer]
+    cli -->|image create or edit| application[Image application]
+    application --> images[Local image preparation]
+    application --> registry[Provider registry]
+    registry --> openai[OpenAI adapter]
+    registry --> gemini[Gemini adapter]
+    openai --> httpclient[Injected httpx2 AsyncClient]
+    httpclient --> openai_api[OpenAI Images API]
+    gemini --> gemini_api[Gemini SDK and API]
+    openai --> application
+    gemini --> application
+    application --> artifacts[Artifact writer]
+    artifacts --> render
+    render -->|human output| user
+    render -->|one JSON document| agent
 ```
 
-`--wait`, `--no-wait`, `--wait-timeout`, and `--wait-interval` apply only to
-video creation and `generation wait`. Image provider endpoints are synchronous,
-so exposing `--no-wait` there would promise resumability the provider cannot
-supply.
+OpenAI uses an injected `httpx2.AsyncClient`; only its adapter owns OpenAI
+paths, payload fields, and response/error mapping. Gemini uses the official
+`google-genai` SDK. Both choices remain inside their adapter. Neither provider
+returns image URLs for these models: OpenAI GPT Image returns base64 data and
+Gemini returns inline image bytes, so the MVP has no download path.
 
-### Model selection
+### Image command sequence
 
-Generation commands do not accept `--provider`.
+```mermaid
+sequenceDiagram
+    participant C as User or agent
+    participant CLI as Cyclopts command
+    participant A as Image application
+    participant I as Image loader
+    participant P as Selected provider
+    participant T as httpx2 client or SDK
+    participant W as Artifact writer
 
-```text
-explicit --model provider/model
-    ↓ otherwise
-defaults.image_model or defaults.video_model
-    ↓ otherwise
-invalid_configuration, exit 2
+    C->>CLI: image create or edit
+    CLI->>A: ImageIntent and options
+    A->>P: validate every selected target
+    A->>I: load each distinct path once
+    I-->>A: LocalImage values or input error
+    A->>P: PreparedImageRequest per model and variant
+    P->>T: one provider request
+    T-->>P: encoded image data or failure
+    P-->>A: ProviderImage or mapped failure
+    A->>W: write each successful image atomically
+    W-->>A: artifact paths
+    A-->>CLI: CommandResult
+    CLI-->>C: human output or one JSON document
 ```
 
-The provider is the segment before the first `/`; everything after the first
-slash is the provider-local model ID. Parsers split once from the left so future
-aggregator IDs may contain additional slashes.
+## Core contracts
 
-### Native count and independent variants
-
-Image commands support two mutually exclusive forms:
-
-```bash
-# One provider request asking for four outputs
-pixgen image create "Four logo explorations" --count 4
-
-# Four independent paid requests with identical logical input
-pixgen image create "Four logo explorations" --variants 4
-```
-
-- `--count N` is allowed only when the selected model advertises native
-  multi-output support. Pixgen sends one provider request.
-- `--variants N` creates N independent generations concurrently. Inputs and
-  parameters remain identical; provider stochasticity produces variation.
-- Pixgen never invents seeds or mutates style, quality, resolution, or other
-  parameters behind the user's back.
-- Variant concurrency is fixed at four in 0.1. A semaphore bounds submission.
-- Each variant has its own UUIDv7, database row, status, error, and artifacts.
-- Machine results remain in submission order, not completion order.
-
-If `--output hero.png` produces N outputs, names are `hero-1.png` through
-`hero-N.png`. The unsuffixed name is unused. This rule applies to either native
-count or variants; combining them is invalid.
-
-### Local media and output paths
-
-All 0.1 media inputs are local files. `MediaReference` does not accept URLs.
-Callers must download a remote asset explicitly before using it.
-
-- Never overwrite without `--force`.
-- Never create a missing parent directory without `--mkdir`.
-- Validate collisions and parent directories before provider submission.
-- Resolve reported artifact paths to absolute paths.
-- Write to a temporary sibling file, flush and fsync it, then atomically replace
-  the destination.
-- If `--output` is omitted, write under the PlatformDirs data directory's
-  `artifacts/` child using the generated name
-  `{utc_date}-{operation}-{uuid7_suffix8}.{extension}`, for example
-  `2026-09-20-image-create-536124cc.png`. The UUIDv7 suffix makes the name
-  collision-free by construction, so `--force` is never required for a
-  generated path.
-
-### Human and machine output options
-
-Every command accepts a reusable typed output-option group containing `--json`,
-`--quiet`, and `--no-color`. `NO_COLOR` is equivalent to `--no-color`.
-
-`--json` produces exactly one JSON document, disables Rich progress and
-decoration, and never mixes logs into the result stream.
-
-### Logging and verbosity
-
-Logging uses the standard library, writes only to stderr, and defaults to
-`WARNING`. The output-option group therefore also carries `--verbose`:
-
-```text
-(default)  WARNING
--v         INFO
--vv        DEBUG
-```
-
-A `RedactingFilter` installed on the Pixgen logger scrubs known credential
-values and `authorization` headers from every record before formatting. Under
-`--json` the logger is silenced entirely so the result stream stays a single
-document. Logging is a diagnostic channel, never machine state: agents read
-JSON, not log lines.
-
-### Interrupt policy
-
-`SIGINT` never cancels an in-flight paid submission. Once request bytes leave
-the process the generation may already be billable, so Pixgen finishes
-persisting what it knows, prints the generation UUID, and exits 6. The user can
-resume or inspect that UUID later. A second `SIGINT` exits immediately without
-further persistence.
-
-During local validation, before any provider call, `SIGINT` exits 2 with no
-database row created.
-
-### History commands
-
-```bash
-pixgen generation get UUID [--json]
-pixgen generation list [--status STATUS] [--limit N] [--since WHEN] [--json]
-pixgen generation wait UUID [--wait-timeout S] [--wait-interval S] [--json]
-pixgen generation cancel UUID [--json]
-```
-
-- `get` renders one `GenerationResponse` from local history. It performs no
-  provider call, so a `running` row is reported as last recorded.
-- `list` returns newest first. `--limit` defaults to 20; `--status` accepts one
-  normalized lifecycle value; `--since` accepts an RFC 3339 timestamp or a
-  duration such as `24h`. Output is a `GenerationListResponse` whose
-  `generations` field holds ordered `GenerationResponse` entries.
-- `wait` polls the provider until the generation reaches a terminal state or
-  the timeout expires, then performs artifact handling exactly as the original
-  command would have. Waiting on an already-terminal generation returns
-  immediately and exits 0.
-- `cancel` rejects terminal states with `invalid_request`, calls the provider's
-  remote cancel operation, and updates local state only after the provider
-  confirms. Cancelling a synchronous image generation is `invalid_request`
-  because no resumable job exists.
-
-`wait` and `cancel` require a row with a `provider_job_id`. Unknown UUIDs are
-`invalid_request`, not `internal_error`.
-
-### Discovery commands
-
-```bash
-pixgen model list [--provider NAME] [--kind image|video]
-                  [--capability CAPABILITY] [--json]
-pixgen model get MODEL_ID [--json]
-```
-
-`model list` filters the curated manifests and never performs a network call or
-resolves a credential. `model get` renders one `ModelSpec`: capabilities,
-accepted media roles with their cardinality and formats, typed parameters,
-documentation URL, verification date, and any provider-side retention note.
-Agents are expected to call these instead of guessing model behavior.
-
-### Configuration commands
-
-```bash
-pixgen config get [KEY] [--json]
-pixgen config path [--json]
-```
-
-`config get` with no argument dumps the fully resolved settings; with a dotted
-key such as `generation.wait_timeout` it prints that single resolved value. An
-unknown key is `invalid_configuration`. Both forms report resolved values, not
-raw file contents, so precedence is visible. Neither command mutates
-configuration; 0.1 has no `config set`.
-
-`config path` prints the resolved `config.toml` path and whether it exists.
-
-## 4. Core domain contracts
-
-> Planned files: `src/pixgen/core/models.py`, `requests.py`, `results.py`,
-> `validation.py`, and `errors.py`.
-
-Core is transport-free and storage-free. Models are frozen where mutation is
-not part of their lifecycle.
-
-### Model IDs, media kinds, roles, and capabilities
+Core types express image intent and public results. They do not encode SDK
+requests, HTTP payloads, local image bytes, artifact writing, or provider job
+states.
 
 ```python
-# File: src/pixgen/core/models.py
+# src/pixgen/core/models.py
+from __future__ import annotations
 
+from collections.abc import Mapping
+from datetime import date
 from enum import StrEnum
-from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Self
 
-from pydantic import BaseModel, ConfigDict, StringConstraints
+from pydantic import (
+    AnyHttpUrl,
+    BaseModel,
+    ConfigDict,
+    Field,
+    JsonValue,
+    StringConstraints,
+    model_validator,
+)
 
 
 type ModelId = Annotated[
     str,
-    StringConstraints(pattern=r"^[a-z0-9][a-z0-9-]*/.+$"),
+    StringConstraints(pattern=r"^[a-z0-9][a-z0-9-]*/[a-z0-9][a-z0-9._-]*$"),
 ]
+type JsonObject = dict[str, JsonValue]
+type JsonSchema = dict[str, JsonValue]
 
 
-class MediaKind(StrEnum):
-    IMAGE = "image"
-    VIDEO = "video"
+class ImageOperation(StrEnum):
+    IMAGE_CREATE = "image-create"
+    IMAGE_EDIT = "image-edit"
 
 
 class MediaRole(StrEnum):
-    IMAGE = "image"
     REFERENCE = "reference"
-    MASK = "mask"
-    START_FRAME = "start-frame"
+    IMAGE = "image"
 
-
-class Capability(StrEnum):
-    TEXT_TO_IMAGE = "text-to-image"
-    REFERENCE_TO_IMAGE = "reference-to-image"
-    IMAGE_EDIT = "image-edit"
-    TEXT_TO_VIDEO = "text-to-video"
-    IMAGE_TO_VIDEO = "image-to-video"
-
-
-class Operation(StrEnum):
-    IMAGE_CREATE = "image-create"
-    IMAGE_EDIT = "image-edit"
-    VIDEO_CREATE = "video-create"
-
-
-class GenerationStatus(StrEnum):
-    PENDING = "pending"
-    RUNNING = "running"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
-
-
-class MediaReference(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    role: MediaRole
-    path: Path
-```
-
-`MediaReference` carries no file validators. Whether a path exists, is a regular
-file, has an accepted extension, and decodes as valid media are all
-model-dependent questions answered by the validation pipeline below, which has
-access to the `ModelSpec`. Pydantic answers only what needs no outside
-knowledge.
-
-Do not include unshipped roles such as end frame, video, or audio merely to
-reserve names. Adding a role before the plugin API is public is cheap.
-
-### Media specifications
-
-Media specifications define the expected roles, formats, and size limits for each media type associated with a model.
-
-```python
-# File: src/pixgen/core/models.py
 
 class MediaRoleSpec(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
-    minimum: int = 0
-    maximum: int = 1
-    formats: frozenset[str]
-    max_bytes: int | None = None
+    minimum: int = Field(default=0, ge=0)
+    maximum: int = Field(default=1, ge=1)
+    formats: frozenset[str] = Field(
+        description="Accepted lower-case decoded image formats, for example png."
+    )
+    max_bytes: int | None = Field(default=None, gt=0)
+
+    @model_validator(mode="after")
+    def validate_cardinality(self) -> Self:
+        if self.minimum > self.maximum:
+            raise ValueError("minimum cannot exceed maximum")
+        return self
+
+
+class ModelSpec(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    id: ModelId
+    display_name: str = Field(min_length=1)
+    operations: frozenset[ImageOperation] = Field(min_length=1)
+    media: Mapping[MediaRole, MediaRoleSpec]
+    documentation_url: AnyHttpUrl
+    verified_at: date
 ```
 
-Roles absent from a model's mapping are invalid. Reference order is preserved.
-Cardinality and size limits belong to the exact model manifest, not a broad
-provider default.
-
-### Discriminated requests
-
-Use separate models instead of one request full of optional fields:
+`JsonValue` is Pydantic's built-in JSON type; Pixgen does not define its own
+recursive alias. `ModelSpec` is frozen but not hashable, because `media` is a
+mapping: registries and caches key models by `ModelId`, never by the spec
+object. There is deliberately no separate capability enum. A model's
+capabilities follow from `operations` plus its `media` rules; for example,
+reference-guided creation means `image-create` with a `reference` maximum
+above zero.
 
 ```python
-# File: src/pixgen/core/requests.py
+# src/pixgen/core/requests.py
+from __future__ import annotations
 
+from pathlib import Path
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-
-type JsonScalar = str | int | float | bool | None
-type JsonValue = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
+from pixgen.core.models import ImageOperation, JsonObject, ModelSpec
 
 
-class RequestBase(BaseModel):
-    model_config = ConfigDict(frozen=True)
+class ImageIntentBase(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     prompt: str = Field(min_length=1)
-    model: ModelId
-    params: dict[str, JsonValue] = Field(default_factory=dict)
+    params: JsonObject = Field(default_factory=dict)
 
 
-class ImageRequestBase(RequestBase):
-    aspect_ratio: str | None = None
-    resolution: str | None = None
-    count: int = Field(default=1, ge=1)
+class ImageCreateIntent(ImageIntentBase):
+    operation: Literal[ImageOperation.IMAGE_CREATE] = ImageOperation.IMAGE_CREATE
+    references: tuple[Path, ...] = ()
 
 
-class ImageCreateRequest(ImageRequestBase):
-    operation: Literal[Operation.IMAGE_CREATE] = Operation.IMAGE_CREATE
-    references: tuple[MediaReference, ...] = ()
+class ImageEditIntent(ImageIntentBase):
+    operation: Literal[ImageOperation.IMAGE_EDIT] = ImageOperation.IMAGE_EDIT
+    images: tuple[Path, ...] = Field(min_length=1)
 
 
-class ImageEditRequest(ImageRequestBase):
-    operation: Literal[Operation.IMAGE_EDIT] = Operation.IMAGE_EDIT
-    images: tuple[MediaReference, ...]
-    mask: MediaReference | None = None
-
-
-class VideoCreateRequest(RequestBase):
-    operation: Literal[Operation.VIDEO_CREATE] = Operation.VIDEO_CREATE
-    start_frame: MediaReference | None = None
-    aspect_ratio: str | None = None
-    resolution: str | None = None
-    duration: int | None = None
-
-
-type GenerationRequest = Annotated[
-    ImageCreateRequest | ImageEditRequest | VideoCreateRequest,
+type ImageIntent = Annotated[
+    ImageCreateIntent | ImageEditIntent,
     Field(discriminator="operation"),
 ]
-```
 
-Three rules this code encodes, each of which the current checkout violates:
 
-1. **The discriminator must be `Literal`.** A bare `operation: Operation =
-   Operation.IMAGE_CREATE` annotation is not a discriminator; Pydantic cannot
-   tell the members apart and the union silently resolves by trial order.
-   `Literal[Operation.IMAGE_CREATE]` is what makes the tag work.
-2. **`params` values are `JsonValue`, not `Json`.** Pydantic's `Json` type
-   parses a JSON *string* into a value. Provider-native parameters arrive as
-   already-decoded values, so `dict[str, Json]` is wrong and would reject every
-   real input.
-3. **Video does not inherit image fields.** `count` is an image concept gated
-   on native multi-output support. The two-level base keeps it off
-   `VideoCreateRequest` instead of carrying a field that can never be honored.
+class ValidatedImageRequest(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
-Requests are frozen. A request is a parsed, validated value, not a mutable
-builder.
-
-### Code Example
-
-```python
-# src/pixgen/core/requests.py: constructing and validating a request
-
-request = ImageCreateRequest(
-    prompt="A cabin by a fjord",
-    model="google/gemini-3.1-flash-image",
-    references=(MediaReference(role=MediaRole.REFERENCE, path=Path("style.png")),),
-)
-
-# Validation happens in the application layer after the request is constructed
-errors = validate_request(request, spec)
-if errors:
-    raise ValueError(f"Validation errors: {errors}")
-```
-
-### Typed parameter metadata
-
-`ParameterSpec` is a discriminated union, not one object with many optional
-fields:
-
-```python
-# File: src/pixgen/core/models.py
-
-class IntegerParameterSpec(BaseModel):
-    kind: Literal["integer"] = "integer"
-    minimum: int | None = None
-    maximum: int | None = None
-    default: int | None = None
-    description: str = ""
-
-
-class EnumParameterSpec(BaseModel):
-    kind: Literal["enum"] = "enum"
-    values: tuple[str, ...]
-    default: str | None = None
-    description: str = ""
-
-
-class StringParameterSpec(BaseModel):
-    kind: Literal["string"] = "string"
-    pattern: str | None = None
-    default: str | None = None
-    description: str = ""
-
-
-class NumberParameterSpec(BaseModel):
-    kind: Literal["number"] = "number"
-    minimum: float | None = None
-    maximum: float | None = None
-    default: float | None = None
-    description: str = ""
-
-
-class BooleanParameterSpec(BaseModel):
-    kind: Literal["boolean"] = "boolean"
-    default: bool | None = None
-    description: str = ""
-
-
-type ParameterSpec = Annotated[
-    StringParameterSpec
-    | IntegerParameterSpec
-    | NumberParameterSpec
-    | BooleanParameterSpec
-    | EnumParameterSpec,
-    Field(discriminator="kind"),
-]
-```
-
-`StringParameterSpec` carries an optional `pattern` because at least one real
-parameter needs it: OpenAI's GPT-Image-2 and 2.5 models accept arbitrary
-`WIDTHxHEIGHT` resolution strings rather than a fixed set, so `resolution`
-cannot be expressed as an enum for those models.
-
-Basic scalar, range, and enum validation may be shared. Cross-field rules live
-in provider-specific Pydantic option models and validators. There is no generic
-`ParameterConstraint` language.
-
-### Model specifications
-
-```python
-# File: src/pixgen/core/models.py
-
-from datetime import date
-
-from pydantic import AnyHttpUrl
-
-
-class ModelSpec(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    id: ModelId
-    display_name: str
-    kind: MediaKind
-    capabilities: frozenset[Capability]
-    media: dict[MediaRole, MediaRoleSpec]
-    parameters: dict[str, ParameterSpec]
-    documentation_url: AnyHttpUrl
-    verified_at: date
-    supports_cancel: bool = False
-```
-
-### Code Examples
-
-OpenAI GPT-Image-2.5 demonstrates provider-specific parameter quirks: `resolution`
-accepts arbitrary `WIDTHxHEIGHT` strings (not a fixed enum), and `quality` includes
-`xhigh`/`max` (only on the 2.5 models).
-
-```python
-# File: src/pixgen/providers/openai.py (model manifest excerpt)
-
-from datetime import date
-from pydantic import AnyHttpUrl
-
-ModelSpec(
-    id="openai/gpt-image-2.5-sunburst",
-    display_name="GPT-Image-2.5 Sunburst",
-    kind=MediaKind.IMAGE,
-    capabilities=frozenset([
-        Capability.TEXT_TO_IMAGE,
-        Capability.REFERENCE_TO_IMAGE,
-        Capability.IMAGE_EDIT,
-    ]),
-    media={
-        MediaRole.IMAGE: MediaRoleSpec(
-            minimum=1,
-            maximum=10,
-            formats=frozenset(["image/jpeg", "image/png", "image/webp", "image/gif"]),
-            max_bytes=20 * 1024 * 1024,  # 20 MB
-        ),
-        MediaRole.MASK: MediaRoleSpec(
-            minimum=0,
-            maximum=1,
-            formats=frozenset(["image/jpeg", "image/png"]),
-            max_bytes=20 * 1024 * 1024,
-        ),
-    },
-    parameters={
-        "resolution": StringParameterSpec(
-            kind="string",
-            pattern=r"^\d{3,4}x\d{3,4}$",  # WIDTHxHEIGHT, e.g. 1024x1024
-            description="Output image resolution as WIDTHxHEIGHT",
-        ),
-        "quality": EnumParameterSpec(
-            kind="enum",
-            values=("standard", "hd", "xhigh", "max"),
-            default="standard",
-            description="Output quality tier",
-        ),
-    },
-    documentation_url=AnyHttpUrl("https://platform.openai.com/docs/guides/images/generations"),
-    verified_at=date(2026, 9, 20),
-    supports_cancel=False,
-)
-```
-
-Google Gemini 3.1 Flash demonstrates a simpler case: `aspect_ratio` as a fixed
-`EnumParameterSpec`, no pattern-based strings or provider-specific quirks.
-
-```python
-# File: src/pixgen/providers/google.py (model manifest excerpt)
-
-ModelSpec(
-    id="google/gemini-3.1-flash-image",
-    display_name="Nano Banana 2",
-    kind=MediaKind.IMAGE,
-    capabilities=frozenset([
-        Capability.TEXT_TO_IMAGE,
-        Capability.REFERENCE_TO_IMAGE,
-        Capability.IMAGE_EDIT,
-    ]),
-    media={
-        MediaRole.REFERENCE: MediaRoleSpec(
-            minimum=0,
-            maximum=10,
-            formats=frozenset(["image/jpeg", "image/png", "image/webp"]),
-            max_bytes=20 * 1024 * 1024,
-        ),
-        MediaRole.MASK: MediaRoleSpec(
-            minimum=0,
-            maximum=1,
-            formats=frozenset(["image/jpeg", "image/png", "image/webp"]),
-            max_bytes=20 * 1024 * 1024,
-        ),
-    },
-    parameters={
-        "aspect_ratio": EnumParameterSpec(
-            kind="enum",
-            values=("1:1", "4:3", "16:9", "9:16", "3:4"),
-            default="1:1",
-            description="Output aspect ratio",
-        ),
-    },
-    documentation_url=AnyHttpUrl("https://ai.google.dev/gemini-api/docs/image-generation"),
-    verified_at=date(2026, 9, 20),
-    supports_cancel=False,
-)
-```
-
-Model manifests power `model list/get`, local validation, CLI help, the Agent
-Skill, and provider contract tests. They are curated code beside each adapter;
-0.1 does not scrape websites or cache dynamic catalogs.
-
-### Validation
-
-Validation splits one way: **Pydantic checks what needs no outside knowledge.
-One pure function checks everything that depends on the selected model.**
-
-Pydantic owns field types, the `ModelId` pattern, non-empty prompts, and
-`count >= 1`. Everything else needs the `ModelSpec`, so it lives in
-`core/validation.py`:
-
-```python
-# File: src/pixgen/core/validation.py
-
-class FieldError(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    field: str
-    reason: str
-
-
-def validate_request(
-    request: GenerationRequest,
-    spec: ModelSpec,
-) -> list[FieldError]: ...
-```
-
-The function **collects errors instead of raising**, so a caller with a bad
-mask, oversized reference, and unsupported aspect ratio gets all three at once,
-not one per round-trip. A non-empty result becomes an `invalid_request` error
-whose `fields` map comes straight from the list. There's no `ValidationError`
-translation layer.
-
-All checks run before credential resolution, database insertion, or provider
-submission, in this order:
-
-1. Resolve and parse the canonical model ID. *(caller: resolves the `ModelSpec`
-   passed in; an unknown ID is `model_not_found`, not a field error.)*
-2. Confirm that the operation's capability is advertised.
-3. Confirm that supplied media roles are accepted by this model.
-4. Validate role cardinality, local existence, regular-file status, format, and
-   byte size.
-5. Validate normalized parameters against the model manifest.
-6. Parse provider-native `params` through the adapter's typed options model.
-7. Validate output collisions and parent-directory policy.
-
-Step 4 has one source of truth: **`MediaRoleSpec.formats` on the resolved model
-manifest.** There is no global `SUPPORTED_IMAGE_EXTENSIONS` constant, because
-the answer is genuinely model-dependent. OpenAI accepts non-animated GIF as an
-image input and Google does not. A module-level set would be wrong for at least
-one shipped provider on the day it was written. Format is checked by decoded
-content, not by extension alone; Pillow's `verify()` provides the integrity
-check, called from the pipeline rather than from a model validator.
-
-Step 6 is the only step that calls adapter code. The adapter returns its own
-`FieldError` list, which merges with the others, so provider-specific
-cross-field errors stay `invalid_request` and still name the fields.
-
-`validate_request` is the functional core. It's pure except for reading local
-files, takes no clients, opens no sockets, and is where unit tests prove the
-0.1 validation contract.
-
-### Code Example
-
-```python
-# src/pixgen/core/validation.py: the validation pipeline
-
-errors = validate_request(request, spec)
-if errors:
-    response = ErrorResponse(
-        error=ErrorDetail(
-            code=ErrorCode.INVALID_REQUEST,
-            message="Validation failed",
-            fields={e.field: e.reason for e in errors},
-        )
-    )
-    # Render to stderr and exit 2
-```
-
-## 5. Provider boundary and implementations
-
-> Planned files: `src/pixgen/providers/base.py`, `google.py`, and `openai.py`.
-
-The provider contract is internal in 0.1:
-
-```python
-# File: src/pixgen/providers/base.py
-
-from collections.abc import Sequence
-from typing import Protocol
-
-
-class Provider(Protocol):
-    name: str
-
-    def list_models(self) -> Sequence[ModelSpec]: ...
-    def validate_params(
-        self,
-        request: GenerationRequest,
-        spec: ModelSpec,
-    ) -> list[FieldError]: ...
-
-    async def submit(self, request: GenerationRequest) -> ProviderGeneration: ...
-    async def get(self, provider_job_id: str) -> ProviderGeneration: ...
-    async def cancel(self, provider_job_id: str) -> ProviderGeneration: ...
-```
-
-`Provider` is the only port in Pixgen 0.1. Every other module boundary is a
-plain import. Introducing a second protocol requires a demonstrated need for a
-second implementation, not a symmetry argument.
-
-`list_models` and `validate_params` are synchronous: manifests are curated
-static data and parameter checks are pure. Making them `async` would force an
-event loop onto `model list` and onto local validation, both of which must work
-without one.
-
-`validate_params` is step 6 of the validation pipeline. It is the adapter's
-only inbound call before a credential exists, so it must not touch the network
-or read configuration.
-
-Both adapters accept provider-local model IDs after core splits the canonical ID
-once. Adapters never parse canonical IDs themselves.
-
-### The internal provider result
-
-`ProviderGeneration` crosses the adapter boundary inbound. It's internal: never
-serialized to the CLI, never persisted whole, and not part of any public Python
-API.
-
-```python
-# File: src/pixgen/providers/base.py
-
-class ProviderMedia(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    media_type: str
-    data: bytes | None = None
-    fetch_url: AnyHttpUrl | None = None
-
-
-class ProviderUsage(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    input_tokens: int | None = None
-    output_tokens: int | None = None
-    image_count: int | None = None
-
-
-class ProviderError(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    code: ErrorCode
-    message: str
-    retryable: bool = False
-
-
-class ProviderGeneration(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    status: GenerationStatus
-    provider_job_id: str | None = None
-    media: tuple[ProviderMedia, ...] = ()
-    usage: ProviderUsage | None = None
-    error: ProviderError | None = None
-```
-
-### Code Example
-
-```python
-# src/pixgen/providers/google.py: adapter submit returns normalized result
-
-async def submit(self, request: GenerationRequest) -> ProviderGeneration:
-    response = await self.client.generate(...)
-    return ProviderGeneration(
-        status=GenerationStatus.COMPLETED,
-        provider_job_id=None,
-        media=(
-            ProviderMedia(media_type="image/png", data=response.image_bytes),
-        ),
-        usage=ProviderUsage(image_count=1),
-    )
-```
-
-`ProviderMedia` carries exactly one of `data` or `fetch_url`. `fetch_url` is
-the only place a provider URL exists. It's in memory between retrieval and
-atomic write, never logged or persisted, and never reaches `ArtifactResponse`.
-
-`ProviderGeneration` has no raw provider payload, credentials, headers, or
-provider-native fields without Pixgen meaning. An adapter that can't express
-something through these fields normalizes or drops it. Widening this model is a
-design decision, not a convenience.
-
-### Google
-
-Use the official async `google-genai` SDK because it removes meaningful
-complexity around the Interactions API, media payloads, background interactions,
-polling, and cancellation.
-
-0.1 Google models:
-
-| Display name | Canonical ID | Kind |
-| --- | --- | --- |
-| Nano Banana 2 | `google/gemini-3.1-flash-image` | image |
-| Nano Banana 2 Lite | `google/gemini-3.1-flash-lite-image` | image |
-| Nano Banana Pro | `google/gemini-3-pro-image` | image |
-| Gemini Omni Flash | `google/gemini-omni-1.1-flash` | video |
-
-Google image creation and editing and Gemini Omni video use the Interactions
-API. Video requests use background execution so the returned interaction ID can
-be persisted, polled, cancelled, and resumed after the CLI exits.
-
-Background execution requires `store=true`. Provider-side retention is therefore
-not optional for resumable Google video. As of verification, Google documents a
-one-day retention period for the free tier and up to 55 days for paid tiers,
-with shorter paid-tier settings available. Surface this fact in documentation
-and `model get`; do not imply that all state is local.
-
-References:
-
-- [Interactions API](https://ai.google.dev/gemini-api/docs/interactions-overview)
-- [Background execution](https://ai.google.dev/gemini-api/docs/background-execution)
-- [Gemini image generation](https://ai.google.dev/gemini-api/docs/image-generation)
-- [Gemini Omni Flash](https://ai.google.dev/gemini-api/docs/models/gemini-omni-flash)
-- [Google model catalog](https://ai.google.dev/gemini-api/docs/models)
-
-### OpenAI
-
-Use direct HTTPX2 because the required surface is two small endpoints and does
-not justify an additional provider SDK:
-
-```text
-POST /v1/images/generations
-POST /v1/images/edits
-```
-
-0.1 OpenAI models:
-
-| Display name | Canonical ID | Kind |
-| --- | --- | --- |
-| GPT-Image-2.5 Sunburst | `openai/gpt-image-2.5-sunburst` | image |
-| GPT-Image-2.5 Flare | `openai/gpt-image-2.5-flare` | image |
-| GPT-Image-2 | `openai/gpt-image-2` | image |
-
-Reference-guided creation may use the edits endpoint internally. Pixgen's user
-intent remains `image create`; endpoint selection is an adapter detail.
-
-Two OpenAI-specific facts shape the manifest. GPT-Image-2 and both 2.5 models
-accept **arbitrary `WIDTHxHEIGHT` resolution strings** such as `1536x864`
-rather than a fixed set, so their `resolution` entry is a
-`StringParameterSpec` with a `WIDTHxHEIGHT` pattern, not an
-`EnumParameterSpec`. The 2.5 models add `xhigh` and `max` to the `quality`
-enum, which the older models do not accept; `quality` is therefore a
-per-model enum, not a provider-wide one. Both are ordinary manifest entries.
-Neither belongs in core.
-
-References:
-
-- [OpenAI image generation](https://developers.openai.com/api/reference/cli/resources/images/methods/generate)
-- [OpenAI model catalog](https://developers.openai.com/api/docs/models/all)
-
-### Deprecated and intentionally omitted APIs
-
-- Google Imagen models shut down on 2026-08-17. Do not implement them.
-- Veo 2 and 3.0 shut down on 2026-06-30. Veo 3.1 remains available but is
-  deferred because Omni satisfies the reduced 0.1 video contract through the
-  same API family used for Google images.
-- OpenAI Sora and the Videos API are deprecated and scheduled to shut down on
-  2026-09-24. Do not build a video adapter around them.
-- Deprecated GPT Image 1 models are absent from the manifest.
-
-References:
-
-- [Gemini deprecations](https://ai.google.dev/gemini-api/docs/deprecations)
-- [OpenAI deprecated video API](https://developers.openai.com/api/reference/typescript/resources/videos/methods/create)
-
-### Retry ownership
-
-Paid submissions don't retry after ambiguous network failure. A timeout after
-request bytes leave may already represent a billable generation, and retrying
-blindly can duplicate charges.
-
-Safe reads like interaction polling use `stamina` with exponential backoff and
-jitter. Respect `Retry-After`. The generation wait timeout governs the whole
-poll cycle; retry backoff doesn't reset it. Translate provider SDK and HTTPX2
-failures into Pixgen errors before they cross the boundary.
-
-## 6. Configuration
-
-> Planned files: `src/pixgen/config/models.py`, `loader.py`, and `paths.py`.
-
-Use TOML, Pydantic Settings, and PlatformDirs. Don't search the working tree.
-
-```text
-PlatformDirs user config/config.toml
-        ↑ overridden only by
-PIXGEN_CONFIG=/absolute/path/to/config.toml
-```
-
-`PIXGEN_CONFIG` must be absolute. A relative override is
-`invalid_configuration` because its meaning changes with the caller's working
-directory.
-
-### Source precedence
-
-```text
-explicit initialization value → PIXGEN_* environment → config.toml → defaults
-```
-
-No `.env`, project files, or Pydantic file-secret sources.
-
-### Example config
-
-```toml
-[defaults]
-image_model = "google/gemini-3.1-flash-image"
-video_model = "google/gemini-omni-1.1-flash"
-
-[generation]
-output_dir = "/Users/example/Pictures/pixgen"
-wait_timeout = 600.0
-wait_interval = 3.0
-```
-
-### Settings implementation
-
-```python
-# File: src/pixgen/config/models.py
-
-from pathlib import Path
-
-from pydantic import BaseModel, Field
-
-
-class Defaults(BaseModel):
-    image_model: ModelId | None = None
-    video_model: ModelId | None = None
-
-
-class GenerationSettings(BaseModel):
-    output_dir: Path | None = None
-    wait_timeout: float = Field(default=600.0, gt=0)
-    wait_interval: float = Field(default=3.0, gt=0)
+    intent: ImageIntent
+    model: ModelSpec
+    parameters: JsonObject
 ```
 
 ```python
-# File: src/pixgen/config/loader.py
-
-from pydantic_settings import (
-    BaseSettings,
-    PydanticBaseSettingsSource,
-    SettingsConfigDict,
-    TomlConfigSettingsSource,
-)
-
-
-class Settings(BaseSettings):
-    model_config = SettingsConfigDict(
-        env_prefix="PIXGEN_",
-        env_nested_delimiter="__",
-        extra="forbid",
-        frozen=True,
-    )
-
-    defaults: Defaults = Field(default_factory=Defaults)
-    generation: GenerationSettings = Field(default_factory=GenerationSettings)
-
-    @classmethod
-    def settings_customise_sources(
-        cls,
-        settings_cls: type[BaseSettings],
-        init_settings: PydanticBaseSettingsSource,
-        env_settings: PydanticBaseSettingsSource,
-        dotenv_settings: PydanticBaseSettingsSource,
-        file_secret_settings: PydanticBaseSettingsSource,
-    ) -> tuple[PydanticBaseSettingsSource, ...]:
-        del dotenv_settings, file_secret_settings
-        return (
-            init_settings,
-            env_settings,
-            TomlConfigSettingsSource(
-                settings_cls,
-                toml_file=resolve_config_path(),
-            ),
-        )
-```
-
-`toml_file` goes to `TomlConfigSettingsSource` inside
-`settings_customise_sources`, not on the class-level `SettingsConfigDict`.
-Class-level values are evaluated at import time, so a `PIXGEN_CONFIG` override
-after import would be ignored. Per-instantiation resolution keeps settings
-testable without reimporting.
-
-One path produces a `Settings` object. A helper that reads TOML and calls
-`model_validate` isn't a shortcut. It bypasses environment precedence and
-produces settings that disagree with `config get`.
-
-Import `BaseSettings`, `SettingsConfigDict`, and settings sources from
-`pydantic_settings`, never from `pydantic`. Use `type[...]` and `tuple[...]`, not
-the deprecated-style `typing.Type` and `typing.Tuple` aliases.
-
-If `generation.output_dir` is `None`, resolve it to the PlatformDirs data
-directory's `artifacts/` child at runtime. Don't use `Path.cwd()` as a model
-default.
-
-## 7. Credentials
-
-> Planned file: `src/pixgen/credentials.py`.
-
-Credential resolution: no profiles.
-
-```text
-OS keyring → provider-standard environment variable → fail immediately
-```
-
-| Provider | Keyring account | Environment fallback |
-| --- | --- | --- |
-| Google | `google` | `GEMINI_API_KEY` |
-| OpenAI | `openai` | `OPENAI_API_KEY` |
-
-The keyring service name is `pixgen`.
-
-```python
-# File: src/pixgen/credentials.py
+# src/pixgen/core/errors.py
+from __future__ import annotations
 
 from enum import StrEnum
-from pydantic import SecretStr
 
 
-class CredentialSource(StrEnum):
-    KEYRING = "keyring"
-    ENVIRONMENT = "environment"
-
-
-class CredentialResolver:
-    def get(self, provider: str) -> SecretStr: ...
-    def set(self, provider: str, value: SecretStr) -> None: ...
-    def delete(self, provider: str) -> None: ...
-    def source(self, provider: str) -> CredentialSource | None: ...
-```
-
-### Code Example
-
-```python
-# src/pixgen/credentials.py: keyring with environment fallback
-
-resolver = CredentialResolver()
-try:
-    key = resolver.get("google")
-except CredentialUnavailable:
-    raise ValueError("No Google credential found in keyring or GEMINI_API_KEY")
-
-source = resolver.source("google")
-# Reports "keyring", "environment", or None. Never the value.
-```
-
-`source` returns `None` when no credential exists anywhere. It's the only
-credential API that diagnostics call. `keys list`, `info`, and `doctor` report
-the source, never the value.
-
-Rules:
-
-1. Never accept a credential as a command-line flag.
-2. `keys set PROVIDER` uses hidden input and writes only to the secure keyring.
-3. If the keyring backend is unavailable, generation may still use the matching
-   environment variable.
-4. `keys set` fails clearly when secure storage is unavailable. Never install or
-   select `keyrings.alt` automatically.
-5. `keys list`, `info`, and `doctor` expose presence and source only.
-6. Resolve credentials after local validation but before database insertion and
-   network access.
-7. Redact authorization headers and known secret values from every exception and
-   log record.
-
-## 8. Persistence and migrations
-
-> Planned files: `src/pixgen/storage/database.py`, `models.py`, and
-> `storage/migrations/`; development configuration at `alembic.ini`.
-
-Use sync SQLAlchemy 2 typed rows and SQLite. Provider network calls stay async.
-Database transactions are short and never span an `await`.
-
-### Typed rows
-
-```python
-# File: src/pixgen/storage/models.py
-
-from datetime import datetime
-from uuid import UUID, uuid7
-
-from sqlalchemy import DateTime, Enum, ForeignKey, JSON, String, Uuid
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-
-
-class Base(DeclarativeBase):
-    pass
-
-
-class GenerationRow(Base):
-    __tablename__ = "generations"
-
-    id: Mapped[UUID] = mapped_column(
-        Uuid(as_uuid=True),
-        primary_key=True,
-        default=uuid7,
-    )
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-
-    provider: Mapped[str] = mapped_column(String)
-    model: Mapped[str] = mapped_column(String)
-    operation: Mapped[Operation] = mapped_column(
-        Enum(
-            Operation,
-            native_enum=False,
-            values_callable=lambda members: [member.value for member in members],
-        )
-    )
-    status: Mapped[GenerationStatus] = mapped_column(
-        Enum(
-            GenerationStatus,
-            native_enum=False,
-            values_callable=lambda members: [member.value for member in members],
-        )
-    )
-    provider_job_id: Mapped[str | None] = mapped_column(String)
-    request: Mapped[dict[str, JsonValue]] = mapped_column(JSON)
-    error: Mapped[dict[str, JsonValue] | None] = mapped_column(JSON)
-
-
-class ArtifactRow(Base):
-    __tablename__ = "artifacts"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    generation_id: Mapped[UUID] = mapped_column(
-        ForeignKey("generations.id", ondelete="CASCADE"),
-        index=True,
-    )
-    path: Mapped[str] = mapped_column(String)
-    media_type: Mapped[str] = mapped_column(String)
-    size_bytes: Mapped[int]
-    sha256: Mapped[str] = mapped_column(String(64))
-```
-
-Add explicit nullability, indexes, uniqueness, and relationships in final
-mappings. `provider_job_id` is unique per provider when non-null.
-
-### Alembic from the first release
-
-```text
-src/pixgen/storage/
-├── database.py
-├── models.py
-└── migrations/
-    ├── env.py
-    ├── script.py.mako
-    └── versions/
-        └── 0001_initial.py
-alembic.ini
-```
-
-Migrations ship with the package. `database.py` builds an Alembic `Config`
-programmatically and points `script_location` at the packaged migration
-directory. Commands that need storage upgrade to `head` before opening a normal
-session. Passive commands like `info` inspect paths and current revision
-without creating or migrating. `doctor` compares existing database revision to
-packaged head without changing it.
-
-`Base.metadata.create_all()` is allowed only in isolated tests that explicitly
-need it; it is not the production migration mechanism.
-
-### SQLite engine policy
-
-Every connection enables:
-
-```text
-PRAGMA foreign_keys = ON
-PRAGMA journal_mode = WAL
-PRAGMA busy_timeout = 5000
-```
-
-### The storage seam
-
-Module-level functions in `storage/generations.py` take an explicit `Session`:
-
-```python
-# File: src/pixgen/storage/generations.py
-
-def insert_pending(session: Session, request: GenerationRequest) -> UUID: ...
-def mark_running(session: Session, gen_id: UUID, provider_job_id: str) -> None: ...
-def mark_failed(session: Session, gen_id: UUID, error: ErrorDetail) -> None: ...
-def record_artifacts(
-    session: Session,
-    gen_id: UUID,
-    artifacts: Sequence[ArtifactFacts],
-) -> None: ...
-def get_generation(session: Session, gen_id: UUID) -> GenerationRow | None: ...
-def list_generations(session: Session, filters: HistoryFilters) -> Sequence[GenerationRow]: ...
-```
-
-Two small value types travel with them:
-
-```python
-# File: src/pixgen/storage/generations.py
-
-class ArtifactFacts(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    path: Path
-    media_type: str
-    size_bytes: int
-    sha256: str
-
-
-class HistoryFilters(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    status: GenerationStatus | None = None
-    since: datetime | None = None
-    limit: int = Field(default=20, ge=1, le=1000)
-```
-
-### Code Example
-
-```python
-# src/pixgen/storage/generations.py: transaction lifecycle with explicit Session
-
-with session_maker() as session:
-    gen_id = insert_pending(session, request)
-    session.commit()
-
-# Later, after provider submit succeeds:
-with session_maker() as session:
-    mark_running(session, gen_id, provider_job_id="google-123")
-    session.commit()
-
-# After artifacts are written locally:
-with session_maker() as session:
-    record_artifacts(session, gen_id, artifacts)
-    session.commit()
-```
-
-`ArtifactFacts` describes a file that's already written. Artifact handling
-produces it, `record_artifacts` consumes it, and it projects into
-`ArtifactResponse` for output: same facts, never a provider payload.
-`HistoryFilters` carries parsed `generation list` options so the CLI doesn't
-hand raw strings to SQL.
-
-This is a seam, not a pattern. No repository class, DAO, unit-of-work, or
-generic service layer. The previous revision forbade them in prose while listing
-`storage/repository.py` in the layout, and prose wins. The objection was the
-ceremony, not the boundary: a named module of typed functions gives the app
-layer one import and one place to prove transaction behavior, at no cost.
-
-Explicit `Session` makes the async rule auditable. A reader sees a session
-open and close in one sync call and confirms no transaction spans an `await`.
-
-Use short-lived `Session` scopes.
-
-### Generation lifecycle
-
-```text
-validate request and output paths
-        ↓
-resolve credential
-        ↓
-insert UUIDv7 generation as pending
-        ↓
-submit provider request
-        ↓
-persist provider job ID immediately, status running
-        ↓
-return for --no-wait OR poll for completion
-        ↓
-atomically write local artifacts
-        ↓
-record artifact metadata, status completed
-```
-
-Normalized statuses:
-
-```text
-pending · running · completed · failed · cancelled
-```
-
-Submission failure updates the existing row to `failed`. Video provider job
-IDs are persisted before returning. A later process loads the row, selects the
-provider, polls the stored interaction ID, and completes artifact handling.
-
-Persist sanitized prompts, parameters, local paths, statuses, timestamps, safe
-errors, and local artifact facts. Never persist credentials, headers, signed
-URLs, complete provider responses, or media.
-
-## 9. Machine contract
-
-> Planned file: `src/pixgen/output.py`.
-
-Every JSON response is a Pydantic model with:
-
-```python
-schema_version: Literal[1] = 1
-```
-
-### Response-model boundary
-
-Pixgen uses separate internal normalized results and public CLI responses.
-Provider SDK and HTTP response types are implementation details. Never expose
-them through the CLI, persist them as raw payloads, or treat them as part of
-Pixgen's public API.
-
-The provider/runtime boundary produces an internal `ProviderGeneration`. It
-captures only provider-safe, normalized facts: the provider job ID when present,
-normalized lifecycle state, candidate media awaiting persistence, optional usage
-facts, and safe diagnostics. No raw responses, credentials, headers, signed
-URLs, or provider-native fields without Pixgen meaning.
-
-After artifact handling, the public contract is built from durable Pixgen facts:
-
-```text
-GenerationResponse
-├── schema_version: 1
-├── id: UUIDv7
-├── operation, provider, model, status
-├── provider_job_id: str | null
-├── artifacts: tuple[ArtifactResponse, ...]
-├── usage: UsageResponse | null
-├── error: ErrorDetail | null
-├── created_at, completed_at
-└── metadata: documented provider-neutral fields only
-```
-
-`ArtifactResponse` reports final local artifact facts: absolute path, media
-kind and type, byte size, SHA-256, and optional dimensions or duration. No
-remote URLs. `BatchResponse` reports requested, completed, and failed totals
-plus ordered `GenerationResponse` entries, preserving submission order and
-partial success.
-
-The normalized lifecycle is `pending`, `running`, `completed`, `failed`, and
-`cancelled`. `pending` means Pixgen accepted and recorded the request but
-hasn't confirmed provider submission. `running` means a resumable or pollable
-provider job exists. The others are terminal.
-
-All public models are frozen Pydantic models with explicit snake_case
-serialization. Fields where nullability carries state (like `provider_job_id`
-for sync generations) are serialized as `null`, not omitted. Version 1 may add
-optional fields but can't rename, remove, or change existing fields. Breaking
-changes need a new schema version.
-
-`BatchResponse` covers `--count` and `--variants`. `GenerationListResponse`
-covers `generation list` with the same ordered-entries shape.
-
-### Public response types
-
-```python
-# File: src/pixgen/core/results.py
-
-from typing import Literal
-from uuid import UUID
-from pydantic import BaseModel, ConfigDict, Field
-
-
-class ArtifactResponse(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    path: str
-    media_type: str
-    size_bytes: int
-    sha256: str
-    width: int | None = None
-    height: int | None = None
-    duration: float | None = None
-
-
-class UsageResponse(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    input_tokens: int | None = None
-    output_tokens: int | None = None
-    image_count: int | None = None
-
-
-class ErrorDetail(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    code: ErrorCode
-    message: str
-    retryable: bool = False
-    provider: str | None = None
-    fields: dict[str, str] = Field(default_factory=dict)
-
-
-class GenerationResponse(BaseModel):
-    model_config = ConfigDict(frozen=True, alias_generator="snake_case")
-
-    schema_version: Literal[1] = 1
-    id: UUID
-    operation: Operation
-    provider: str
-    model: ModelId
-    status: GenerationStatus
-    provider_job_id: str | None = None
-    artifacts: tuple[ArtifactResponse, ...] = ()
-    usage: UsageResponse | None = None
-    error: ErrorDetail | None = None
-    created_at: str  # RFC 3339 with Z
-    completed_at: str | None = None
-    metadata: dict[str, str] = Field(default_factory=dict)
-
-
-class BatchResponse(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    schema_version: Literal[1] = 1
-    requested: int
-    completed: int
-    failed: int
-    generations: tuple[GenerationResponse, ...]
-
-
-class GenerationListResponse(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    schema_version: Literal[1] = 1
-    generations: tuple[GenerationResponse, ...]
-
-
-class ErrorResponse(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    schema_version: Literal[1] = 1
-    error: ErrorDetail
-```
-
-`ErrorResponse` is the command-level envelope written to stderr. `ErrorDetail`
-is also embedded in a failed `GenerationResponse` inside a batch, so one shape
-serves both. `fields` is populated from the `FieldError` list produced by
-`validate_request`.
-
-`UsageResponse` reports only what a provider states plainly. Pixgen does not
-compute, estimate, or display cost: prices change without notice, and a stale
-number printed next to a real charge is worse than no number. Billing belongs
-to the provider, as principle 6 requires.
-
-### Code Example
-
-```python
-# src/pixgen/core/results.py: assembling a response from a stored row
-
-from datetime import datetime
-
-row = get_generation(session, gen_id)
-artifacts = [
-    ArtifactResponse(
-        path=str(a.path),
-        media_type=a.media_type,
-        size_bytes=a.size_bytes,
-        sha256=a.sha256,
-    )
-    for a in row.artifacts
-]
-
-response = GenerationResponse(
-    id=row.id,
-    operation=row.operation,
-    provider=row.provider,
-    model=row.model,
-    status=row.status,
-    provider_job_id=row.provider_job_id,
-    artifacts=tuple(artifacts),
-    created_at=row.created_at.isoformat(),
-    completed_at=row.updated_at.isoformat() if row.status.terminal else None,
-)
-```
-
-### Metadata allowlist
-
-`metadata` is a closed set, not a passthrough. Version 1 documents exactly
-these keys:
-
-| Key | Type | Meaning |
-| --- | --- | --- |
-| `revised_prompt` | `str` | The prompt the provider actually used, when it rewrites one. |
-| `seed` | `int` | A provider-reported seed, when one is returned. |
-| `quality` | `str` | The normalized quality tier the provider applied. |
-| `finish_reason` | `str` | Why generation stopped, normalized across providers. |
-
-An adapter that encounters anything else drops it. Adding a key is a documented
-version-1 change; forwarding arbitrary provider payload is prohibited, because
-it would make provider response shapes part of Pixgen's contract by accident.
-
-### Timestamps
-
-Every timestamp in the machine contract and in SQLite is timezone-aware UTC,
-serialized as RFC 3339 with a `Z` suffix, for example `2026-09-20T14:44:03Z`. Naive
-datetimes are never constructed, stored, or emitted. Local-time rendering is a
-human-output concern and never appears under `--json`.
-
-Future verification must cover JSON-schema snapshots, serialization of every
-lifecycle state, secret and remote-URL sanitization, ordered partial batches,
-and compatibility of documented version-1 examples.
-
-### Generation success
-
-```json
-{
-  "schema_version": 1,
-  "id": "01995f4f-b0d2-7a31-8e6b-0f9f536124cc",
-  "operation": "image-create",
-  "provider": "google",
-  "model": "google/gemini-3.1-flash-image",
-  "status": "completed",
-  "provider_job_id": null,
-  "artifacts": [
-    {
-      "path": "/project/cabin.png",
-      "media_type": "image/png",
-      "size_bytes": 1842231,
-      "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-    }
-  ]
-}
-```
-
-### Variants result
-
-```json
-{
-  "schema_version": 1,
-  "requested": 4,
-  "completed": 3,
-  "failed": 1,
-  "generations": [
-    {"id": "...", "status": "completed", "artifacts": []},
-    {"id": "...", "status": "failed", "error": {"code": "generation_failed"}}
-  ]
-}
-```
-
-Partial failure preserves all successful results and exits nonzero.
-
-### Error envelope
-
-```json
-{
-  "schema_version": 1,
-  "error": {
-    "code": "invalid_request",
-    "message": "The selected model does not accept mask inputs.",
-    "retryable": false,
-    "provider": "openai",
-    "fields": {"mask": "unsupported"}
-  }
-}
-```
-
-Stable error codes are a `StrEnum` in `core/errors.py`, so the machine
-contract and the exit-code mapping share one definition:
-
-```python
 class ErrorCode(StrEnum):
     INVALID_REQUEST = "invalid_request"
     INVALID_CONFIGURATION = "invalid_configuration"
@@ -1686,727 +432,558 @@ class ErrorCode(StrEnum):
     AUTHENTICATION_FAILED = "authentication_failed"
     RATE_LIMITED = "rate_limited"
     MODEL_NOT_FOUND = "model_not_found"
+    CONTENT_REJECTED = "content_rejected"
     PROVIDER_UNAVAILABLE = "provider_unavailable"
-    GENERATION_FAILED = "generation_failed"
-    GENERATION_CANCELLED = "generation_cancelled"
     TIMEOUT = "timeout"
-    ARTIFACT_ERROR = "artifact_error"
-    STORAGE_ERROR = "storage_error"
-    INTERNAL_ERROR = "internal_error"
+    INTERRUPTED = "interrupted"
+    PROVIDER_FAILURE = "provider_failure"
+    ARTIFACT_FAILURE = "artifact_failure"
 ```
 
-Each code maps to one exit status. The mapping is in one `cli/app.py` dictionary,
-not scattered `except` clauses.
+`content_rejected` covers documented provider moderation or safety refusals,
+including a Gemini response whose finish reason reports a safety block and
+contains no image part. A response with no image and no documented refusal
+reason is `provider_failure`. Agents can then tell "change the prompt" apart
+from "try again later".
 
-### Streams and exit codes
+`timeout` covers a single request that exceeded its limit and every job ended
+by the whole-run deadline, whether cancelled in flight or never started; the
+agent's remedy is the same (raise the budget or reduce the fan-out).
+`interrupted` covers jobs skipped or cancelled by SIGINT or SIGTERM, and a
+command-level interrupt before any job started.
 
-- Successful JSON → stdout.
-- Error JSON → stderr.
-- Human progress → stderr.
-- Raw provider bodies and exception representations never go unsanitized.
+```python
+# src/pixgen/core/results.py
+from __future__ import annotations
 
-| Code | Meaning |
+from pathlib import Path
+from typing import Literal, Self
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from pixgen.core.errors import ErrorCode
+from pixgen.core.models import JsonSchema, ModelId, ModelSpec
+
+
+class PublicError(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    code: ErrorCode
+    message: str = Field(min_length=1)
+
+
+class TargetResult(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    model: ModelId
+    variant: int = Field(ge=1)
+    artifact_path: Path | None = None
+    media_type: str | None = None
+    error: PublicError | None = None
+    warnings: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def validate_outcome(self) -> Self:
+        if (self.artifact_path is None) == (self.error is None):
+            raise ValueError("a target result requires one artifact path or one error")
+        if (self.artifact_path is None) != (self.media_type is None):
+            raise ValueError("media_type accompanies an artifact path")
+        return self
+
+
+class CommandResult(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    schema_version: Literal["1"] = "1"
+    run_id: str = Field(min_length=1)
+    results: tuple[TargetResult, ...] = ()
+    error: PublicError | None = None
+
+    @model_validator(mode="after")
+    def validate_outcome(self) -> Self:
+        if bool(self.results) == (self.error is not None):
+            raise ValueError("a command result requires target results or one command error")
+        return self
+
+
+class ModelListResult(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    schema_version: Literal["1"] = "1"
+    models: tuple[ModelSpec, ...] = ()
+    error: PublicError | None = None
+
+
+class ModelGetResult(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    schema_version: Literal["1"] = "1"
+    model: ModelSpec | None = None
+    parameter_schemas: dict[str, JsonSchema] = Field(default_factory=dict)
+    error: PublicError | None = None
+
+    @model_validator(mode="after")
+    def validate_outcome(self) -> Self:
+        if (self.model is None) == (self.error is None):
+            raise ValueError("a model result requires one model or one error")
+        return self
+```
+
+`run_id` is generated when an image command starts, so even a failure before
+submission carries one; it also appears in generated artifact names.
+`warnings` may accompany an artifact or an error. `ModelGetResult.parameter_schemas`
+is keyed by operation (`image-create`, `image-edit`).
+
+| Outcome | `CommandResult` | Exit |
+| --- | --- | --- |
+| Every target wrote an artifact | `results`, all with `artifact_path` | `0` |
+| Failure before submission | `error` only | `2` |
+| Submitted, no artifact written | `results`, all with `error` | `3` |
+| Submitted, mixed outcome | `results`, some of each | `4` |
+| Run deadline reached | every job in `results`; ended jobs carry `timeout` | `0`, `3`, or `4` by the normal rules |
+| SIGINT | every job in `results` (skipped ones carry `interrupted`), or `error` if none started | `130` |
+| SIGTERM | as SIGINT, but in-flight jobs are cancelled | `143` |
+
+### How the request and result models fit together
+
+| Model | Purpose | Why it exists |
+| --- | --- | --- |
+| `ImageIntent` | The caller's prompt, paths, and provider-neutral parameters. | It is serializable and contains only the user's request. |
+| `ValidatedImageRequest` | One `ImageIntent` paired with one curated model after parameter validation. | It prevents adapters from redoing model selection and parameter checks. |
+| `PreparedImageRequest` | A validated request plus loaded `LocalImage` values. | It gives adapters verified original bytes without reopening files. |
+| `ProviderImage` | One internal provider result as bytes and MIME type. | It keeps HTTP and SDK response types out of the application and artifact writer. |
+| `CommandResult` | The public result for human or `--json` output. | It never includes binary data, secrets, or vendor response bodies. |
+
+`PreparedImageRequest` and `ProviderImage` are internal provider types defined
+in the next section. The other rows are core contracts.
+
+Create and edit use different models because their input rules differ.
+`MediaRole` stays in the catalog because each model can accept different counts
+and formats for references and editable images.
+
+## Provider protocol
+
+The provider protocol is a stable internal contract. It has no SDK or HTTP
+types and is not an external plugin API.
+
+```python
+# src/pixgen/providers/base.py
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Protocol, runtime_checkable
+
+from pixgen.core.models import ImageOperation, JsonSchema, MediaRole, ModelId, ModelSpec
+from pixgen.core.requests import ImageIntent, ValidatedImageRequest
+from pixgen.images.models import LocalImage
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedMedia:
+    role: MediaRole
+    image: LocalImage
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedImageRequest:
+    request: ValidatedImageRequest
+    media: tuple[PreparedMedia, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderImage:
+    data: bytes
+    media_type: str
+
+
+@runtime_checkable
+class ImageProvider(Protocol):
+    name: str
+
+    def models(self) -> tuple[ModelSpec, ...]: ...
+    def parameter_schema(
+        self,
+        model: ModelId,
+        operation: ImageOperation,
+    ) -> JsonSchema: ...
+    def validate(
+        self,
+        *,
+        intent: ImageIntent,
+        model: ModelSpec,
+    ) -> ValidatedImageRequest: ...
+    def declared_media_type(self, request: ValidatedImageRequest) -> str | None: ...
+    async def generate(self, request: PreparedImageRequest) -> ProviderImage: ...
+```
+
+`ProviderRegistry` maps each canonical model ID to an adapter and exposes the
+combined curated catalog. Each adapter owns Pydantic parameter models per model
+and operation. They validate `--param` values and generate the JSON Schema for
+`pixgen model get`.
+
+`PreparedImageRequest` combines a validated core request with ordered,
+read-once `LocalImage` values. It keeps filesystem I/O out of adapters while
+preserving the caller's explicit reference and image roles. `ProviderImage` is
+an internal binary provider result; it is not part of the public JSON schema.
+`declared_media_type()` returns the output type a validated request fixes in
+advance, such as `image/jpeg` for OpenAI `output_format="jpeg"`, or `None`
+when the provider chooses; the application uses it for the `--output` suffix
+check.
+
+The OpenAI adapter receives an injected `httpx2.AsyncClient`. `runtime.py`
+builds it with the OpenAI base URL, an `Authorization` header from the
+`SecretStr` key, and an explicit `httpx2.Timeout`. It does not add retry
+transports. The adapter builds the JSON or multipart request itself. The
+generations endpoint accepts no input images, so `image create` without
+references uses `POST /v1/images/generations`, while `image create` with
+references and every `image edit` use multipart `POST /v1/images/edits`. The
+create/edit split is a product distinction; for OpenAI only the presence of
+input images selects the endpoint. The Gemini
+adapter receives an injected `google.genai.Client` built with
+`HttpOptions(timeout=<ms>, retry_options=HttpRetryOptions(attempts=1))`, so the
+no-retry rule holds whatever the SDK defaults are. It requests
+`response_modalities=["IMAGE"]`. Each adapter maps its response to
+`ProviderImage`. The application maps adapter failures to `PublicError` before
+building `CommandResult`.
+
+Each adapter maps its client's failures itself. The OpenAI adapter maps
+`httpx2` timeout and connection exceptions, status codes, and documented error
+fields to Pixgen codes such as `authentication_failed`, `model_not_found`,
+`rate_limited`, `content_rejected`, `timeout`, and `provider_unavailable`. The
+Gemini adapter maps SDK errors and finish reasons the same way. Raw response
+bodies, headers, and SDK exception text never reach public output.
+
+A shared HTTP transport package is deliberately absent. `httpx2` already
+provides timeouts, headers, and `MockTransport`, and only one adapter uses it.
+Extract a thin transport only when a second REST adapter, such as an
+OpenAI-compatible provider, needs the same boundary.
+
+## Image preparation
+
+`images/` is an internal package for built-in adapters, not a plugin API. It
+prepares local sources. Provider adapters own endpoint URLs, JSON and
+multipart field names, documented vendor error types, and response schemas.
+
+```python
+# src/pixgen/images/models.py
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+
+
+@dataclass(frozen=True, slots=True)
+class LocalImage:
+    source_path: Path
+    filename: str
+    content: bytes
+    media_type: str
+
+    @property
+    def byte_size(self) -> int:
+        return len(self.content)
+
+
+class ImageInputError(ValueError):
+    """A safe, path-specific preflight failure."""
+```
+
+The image loader accepts local regular files only. It applies an input-size
+guard before reading and reads each file once. It then works on those bytes
+with magic-byte sniffing:
+
+1. It checks the first bytes against known magic numbers for PNG, JPEG, and
+   WebP.
+2. It maps the detected format to a MIME type.
+3. It rejects any file that does not match a supported format.
+
+Every failure becomes an `ImageInputError` with a safe, path-specific message.
+The loader preserves the original bytes and derives a lower-case MIME type.
+It never resizes, converts, recompresses, or mutates input. The application
+loads each distinct path once, then validates the metadata against every
+selected `MediaRoleSpec` before submission.
+
+`artifacts.py` chooses local output names from the target and the actual
+media type. It never uses a provider-supplied filename.
+
+## Curated catalog
+
+These facts were checked against the vendor guides on 2026-09-24. Each
+manifest records its own `verified_at` date. A model appearing in the catalog
+does not guarantee that a particular account can use it.
+
+| Canonical ID | Evidence that shapes the manifest |
 | --- | --- |
-| 0 | success |
-| 1 | unexpected internal error |
-| 2 | usage, validation, or configuration error |
-| 3 | credential or authentication error |
-| 4 | provider, network, or rate-limit error |
-| 5 | timeout |
-| 6 | generation failure, cancellation, or partial variants |
-| 7 | local storage or artifact failure |
+| `openai/gpt-image-2`, `openai/gpt-image-1-mini` | Image API returns base64 only. The edits endpoint takes up to 16 input images, each a PNG, JPEG, or WebP file under 50 MB. Manifest: `reference` 0–16, `image` 1–16, `max_bytes` 50 MB per file. Parameters: `size` (presets, custom multiples of 16 up to 3840 px per edge, `auto`), `quality` (`low`–`high`, `auto`), `background`, `output_format`, `output_compression`, `moderation`. `n` and `mask` are not exposed: variants are independent requests, and masks are deferred. |
+| `gemini/gemini-3.1-flash-image` | Up to 10 object references; aspect ratios 1:1–21:9; sizes 1K–4K. |
+| `gemini/gemini-3.1-flash-lite-image` | Up to 14 object references; 1K only. |
+| `gemini/gemini-3-pro-image` | Up to 6 object references. |
 
-Cyclopts parse failures use exit code 2. `doctor` also uses 2: any `failed`
-check exits 2, while warnings and skips exit 0.
+Gemini states separate caps for object and character references. Pixgen cannot
+tell which kind a local file is, so `MediaRoleSpec.maximum` uses the documented
+object cap and cites it. Gemini outputs carry a SynthID watermark. That is a
+property of the provider's output, not something Pixgen controls.
 
-## 10. Runtime, concurrency, and package layout
+Sources: [OpenAI image generation](https://developers.openai.com/api/docs/guides/image-generation),
+[Gemini image generation](https://ai.google.dev/gemini-api/docs/image-generation).
 
-Use Python 3.14 or newer. This provides standard-library `uuid.uuid7()` and is
-the single documented baseline across the project.
+## CLI composition
+
+Cyclopts command modules export generic sub-apps. The root registers them while
+remaining unaware of provider details.
+
+```python
+# src/pixgen/cli/app.py
+from cyclopts import App
+
+from pixgen.application import ImageApplication
+from pixgen.cli.image import build_image_app
+from pixgen.cli.model import build_model_app
+
+
+def build_app(application: ImageApplication) -> App:
+    app = App(name="pixgen", help="Generate and edit images.")
+    app.command(build_image_app(application))
+    app.command(build_model_app(application))
+    return app
+```
+
+`runtime.py` constructs settings, adapters, the registry, and the application
+before it calls `build_app()`. The root app registers no default command, so
+bare `pixgen` prints help instead of silently exiting `0`. Cyclopts derives
+`--version` from the installed package metadata.
+
+## Package boundaries
 
 ```text
 src/pixgen/
-├── __init__.py
-├── __main__.py
-├── runtime.py
-├── application.py
-├── cli/
-│   ├── app.py
-│   ├── image.py
-│   ├── video.py
-│   ├── generation.py
-│   ├── model.py
-│   └── system.py
-├── core/
-│   ├── models.py
-│   ├── requests.py
-│   ├── results.py
-│   ├── errors.py
-│   └── validation.py
-├── providers/
-│   ├── base.py
-│   ├── google.py
-│   └── openai.py
-├── config/
-│   ├── models.py
-│   ├── loader.py
-│   └── paths.py
-├── storage/
-│   ├── database.py
-│   ├── models.py
-│   ├── generations.py
-│   ├── artifacts.py
-│   └── migrations/
-├── credentials.py
-├── diagnostics.py
-└── output.py
+  __init__.py          version metadata only; importing pixgen has no CLI side effect
+  __main__.py          delegates to cli.app.main for python -m pixgen
+  runtime.py           composition root for settings, clients, adapters, and application
+  application.py       one image-use-case coordinator
+  artifacts.py         output planning, names, collision checks, atomic writes
+  images/
+    __init__.py        package marker
+    models.py          immutable LocalImage and safe input errors
+    inspect.py         one-read magic-byte verification and MIME mapping
+    mime.py            decoded-format to MIME mapping
+  config/
+    __init__.py        package marker
+    models.py          Pydantic Settings and nested defaults/generation models
+    paths.py           PlatformDirs and PIXGEN_CONFIG resolution
+  core/
+    __init__.py        package marker
+    models.py          catalog types, model IDs, image operations, input rules
+    requests.py        image intent and validated provider request types
+    results.py         command result, target result, and public error models
+    errors.py          public error-code enum and private domain exceptions
+  providers/
+    __init__.py        package marker
+    base.py            ImageProvider, prepared input, and binary result contracts
+    registry.py        immutable model-ID to provider lookup and catalog aggregation
+    openai.py          OpenAI manifest, REST translation, and response/error mapping
+    gemini.py          Gemini manifest, parameter models, SDK translation, response mapping
+  cli/
+    __init__.py        package marker
+    app.py             root Cyclopts app builder and console entry point
+    image.py           image sub-app builder and create/edit argument parsing
+    model.py           model sub-app builder and list/get rendering inputs
+    render.py          human tables, JSON serialisation, stderr diagnostics, exit mapping
 ```
 
-### Module boundaries
-
-The layout is an architectural target, not an assertion that every listed
-module already exists; the divergence table at the end of this section records
-what is still missing. Two entries changed in this revision:
-
-- `application/generation.py` became the single module `application.py`. Three
-  use cases plus resume do not need a package. It splits when a file gets long,
-  not before.
-- `storage/repository.py` became `storage/generations.py`, a module of typed
-  functions over an explicit `Session`. See the storage seam in section 8.
-
-The following index describes the package-level division of responsibility.
-
-| Area | Status | Boundary |
-| --- | --- | --- |
-| Root package | Current and planned | Provides lightweight package metadata and the `python -m pixgen` delegation path; it must not construct the CLI or runtime during ordinary import. |
-| `application` | Planned | Owns generation use cases: it coordinates validation, provider invocation, short persistence operations, and public-result assembly; it does not parse commands, render output, or use concrete SDK types. |
-| `cli` | Partly current | Parses commands, renders human or JSON output, and maps failures to exit status; it delegates use cases through runtime and does not implement provider, storage, or core validation policy. |
-| `core` | Partly current | Defines transport- and storage-free domain types, requests, results, errors, and validation. It imports no transport, no SQLAlchemy, and no adapter. |
-| `providers` | Planned | Defines the internal provider protocol plus provider-specific request/response translation, curated static model records, and native-option validation; it does not expose a public plugin API. |
-| `config` | Current | Resolves typed settings and platform paths; it does not resolve credentials or perform provider calls. |
-| `storage` | Planned | Owns SQLite bootstrap, schema, query functions, artifact materialization, migrations, and durable generation/artifact facts; it does not hold open transactions across provider calls. |
-| Runtime support | Planned | `runtime`, `credentials`, `diagnostics`, and `output` compose dependencies, resolve secrets, run health checks, and render output without leaking secrets or provider payloads. `diagnostics` owns `DoctorContext` and the check registry; `cli/system.py` stays a thin wrapper that renders results and maps them to exit status. |
-
-`runtime.py` is the composition root. It creates only the dependencies required
-by the selected command: resolved settings first, then lazy credential, storage,
-provider, and application-service dependencies as needed. The application
-layer, not runtime or CLI, coordinates a generation request and triggers
-credential resolution only after provider-neutral validation succeeds. This
-keeps `--help`, `config path`, `model list`, and passive `info` free of
-credential, database, or network side effects. Do not hide construction in
-global singletons.
-
-Start each provider in one focused module. Split it into a package only after
-real size or independent test seams justify the change.
-
-The console entry point should become:
-
-```toml
-[project.scripts]
-pixgen = "pixgen.cli.app:main"
-```
-
-`src/pixgen/__main__.py` delegates to that `main()` so `python -m pixgen` uses
-the identical path. Neither `pixgen/__init__.py` nor `__main__.py` may import
-the Cyclopts application at module scope: importing the package must not build
-the CLI.
-
-### Async and concurrency
-
-Providers are asynchronous, Cyclopts is synchronous, and SQLAlchemy is
-synchronous. One rule reconciles them:
-
-> **Each CLI command calls `asyncio.run()` exactly once.**
-
-```python
-@image_app.command
-def create(prompt: str, /, *, model: ModelId | None = None) -> None:
-    response = asyncio.run(create_image(deps, request))
-    render(response)
-```
-
-- `cli/*` is synchronous. It parses, calls one use case, renders, and exits.
-- `application.py` is asynchronous and owns the whole lifecycle of a command.
-- `providers/*` is asynchronous at the network boundary only.
-- `storage/*` is synchronous and is called directly from asynchronous code.
-
-Calling synchronous SQLite from the event loop is deliberate. Local SQLite
-writes complete in well under a millisecond, there is no second client to
-starve, and an executor would add a failure mode in exchange for nothing
-measurable. The rule that matters is the one section 8 already states: a
-`Session` opens and closes inside a single synchronous call, so no transaction
-can span an `await`. Explicit sessions make that checkable by reading the code.
-
-`--variants` bounds concurrency with `asyncio.Semaphore(4)`. Results are
-reassembled by index so machine output preserves submission order regardless of
-completion order. Polling uses `stamina` on reads only; submissions are never
-retried.
-
-Do not introduce `anyio`, a thread pool, or an async SQLite driver in 0.1. Each
-would add a concurrency model to a program that needs one.
-
-### Current divergence from this document
-
-The checkout has not caught up to this specification. These gaps are tracked
-scope, not surprises, and section 15 sequences their repair. See **§15 Implementation order** for the sequence these gaps are closed in, and **§16 Decisions and removals** for the reasoning behind key architectural choices.
-
-| Area | Current | Target |
-| --- | --- | --- |
-| Console entry point | `pixgen = "pixgen:main"` | `pixgen = "pixgen.cli.app:main"` |
-| Package import | `__init__.py` imports `cli.app` at module scope | No CLI construction on import |
-| Dependencies | `sqlmodel`, `pydantic-settings[yaml]` present; `alembic`, `sqlalchemy`, `google-genai` absent | Section 10 dependency list |
-| Validation module | `core/validations.py`, checks bound to `MediaReference` validators | `core/validation.py`, `validate_request(request, spec)` |
-| Request union | `operation` is a bare `Operation`, so the union does not discriminate | `Literal[Operation.…]` per member |
-| Request params | `dict[str, Json]` | `dict[str, JsonValue]` |
-| Request base | `VideoCreateRequest` inherits `count` and `aspect_ratio` | Two-level base; video has no `count` |
-| Config defaults | `Defaults` hardcodes model IDs | Both default to `None`; section 3 resolution order applies |
-| Config output dir | `default_factory=Path.cwd` | `None`, resolved to the data directory at runtime |
-| Config TOML source | `toml_file` evaluated at class definition | `resolve_config_path()` called inside `settings_customise_sources` |
-| Config override | `PIXGEN_CONFIG` unimplemented; `loader.read_config_file` bypasses precedence | Absolute `PIXGEN_CONFIG` honored; one resolution path |
-| Tests | No `tests/` directory | Section 13 layout |
-| Justfile | `run: uv run app`, `type-check-ty: uv run ty check` | `uv run pixgen`, `uv run pyrefly check` |
-
-### Runtime dependencies
-
-Initial compatible bounds, verified against current releases on 2026-09-18:
-
-```toml
-dependencies = [
-    "alembic>=1.20.0,<2",
-    "cyclopts>=4.25.2,<5",
-    "google-genai>=2.24.0,<3",
-    "httpx2>=2.12,<3",
-    "keyring>=25.7",
-    "pillow>=12.3",
-    "platformdirs>=4",
-    "pydantic>=2.13",
-    "pydantic-settings>=2.15",
-    "rich>=15",
-    "sqlalchemy>=2.0.54,<2.1",
-    "stamina>=26",
-]
-```
-
-Remove SQLModel and the `pydantic-settings[yaml]` extra. Do not add an OpenAI
-SDK, async SQLite driver, Pluggy, or HTTP mocking library in 0.1.
-
-## 11. Diagnostics
-
-> Planned file: `src/pixgen/diagnostics.py`; commands in
-> `src/pixgen/cli/system.py`.
-
-Two commands, one distinction: **`info` reports what Pixgen already knows;
-`doctor` goes and finds out.**
-
-### `pixgen info`
-
-`info` is passive. It resolves settings and paths and reports them. It performs
-no credential lookup, no database access, no provider network call, and no
-write of any kind, which is what makes it safe to run inside a shell prompt or
-an agent's preamble.
-
-```python
-# File: src/pixgen/diagnostics.py
-
-from pathlib import Path
-from typing import Literal
-from pydantic import BaseModel, ConfigDict
-
-
-class ProviderInfo(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    name: str
-    credential_source: CredentialSource | None = None
-
-
-class InfoResponse(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    schema_version: Literal[1] = 1
-    version: str
-    python_version: str
-    platform: str
-    config_path: Path
-    config_exists: bool
-    database_path: Path
-    artifacts_path: Path
-    keyring_backend: str | None
-    default_image_model: ModelId | None
-    default_video_model: ModelId | None
-    providers: tuple[ProviderInfo, ...]
-```
-
-`credential_source` reports `keyring`, `environment`, or `null`. Reading the
-*source* requires no secret: keyring presence is a metadata lookup and
-environment presence is a key test on `os.environ`. The value is never read,
-never rendered, and never logged.
-
-The Alembic revision is deliberately absent. Determining it means opening the
-database, which is an active operation and therefore a `doctor` check.
-
-### The check contract
-
-A check is one function. This is the whole extension model:
-
-```python
-# File: src/pixgen/diagnostics.py
-
-from typing import Callable, Awaitable
-from enum import StrEnum
-
-type Check = Callable[[DoctorContext], Awaitable[CheckResult]]
-```
-
-Every check is `async`, including the many that never await, so the registry
-stays a flat list and `doctor` honors the section 10 rule of one
-`asyncio.run()` per command. `DoctorContext` carries resolved settings,
-resolved paths, lazily-opened resources, and the `offline` flag; a check
-receives it and returns a result rather than printing, so rendering and
-policy stay separate.
-
-```python
-# File: src/pixgen/diagnostics.py
-
-class CheckStatus(StrEnum):
-    OK = "ok"
-    WARNING = "warning"
-    FAILED = "failed"
-    SKIPPED = "skipped"
-
-
-class CheckResult(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    id: str
-    category: str
-    status: CheckStatus
-    summary: str
-    detail: str | None = None
-    remedy: str | None = None
-
-
-class DoctorResponse(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    schema_version: Literal[1] = 1
-    status: CheckStatus
-    checks: tuple[CheckResult, ...]
-```
-
-### Code Example
-
-```python
-# src/pixgen/diagnostics.py: one diagnostic check
-
-async def check_config_parses(ctx: DoctorContext) -> CheckResult:
-    try:
-        config = ctx.load_config()
-        return CheckResult(
-            id="config.file.parses",
-            category="configuration",
-            status=CheckStatus.OK,
-            summary="config.toml is valid TOML",
-        )
-    except Exception as e:
-        return CheckResult(
-            id="config.file.parses",
-            category="configuration",
-            status=CheckStatus.FAILED,
-            summary="config.toml is invalid",
-            detail=str(e),
-            remedy="Fix the TOML syntax in ~/.config/pixgen/config.toml",
-        )
-```
-
-`DoctorResponse.status` is the worst status across all checks, so a caller can
-branch on one field.
-
-`remedy` is what separates a diagnostic from a report. A check that can fail
-must name the command or edit that fixes it; a check that cannot usefully
-advise should not be in the registry.
-
-### Check registry
-
-Checks run in this order. IDs are stable and part of the machine contract:
-renaming one is a breaking change to `schema_version`. `<name>` expands once
-per built-in provider, so 0.1 emits `providers.google.auth` and
-`providers.openai.auth`; the execution rules below write `providers.*` when a
-rule applies to every expansion.
-
-| ID | Verifies | Notes |
-| --- | --- | --- |
-| `config.file.parses` | `config.toml` is valid TOML | An absent file is `ok`; defaults apply |
-| `config.override.absolute` | `PIXGEN_CONFIG`, if set, is absolute and exists | A relative override is `failed`, per section 6 |
-| `config.keys.known` | No unknown keys | Names the offending key |
-| `config.defaults.resolve` | Configured default models exist in a manifest | Unset is `warning`; set but unknown is `failed` |
-| `paths.config.readable` | The config path is readable | |
-| `paths.database.writable` | The database directory is writable | |
-| `paths.artifacts.writable` | Temp-file probe in the artifact directory | Writes and removes one file; never creates the tree |
-| `database.opens` | A connection succeeds | A missing file on a fresh install is `ok` |
-| `database.revision.current` | Revision equals the packaged Alembic head | Never migrates; the remedy names the command |
-| `database.pragma.wal` | `journal_mode` is WAL | |
-| `database.pragma.foreign_keys` | Foreign keys are enforced | |
-| `credentials.keyring.backend` | A secure backend is available | Unavailable is `warning`, since the environment fallback still works; a selected `keyrings.alt` backend is `failed` |
-| `credentials.google.present` | A Google credential resolves | Reports source only |
-| `credentials.openai.present` | An OpenAI credential resolves | Reports source only |
-| `providers.<name>.manifest` | Every `ModelSpec` in the manifest validates | A stale `verified_at` is `warning` |
-| `providers.<name>.reachable` | DNS and TLS to the provider host | Needs no credential |
-| `providers.<name>.auth` | A free list-models call succeeds | `skipped` without a credential; never generates |
-| `runtime.python.version` | Python 3.14 or newer | |
-| `runtime.dependencies` | Installed versions satisfy the declared bounds | |
-
-`reachable` and `auth` are separate on purpose. Folded together they cannot
-distinguish a missing network from an invalid key, which is the most common
-setup confusion and the one a user is least able to diagnose unaided. Separated,
-the report says which.
-
-### Execution rules
-
-1. **A failed prerequisite skips its dependents.** If `database.opens` fails,
-   the revision and pragma checks report `skipped`, not `failed`. One root cause
-   produces one failure. A report where four lines are red and only one is the
-   problem trains people to ignore it.
-2. **`--offline` skips exactly `providers.*.reachable` and
-   `providers.*.auth`.** Every other check is local and always runs. Use it in
-   CI, in sandboxes, and on a plane.
-3. **`doctor` never mutates.** It creates no directory, runs no migration,
-   writes no configuration, and generates no media. Section 8 already requires
-   this of the revision check; it applies to every check. The artifact probe is
-   the one write, and it removes its own temp file.
-4. **Exit 2 when any check is `failed`, otherwise 0.** Warnings and skips exit
-   0. This reuses the section 9 code for configuration errors rather than
-   inventing a doctor-specific status, so `pixgen doctor && deploy` works.
-5. **A correct fresh install reports no failures.** No config file, no database
-   file, and no artifact directory are all normal first-run states and report
-   `ok` or `warning`, never `failed`. A tool that reports problems on a healthy
-   install is one users learn to disbelieve.
-
-### Rendering
-
-Human output groups checks by category:
+| Package or module | Owns | May depend on | Must not know about |
+| --- | --- | --- | --- |
+| `runtime.py` | Settings, client lifetime, adapter construction, and application wiring. | Every production package. | Command parsing and vendor payload details. |
+| `application.py` | Target selection, complete preflight, variant expansion, concurrency, result ordering, and public result assembly. | `core/`, `providers/`, `images/`, `artifacts.py`. | Cyclopts, HTTP clients, SDK types, or vendor request shapes. |
+| `artifacts.py` | Output planning, collision checks, generated names, and atomic local writes. | Standard library and provider result bytes. | Provider identity, HTTP, or SDKs. |
+| `core/` | Curated model data, caller intent, validation results, public errors, and public JSON models. | Pydantic and the standard library. | Filesystem I/O, configuration, HTTP, SDKs, and providers. |
+| `images/` | One-read local input inspection via magic bytes, decoded metadata, and original bytes. | Standard library only. | Media roles, provider fields, multipart encoding, and output files. |
+| `config/` | PlatformDirs paths, TOML and environment loading, and runtime-only secrets. | Pydantic Settings, PlatformDirs, `core/`. | Provider resolution, directories for artifacts, and CLI parsing. |
+| `providers/` | Curated vendor manifests, parameter validation, request translation, response translation, and provider error mapping. | `core/`, `images/`, and one injected vendor client (`httpx2` or `google-genai`). | Cyclopts, artifact writes, or another concrete provider. |
+| `cli/` | Cyclopts commands, help, human rendering, JSON rendering, stderr diagnostics, and exit mapping. | `application.py`, `config/`, `core/`. | Provider modules and vendor dependencies. |
+
+The allowed dependency direction is:
 
 ```text
-configuration
-  ✓ config.file.parses        no config file; using defaults
-  ✓ config.defaults.resolve   google/gemini-3.1-flash-image
-
-database
-  ✗ database.revision.current at 0001, head is 0003
-      remedy: run any storage command, or `pixgen doctor` after upgrade
-
-providers
-  ✓ providers.google.reachable
-  ○ providers.openai.auth     skipped: no credential
+cli -> application -> providers -> core
+                 -> images
+                 -> artifacts -> core
+providers -> images
+runtime -> config, providers, application, cli
+config -> core
 ```
 
-Markers degrade to `[ok]`, `[!!]`, `[ w]`, and `[--]` under `--no-color` or
-`NO_COLOR`. `--quiet` prints only non-`ok` checks.
-
-`doctor --json` emits one `DoctorResponse`. The section 7 redaction rule
-applies to `summary`, `detail`, and `remedy` alike: diagnostics report presence
-and source, never a secret value, and never a raw provider payload.
-
-### Deliberately absent checks
-
-Two checks that belong in a mature `doctor` are not in the 0.1 registry:
-
-- **`plugins.load`**: 0.1 has no plugin loader. Providers are built-in behind
-  an internal protocol, per section 2.
-- **`runtime.ffmpeg`**: Pixgen writes provider bytes verbatim and never
-  transcodes, so no media tool is required at runtime.
-
-Both are recorded here so the question is not reopened from memory. If either
-becomes real, it is one function appended to the registry and one test, which
-is the point of the check contract.
-
-## 12. Agent integration
-
-Ship one provider-neutral skill without an installer command:
-
-```text
-skills/pixgen/
-├── SKILL.md
-└── references/
-    ├── image.md
-    ├── video.md
-    └── troubleshooting.md
-```
-
-The skill teaches agents to:
-
-- Run `model list/get --json` instead of guessing model behavior.
-- Use explicit project-local output paths.
-- Distinguish `create --reference` from `edit --image`.
-- Use `--no-wait`, retain the UUID, and resume video jobs.
-- Interpret stable error codes rather than human strings.
-- Inspect produced artifacts before modifying downstream files.
-- Run `doctor --json` for setup failures.
-
-Provider HTTP request formats, model limits, and credentials do not belong in
-the skill. The CLI and `ModelSpec` are the source of that information.
-
-## 13. Testing and verification
-
-```text
-tests/
-├── unit/
-│   ├── core/
-│   ├── config/
-│   ├── credentials/
-│   ├── diagnostics/
-│   ├── output/
-│   └── storage/
-├── providers/
-│   ├── test_google.py
-│   ├── test_openai.py
-│   └── contract.py
-├── cli/
-│   ├── test_image.py
-│   ├── test_video.py
-│   ├── test_generation.py
-│   └── test_machine_output.py
-├── integration/
-│   ├── test_resume_across_processes.py
-│   ├── test_migrations.py
-│   └── test_concurrent_variants.py
-└── live/
-    ├── test_google_live.py
-    └── test_openai_live.py
-```
-
-### `tests/unit/core/`
-
-Pure request, capability, media-role, parameter, and error behavior with no I/O.
-These tests prove the provider-independent contract and validation order.
-
-### `tests/unit/config/`
-
-TOML loading, PlatformDirs resolution, `PIXGEN_CONFIG`, nested environment
-overrides, unknown-key rejection, and precedence. Tests use isolated temporary
-directories and never read a developer's real configuration.
-
-### `tests/unit/credentials/`
-
-Keyring-first resolution, provider environment fallback, unavailable-backend
-behavior, hidden-input commands, and redaction. Fake backends prevent access to
-the developer's real keychain.
-
-### `tests/unit/output/`
-
-Pydantic JSON schemas, stdout/stderr separation, Rich suppression under
-`--json`, exit-code mapping, and secret-safe error rendering.
-
-### `tests/unit/diagnostics/`
-
-The check registry against synthetic environments. Each check is a function
-returning a `CheckResult`, so each is tested in isolation with a constructed
-`DoctorContext` and no real filesystem, keyring, or network.
-
-The behaviors that matter are the cross-cutting ones:
-
-- A clean fresh install, with no config file, no database, no artifact directory,
-  produces zero `failed` checks.
-- A failed prerequisite skips its dependents: a database that will not open
-  yields one `failed` and three `skipped`, never four `failed`.
-- `--offline` skips exactly `providers.*.reachable` and `providers.*.auth`, and
-  nothing else.
-- No check mutates: the filesystem and the database are byte-identical before
-  and after a full run, the artifact probe file is gone, and the Alembic
-  revision is unchanged when it is behind head.
-- Exit status is 2 when any check failed and 0 when the worst status is
-  `warning` or `skipped`.
-- A credential canary never appears in `summary`, `detail`, or `remedy`.
-- `InfoResponse` and `DoctorResponse` validate against their declared schemas,
-  and `info` performs no credential read, database open, or network call.
-
-### `tests/unit/storage/`
-
-Typed SQLAlchemy mappings, transactions, status transitions, sanitization,
-artifact relations, pragmas, and Alembic revision checks against temporary
-SQLite databases.
-
-### `tests/providers/`
-
-Adapter request translation, normalized results, model manifests, provider error
-mapping, and shared behavioral contracts. Google receives an injected fake
-async SDK client; OpenAI receives HTTPX2 `MockTransport` with synthetic or
-sanitized responses.
-
-### `tests/cli/`
-
-Command parsing, prompt forms, mutually exclusive flags, local validation,
-human output, machine output, and exact exit behavior through the real Cyclopts
-application.
-
-### `tests/integration/`
-
-Cross-boundary behavior: migrations, real SQLite transactions, concurrent
-variant scheduling, atomic files, and process recovery. The resume test submits
-through a fake provider, exits one CLI process, and completes from the UUID in a
-second process.
-
-### `tests/live/`
-
-Explicitly enabled, credit-consuming smoke tests against real provider APIs.
-They verify only high-value integration assumptions and never run in normal CI.
-
-### Required checks
-
-```bash
-just lint
-just type-check
-just test
-just check
-```
-
-Pyrefly is the sole type checker. Update the stale `type-check-ty` recipe to
-`uv run pyrefly check`, and update `just run` from the nonexistent `app` command
-to `uv run pixgen`.
-
-Critical tests must prove:
-
-- Fresh and previous-revision databases upgrade to Alembic head.
-- A background Google video resumes by UUID in a fresh CLI process.
-- A persisted Google interaction can be cancelled.
-- Variant concurrency never exceeds four and results retain submission order.
-- Partial variants preserve successful outputs and exit 6.
-- Invalid media and output paths fail before provider submission.
-- A credential canary never appears in SQLite, JSON, exceptions, or logs.
-- Every JSON document validates against its declared response model.
-- `validate_request` reports every independent violation in one pass, in the
-  documented order.
-- Format acceptance follows the resolved manifest, so the same file is valid
-  for one provider and rejected for another.
-- `SIGINT` during an in-flight submit persists the generation and exits 6.
-- Settings resolve identically through every entry point, including an absolute
-  `PIXGEN_CONFIG` override.
-- Normal tests require no API keys and consume no credits.
-
-Live tests require both an explicit marker and the matching credential:
-
-```bash
-pytest -m live_google
-pytest -m live_openai
-```
-
-## 14. Acceptance criteria
-
-0.1 is complete when all of the following are true:
-
-1. Google image create, reference-guided create, and edit produce local files.
-2. OpenAI image create, reference-guided create, and edit produce local files.
-3. Google Omni text-to-video and start-frame-to-video produce local files.
-4. A no-wait video survives process exit and resumes from its UUIDv7.
-5. Native image count is capability-gated.
-6. Independent variants run concurrently with a maximum of four and report
-   partial success precisely.
-7. Keyring and environment fallback work independently for both providers.
-8. Credentials never appear in Pixgen-controlled persistence or output.
-9. Output collisions, invalid media, and unsupported parameters fail before a
-   billable provider call.
-10. Every command has deterministic JSON and documented exit behavior.
-11. The bundled Agent Skill completes image and video workflows without
-    provider request formats embedded in its instructions.
-12. `doctor` reports no failures on a correct fresh install, never mutates
-    local state, and exits 2 when a check genuinely fails.
-13. Ruff, Pyrefly, pytest, pre-commit, and the dependency security scan pass.
-
-The primary product criterion is:
-
-> A human or coding agent can discover a current model, create or edit images
-> through Google or OpenAI, create and resume a Google video, and consume
-> explicit local artifacts using only the CLI's help and structured contracts.
-
-## 15. Implementation order
-
-This is sequencing, not authorization to start implementation. The detailed
-task plan follows after this specification is approved. For current implementation gaps against this plan, see **§10 Current divergence from this document**; for the reasoning behind key decisions, see **§16 Decisions and removals**.
-
-1. Repair project metadata, entry point, development commands, dependencies,
-   and configuration imports.
-2. Implement core types, errors, machine response models, and pure validation.
-3. Implement TOML paths/settings and keyring/environment credentials.
-4. Implement typed SQLAlchemy rows, SQLite engine policy, and initial Alembic
-   migration.
-5. Implement CLI skeleton, model discovery, output rendering, `info`, and
-   `doctor` with no provider generation yet.
-6. Implement Google image vertical slice and its tests.
-7. Implement Google background Omni video, persistence, resume, and cancel.
-8. Implement OpenAI image vertical slice.
-9. Implement native count, concurrent variants, atomic artifact handling, and
-   cross-provider contract tests.
-10. Write the bundled Agent Skill, run live smoke tests explicitly, and complete
-    release verification.
-
-## 16. Decisions and removals
-
-For current implementation gaps against these decisions, see **§10 Current divergence from this document**; for sequencing their repair, see **§15 Implementation order**.
-
-| Area | 0.1 decision |
-| --- | --- |
-| Python | 3.14+ everywhere |
-| Configuration | user-level TOML plus absolute `PIXGEN_CONFIG` override |
-| Credentials | keyring, then `GEMINI_API_KEY` or `OPENAI_API_KEY`; no profiles |
-| Storage | synchronous typed SQLAlchemy 2 + SQLite + Alembic |
-| Public IDs | standard UUIDv7 |
-| Providers | built-in Google and OpenAI only |
-| Google transport | official async `google-genai` SDK |
-| OpenAI transport | direct HTTPX2 |
-| Video | Gemini Omni Flash; text or one start frame |
-| Plugins | deferred; internal provider protocol only |
-| Media sources | local paths only |
-| Image batching | capability-gated native `--count` |
-| Image variants | explicit `--variants`; identical requests; concurrency four |
-| Cross-parameter rules | adapter Pydantic validators, no constraint DSL |
-| Validation split | Pydantic for shape, `validate_request(request, spec)` for policy |
-| Storage seam | typed functions over an explicit `Session`; no repository class |
-| Application layer | one module, `application.py` |
-| Concurrency | one `asyncio.run()` per command; synchronous short SQLite calls |
-| Logging | stdlib, stderr, `WARNING` default, `-v`/`-vv`, redacting filter |
-| Interrupt | `SIGINT` never cancels an in-flight paid submit |
-| Timestamps | timezone-aware UTC, RFC 3339 with `Z` |
-| Public metadata | closed four-key allowlist; no payload passthrough |
-| Cost reporting | none; usage facts only |
-| Type checking | Pyrefly only |
-| Diagnostics | passive `info`; active `doctor` with a registry of identified checks |
-| Doctor network | probes by default; `--offline` runs local checks only |
-| Doctor mutation | never; every failable check carries a `remedy` string |
-| Doctor exit | 2 on any `failed` check, 0 for warnings and skips |
-| Agent support | one bundled provider-neutral skill; no installer command |
-
-Removed dependencies or concepts: SQLModel, YAML, Pluggy, provider profiles,
-custom Base32 IDs, ambiguous ID prefixes, provider commands, dynamic model
-catalogs, remote media URLs, and speculative provider subpackages.
-
-## 17. Risks and stop conditions
-
-### Provider drift
-
-Model IDs, limits, and API shapes change quickly. Each manifest records a source
-URL and verification date. Provider contract and opt-in live tests must be easy
-to run. Do not duplicate exact limits across narrative documents.
-
-### Background retention
-
-Google background interactions are stored remotely. Pixgen must state this
-clearly. If the provider removes or materially changes resumable background
-execution, reassess the local video contract before adding workarounds.
-
-### Normalization pressure
-
-If a provider feature does not fit the common request without conditionals that
-affect other providers, leave it in typed provider parameters or defer it. Do
-not turn the core into the union of every vendor API.
-
-### External plugin timing
-
-Do not publish a plugin API until Google and OpenAI adapters prove the internal
-provider contract. When external plugins become a real milestone, design and
-version a smaller public surface separately.
-
-### Product stop condition
-
-If users converge on one provider or aggregator and direct-provider switching
-has little practical value, stop expanding adapters and simplify around actual
-usage rather than preserving the original multi-provider ambition.
+`runtime.py` may depend on every production package because it wires them.
+Every other direction is one-way. This prevents a provider change from leaking
+into CLI parsing, artifact output, or the public JSON contract.
+
+## Execution and output
+
+For each command, the application:
+
+1. Parses input and resolves settings.
+2. Selects explicit or configured model targets.
+3. Validates parameters and output policy, then loads every distinct local
+   image once and validates decoded metadata against every target before sending
+   a request.
+4. Builds one `PreparedImageRequest` per model and variant index.
+5. Runs jobs through an `asyncio` semaphore limited by
+   `max_parallel_requests`, defaulting to four.
+6. Atomically writes each successful image.
+7. Returns results in model-selection order and then variant-index order.
+
+Provider submissions do not retry. A transport failure can follow a billable
+request. Pixgen lets already-submitted parallel jobs finish, writes successful
+artifacts, and reports complete partial results.
+
+Every requested `(model, variant)` job appears in `results` with an outcome;
+none is omitted.
+
+The first interrupt (`Ctrl-C`, `SIGINT`) stops starting queued jobs, lets
+in-flight paid requests finish, writes their artifacts, and reports every job.
+Jobs that never started carry `interrupted`. If no job had started, the
+envelope carries a command-level `interrupted` error. A second interrupt
+cancels in-flight jobs immediately, removes temporary files, keeps artifacts
+already written, and makes no JSON-envelope guarantee. Either way the exit
+status is `130`. Cancelling a request locally does not cancel provider
+billing, which is why the first interrupt from a person drains instead.
+
+Automated callers cannot wait for a drain. Agent harnesses and CI runners
+enforce their own tool timeouts, and usually send SIGTERM followed shortly by
+SIGKILL, so a process that waits emits nothing. Two paths therefore finish at
+once instead of draining:
+
+- The run deadline (`--timeout` or `run_timeout_seconds`) stops starting
+  queued jobs, cancels in-flight jobs, writes artifacts that already finished,
+  and emits the envelope. Ended jobs carry `timeout`, and the exit status
+  follows the normal `0`/`3`/`4` rules, because the caller asked for the
+  deadline.
+- SIGTERM behaves the same way, but ended jobs carry `interrupted` and the
+  exit status is `143`.
+
+Cancelled paid requests are lost, but the caller always receives a structured
+result. Skipping queued jobs that cannot finish before the deadline needs
+duration data and is deferred.
+
+Artifact writes use a sibling temporary file followed by atomic replacement.
+Successful human output goes to stdout. Human errors, warnings, and
+diagnostics go to stderr. Progress goes to stderr only when stderr is a TTY,
+because agent harnesses capture stderr into the model's context. Under `--json`, stdout contains one versioned JSON envelope for
+success and failure. Each target result contains the canonical model ID (which
+names the provider), the variant index, the artifact path and media type when
+present, and a structured public error otherwise. It excludes credentials,
+authorization headers, raw provider bodies, and SDK exception text.
+
+Exit statuses:
+
+- `0` when every target succeeds.
+- `2` for CLI, configuration, local-input, output-policy, or parameter errors
+  before submission.
+- `3` when valid submissions produce no usable artifact.
+- `4` when at least one target succeeds and at least one target fails.
+- `130` after SIGINT.
+- `143` after SIGTERM.
+
+## Verification
+
+Normal tests use no credentials and never submit paid work.
+
+- Core tests cover request types, target expansion, parameter parsing
+  (including rejected `NaN`/`Infinity`), global and scoped parameter
+  validation (unselected scopes, duplicate names across scopes), the
+  `max_jobs` cap, ordering, the `CommandResult` outcome table, the model
+  envelopes, and public error serialisation.
+- Configuration tests cover PlatformDirs, absolute `PIXGEN_CONFIG` read at
+  construction time, missing-file behavior, environment precedence, API-key
+  aliases, and settings bounds.
+- OpenAI adapter tests use `httpx2.MockTransport` for translation, endpoint
+  selection (generations without input images, edits with them), one attempt
+  per request, status and error-field mapping (including `content_rejected`),
+  timeout mapping, and absence of raw bodies in public errors.
+- Gemini adapter tests inject a fake SDK client for the same behavior, plus
+  text-only and safety-blocked responses.
+- Image utility tests cover one-read behavior, original-byte preservation,
+  decoded MIME mapping via magic bytes, corrupt input, oversize input, and
+  unsupported format detection.
+- Application tests cover semaphore bounds, full preflight, one load per
+  distinct input path, the `--output` suffix check, atomic artifacts, partial
+  results, generated names with `run_id`, collision handling, the run
+  deadline, SIGINT drain, SIGTERM cancellation, and interrupt cleanup.
+- CLI tests cover generic sub-app registration, defaults, repeated models,
+  references versus images, human output, JSON, stderr separation, TTY-only
+  progress, and exits.
+
+## Current type review
+
+The checked-in source is an earlier prototype. Manual implementation should
+align it with this document instead of extending both shapes in parallel.
+
+Baseline on 2026-09-24: `ruff check` and `pyrefly check` pass, and `pytest`
+collects no tests. The staged change that removes Pillow `AfterValidator`s
+from `MediaReference` moves in the right direction: file checks belong in
+`images/`, not in field validators.
+
+| Current module | Finding | Required target |
+| --- | --- | --- |
+| `core/models.py` | `Capability` duplicates `Operation` plus media rules. `MediaKind`, `GenerationStatus`, `supports_cancel`, `mask`/`start-frame` roles, and the hand-rolled `*ParameterSpec` mini-schema are video, lifecycle, or JSON Schema duplicates. `MediaRoleSpec` lacks `extra="forbid"` and the minimum/maximum check. `ModelId` accepts any text after `/`. | The core types above: `ImageOperation`, `MediaRole` (reference, image), `MediaRoleSpec`, and `ModelSpec` with `operations`; parameter schemas come from adapter Pydantic models. |
+| `core/requests.py` | Normalized `aspect_ratio`, `resolution`, and `count`, one `model` per request, `mask`, and `VideoCreateRequest` contradict "params only; variants in the application". The staged change made `ImageEditRequest.images` default to `()`. The custom recursive `JsonValue` duplicates Pydantic's. | The `ImageIntent` union with `images` requiring at least one path; `pydantic.JsonValue`. |
+| `core/validation.py` | `file_integrity` catches `(OSError, SyntaxError)` only, so `DecompressionBombError` (an `Exception` subclass) escapes. It embeds raw Pillow text in messages. `FieldError` has no consumer in the target design. | Delete. Move inspection to `images/inspect.py` using the rules in Image preparation. |
+| `core/errors.py` | `GENERATION_FAILED`, `GENERATION_CANCELLED`, `ARTIFACT_ERROR`, and `INTERNAL_ERROR` differ from the contract. | The `ErrorCode` above, including `content_rejected` and `interrupted`. |
+| `providers/base.py` | Job lifecycle (`get`, `cancel`, `provider_job_id`, `ProviderUsage`), `fetch_url`, and `retryable` are outside the MVP. `Provider` is not `@runtime_checkable`. | `ImageProvider`, `PreparedImageRequest`, `PreparedMedia`, and binary `ProviderImage`; provider clients stay private injected dependencies. |
+| `providers/openai.py` | Not yet written. | Translate prepared input to OpenAI JSON or multipart fields using the injected `httpx2.AsyncClient`; map responses and documented failures; never open image paths or construct a client. |
+| `images/` | Empty package. | Immutable `LocalImage` and one-read Pillow inspection per Image preparation. |
+| `transport/` | Empty untracked package. | Remove; see Provider protocol. |
+| `config/models.py` | `toml_file=resolve_config_path()` is fixed at import, so `PIXGEN_CONFIG` cannot apply. Defaults use `google/` IDs and a video model. `output_dir` uses `default_factory=Path.cwd`, which captures the working directory at load time. `wait_timeout` and `wait_interval` are video polling leftovers. API keys are not modelled. | Operation-specific model tuples with `gemini/` IDs, `output_dir: Path \| None = None`, concurrency, variant, `max_jobs`, request and optional run timeout bounds, and aliased `SecretStr` keys. Resolve the TOML path in `settings_customise_sources()`. |
+| `config/loader.py` | With a path, `Settings.model_validate(tomllib.load(...))` skips the source chain, so environment precedence is lost. | Delete; `Settings()` is the one construction path. |
+| `config/paths.py` | `cache_path()` and `data_path()` have no consumer in an MVP without persistence. | Keep only config-path resolution. |
+| `cli/app.py` and `cli/image.py` | Module-level apps; root `@app.default` no-op makes bare `pixgen` exit `0` silently; `info` and `doctor` are out of scope. | `build_app(application)` with generic `image` and `model` sub-apps and no root default. |
+| `__init__.py` | Imports the CLI at package import. Ruff's `extend-exclude` skips `__init__.py`, so it is never linted. | Version metadata only; console entry point `pixgen.cli.app:main`. |
+| `pyproject.toml` | `pydantic-settings[yaml]` extra is unused (TOML uses the standard library). Pillow, keyring, sqlmodel, and stamina are not needed for the MVP. | Plain `pydantic-settings`; add `google-genai`. Remove `pillow`, `keyring`, `sqlmodel`, `stamina`. |
+
+Apply the repository conventions to every Python module changed during manual
+implementation: module docstrings, future annotations, sorted `__all__`,
+runtime-checkable protocols, documented Pydantic fields, and fully typed public
+functions. Ruff does not currently select the `D` (pydocstyle) rules and
+excludes `__init__.py`, so docstrings are unenforced. Selecting `D` and removing
+the `__init__.py` exclusion would make the convention checkable.
+
+## Implementation references
+
+The rows below are the implementation reading list. Versions are those pinned
+in the current lockfile unless the dependency is intentionally not present.
+Use the library feature named here instead of adding an abstraction that
+duplicates it.
+
+| Library | Version | Use in Pixgen | Primary documentation |
+| --- | --- | --- | --- |
+| Cyclopts | 4.25.2 | Build named `image` and `model` `App` objects and register them on the root. Let Cyclopts provide `--help`, `-h`, and `--version`; write command docstrings because they become help text. Keep commands eagerly registered for this small MVP. | [Help and named sub-apps](https://cyclopts.readthedocs.io/en/latest/help.html) · [lazy loading, deferred](https://cyclopts.readthedocs.io/en/latest/lazy_loading.html) |
+| Pydantic | 2.13.5 | Use frozen, `extra="forbid"` models for public contracts; discriminated unions for create versus edit; the built-in `pydantic.JsonValue` for parameter values; and `model_json_schema()` for model parameter discovery. | [Types and named recursive types](https://pydantic.dev/docs/validation/latest/concepts/types/) · [JSON Schema](https://pydantic.dev/docs/validation/latest/concepts/json_schema/) |
+| Pydantic Settings | 2.15.0 | Use `BaseSettings`, `SettingsConfigDict`, and `TomlConfigSettingsSource(settings_cls, toml_file=path)` built inside `settings_customise_sources()` to combine PlatformDirs config, the absolute `PIXGEN_CONFIG` override, and environment values. Hold API keys in `SecretStr`; never include them in serialized results. | [Settings management](https://pydantic.dev/docs/validation/latest/concepts/pydantic_settings/) |
+| httpx2 | 2.12.0 | Let `runtime.py` own one `AsyncClient` with base URL, auth header, and explicit `httpx2.Timeout`, injected into the OpenAI adapter. Add no retrying transport; test requests and error mapping with `MockTransport`. | [httpx2 repository and API](https://github.com/pydantic/httpx2) |
+| google-genai | add for MVP | Inject the official SDK client into the Gemini adapter only, built with `HttpOptions(timeout=<milliseconds>, retry_options=HttpRetryOptions(attempts=1))`. Use `client.aio.models.generate_content` with `response_modalities=["IMAGE"]` and `ImageConfig`. Follow its image-generation examples for create and image-to-image translation; expose neither SDK models nor client types outside `providers/gemini.py`. | [Gemini image generation](https://ai.google.dev/gemini-api/docs/image-generation) |
+| PlatformDirs | 4.11.8 | Resolve the platform-appropriate user config directory. Keep path selection in `config/paths.py`; do not use it to create output directories. | [PlatformDirs documentation](https://platformdirs.readthedocs.io/en/latest/) |
+| Rich | 15.0.0 | Render only human-facing tables and messages in `cli/render.py`. Instantiate consoles with explicit `stdout` or `stderr`; JSON is standard-library `json` on stdout, never Rich. | [Console API](https://rich.readthedocs.io/en/latest/console.html) |
+| Pillow | removed | No longer used; image inspection uses magic-byte sniffing. | N/A |
+| `asyncio` | Python 3.14 stdlib | Create deterministic jobs, cap active submissions with one semaphore, and collect every completed task so partial outcomes are preserved. Do not put `asyncio.run()` inside leaf commands: Cyclopts supports async commands. | [Coroutines and tasks](https://docs.python.org/3/library/asyncio-task.html) |
+
+`keyring`, `sqlmodel`, and `stamina` are not installed in the MVP. They may be
+added later for credential storage, persistence, and retry support respectively.
+
+For provider request details, use the primary vendor guides, not copied request
+models: [OpenAI image generation](https://developers.openai.com/api/docs/guides/image-generation)
+for the direct HTTP adapter and [Gemini image generation](https://ai.google.dev/gemini-api/docs/image-generation)
+for the SDK adapter. Keep the curated manifests in Pixgen even when vendor
+documentation changes; `verified_at` makes that review explicit.
+
+## Nice to have
+
+- Native provider image batches and masks.
+- OS-keyring credentials and managed provider profiles.
+- Generation history, resumable jobs, cancellation, and video generation.
+- Optional provider plugins, provider-specific CLI extensions, and lazy command
+  loading.
+- Live model discovery and an agent skill.
+- Bounded HTTPS downloads for providers that return image URLs; no MVP model
+  does.
+- A thin shared REST transport once a second REST adapter, such as an
+  OpenAI-compatible provider, exists.

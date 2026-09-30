@@ -1,60 +1,79 @@
+"""Define curated model catalogue types and image operations."""
+
+from collections.abc import Mapping
+from datetime import date
 from enum import StrEnum
-from pathlib import Path  # noqa: TC003
-from typing import Annotated
+from typing import Annotated, Self
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, StringConstraints
+from pydantic import (
+    AnyHttpUrl,
+    BaseModel,
+    ConfigDict,
+    Field,
+    JsonValue,
+    StringConstraints,
+    model_validator,
+)
 
-from pixgen.core.validation import file_exists, file_integrity
-
-# Regular expression pattern for validating model IDs
-model_id_regex = r"^[a-z0-9][a-z0-9-]*/.+$"  # namespace/model-name
+__all__: list[str] = [
+    "ImageOperation",
+    "JsonObject",
+    "JsonSchema",
+    "MediaRole",
+    "MediaRoleSpec",
+    "ModelId",
+    "ModelSpec",
+]
 
 type ModelId = Annotated[
     str,
-    StringConstraints(pattern=model_id_regex, min_length=3),
+    StringConstraints(pattern=r"^[a-z0-9][a-z0-9-]*/[a-z0-9][a-z0-9._-]*$"),
 ]
+type JsonObject = dict[str, JsonValue]
+type JsonSchema = dict[str, JsonValue]
 
 
-class MediaKind(StrEnum):
-    IMAGE = "image"
-    VIDEO = "video"
+class ImageOperation(StrEnum):
+    """Supported image operations."""
+
+    IMAGE_CREATE = "image-create"
+    IMAGE_EDIT = "image-edit"
 
 
 class MediaRole(StrEnum):
-    IMAGE = "image"
+    """Roles for media inputs."""
+
     REFERENCE = "reference"
-    MASK = "mask"
-    START_FRAME = "start-frame"
+    IMAGE = "image"
 
 
-class Capability(StrEnum):
-    TEXT_TO_IMAGE = "text-to-image"
-    REFERENCE_TO_IMAGE = "reference-to-image"
-    IMAGE_EDIT = "image-edit"
-    TEXT_TO_VIDEO = "text-to-video"
-    IMAGE_TO_VIDEO = "image-to-video"
+class MediaRoleSpec(BaseModel):
+    """Specification for a media role's constraints."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    minimum: int = Field(default=0, ge=0, description="Minimum number of inputs required")
+    maximum: int = Field(default=1, ge=1, description="Maximum number of inputs allowed")
+    formats: frozenset[str] = Field(description="Accepted lower-case decoded image formats")
+    max_bytes: int | None = Field(default=None, gt=0, description="Maximum bytes per input")
+
+    @model_validator(mode="after")
+    def _validate_cardinality(self) -> Self:
+        if self.minimum > self.maximum:
+            raise ValueError("minimum cannot exceed maximum")
+        return self
 
 
-class Operation(StrEnum):
-    IMAGE_CREATE = "image-create"
-    IMAGE_EDIT = "image-edit"
-    VIDEO_CREATE = "video-create"
+class ModelSpec(BaseModel):
+    """Specification for a curated image model."""
 
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
-class GenerationStatus(StrEnum):
-    PENDING = "pending"
-    RUNNING = "running"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
-
-
-class MediaReference(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    role: MediaRole
-    path: Annotated[
-        Path,
-        AfterValidator(file_exists),
-        AfterValidator(file_integrity),
-    ]
+    id: ModelId = Field(description="Canonical provider/model identifier")
+    display_name: str = Field(min_length=1, description="Human-readable model name")
+    operations: frozenset[ImageOperation] = Field(min_length=1, description="Supported operations")
+    media: Mapping[MediaRole, MediaRoleSpec] = Field(
+        description="Media role constraints for this model"
+    )
+    documentation_url: AnyHttpUrl = Field(description="Vendor documentation URL")
+    verified_at: date = Field(description="Date the specification was verified")

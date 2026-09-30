@@ -7,22 +7,20 @@ authors = [{ name = "Diego Gamboa", email = "difegam3@gmail.com" }]
 requires-python = ">=3.14"
 dependencies = [
     "cyclopts>=4.25.2,<5",
+    "filetype>=1.2.0",
+    "google-genai>=2.24.0",
     "httpx2>=2.12.0",
-    "keyring>=25.7.0",
-    "pillow>=12.3.0",
     "platformdirs>=4.0",
     "pydantic>=2.13.5",
-    "pydantic-settings[yaml]>=2.15.0",
+    "pydantic-settings>=2.15.0",
     "rich>=15.0.0",
-    "sqlmodel>=0.0.42",
-    "stamina>=26.1.0",
 ]
 
 [project.urls]
 Repository = "https://github.com/difegam/pixgen"
 
 [project.scripts]
-pixgen = "pixgen:main"
+pixgen = "pixgen.cli.app:main"
 
 [build-system]
 requires = ["uv_build>=0.11.21,<0.12.24"]
@@ -36,6 +34,19 @@ exclude-newer = "P7D"    # "7 days" in RFC 3339 format
 addopts = "-vvv"
 testpaths = "tests"
 pythonpath = "src"
+asyncio_mode = "auto"
 
 [dependency-groups]
-dev = ["prek>=0.5.2", "pyrefly>=1.2.0", "pytest>=9.1.1", "ruff>=0.16.6"]
+dev = [
+    "prek>=0.5.2",
+    "pyrefly>=1.2.0",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=0.24.0",
+    "ruff>=0.16.6",
+]
+
+[tool.vulture]
+min_confidence = 80
+paths = ["src", "tests"]
+ignore_names = ["cls"]
+sort_by_size = true

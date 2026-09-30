@@ -21,6 +21,11 @@ repos:
       - id: check-executables-have-shebangs
       - id: check-shebang-scripts-are-executable
 
+  - repo: https://github.com/jendrikseipp/vulture
+    rev: v2.16
+    hooks:
+      - id: vulture
+
   # Upgrade syntax to newer versions of Python
   - repo: https://github.com/asottile/pyupgrade
     rev: v3.21.2

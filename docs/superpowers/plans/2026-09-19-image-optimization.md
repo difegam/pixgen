@@ -135,9 +135,7 @@ from pixgen.output import write_error
 
 def test_json_error_is_one_document_on_stderr() -> None:
     stream = StringIO()
-    exit_code = write_error(
-        PixgenError(ErrorCode.INVALID_REQUEST, "Bad variant."), stream
-    )
+    exit_code = write_error(PixgenError(ErrorCode.INVALID_REQUEST, "Bad variant."), stream)
     assert exit_code == 2
     assert json.loads(stream.getvalue())["error"]["code"] == "invalid_request"
     assert stream.getvalue().count("\n") == 1
@@ -639,9 +637,7 @@ class FakeOptimizer:
                 staged_paths[variant.name],
                 (variant.expected_width, variant.expected_height),
             )
-            results.append(
-                EngineVariantResult(name=variant.name, completed=True)
-            )
+            results.append(EngineVariantResult(name=variant.name, completed=True))
         return EngineBatchResult(variants=tuple(results))
 
 
@@ -807,9 +803,7 @@ Also assert missing credentials produce `credential_unavailable` exit 3 and neit
 - [ ] **Step 2: Write failing HTTP upload, URL, and auth tests**
 
 ```python
-async def test_same_size_tinify_uploads_once_and_downloads_once(
-    tinify_plan, tmp_path
-) -> None:
+async def test_same_size_tinify_uploads_once_and_downloads_once(tinify_plan, tmp_path) -> None:
     requests: list[httpx2.Request] = []
 
     async def handler(request: httpx2.Request) -> httpx2.Response:
@@ -974,14 +968,22 @@ def test_optimize_help_exposes_approved_options(run_pixgen) -> None:
 
 def test_web_local_subprocess_writes_four_variants(run_pixgen, large_jpeg, tmp_path):
     completed = run_pixgen(
-        "image", "optimize", str(large_jpeg), "--web",
-        "--output-dir", str(tmp_path), "--json",
+        "image",
+        "optimize",
+        str(large_jpeg),
+        "--web",
+        "--output-dir",
+        str(tmp_path),
+        "--json",
     )
     payload = json.loads(completed.stdout)
     assert completed.returncode == 0
     assert payload["operation"] == "image.optimize"
     assert [item["name"] for item in payload["variants"]] == [
-        "thumbnail", "card", "content", "hero"
+        "thumbnail",
+        "card",
+        "content",
+        "hero",
     ]
     assert completed.stderr == ""
 ```
@@ -1096,8 +1098,13 @@ git commit -m "Diagnose image optimization engines"
 ```python
 def test_documented_web_command_runs(run_pixgen, large_jpeg, tmp_path) -> None:
     completed = run_pixgen(
-        "image", "optimize", str(large_jpeg), "--web",
-        "--output-dir", str(tmp_path), "--json",
+        "image",
+        "optimize",
+        str(large_jpeg),
+        "--web",
+        "--output-dir",
+        str(tmp_path),
+        "--json",
     )
     assert completed.returncode == 0
 

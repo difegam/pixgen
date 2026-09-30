@@ -18,7 +18,7 @@ init:
 [doc("Run the application locally")]
 [group("application")]
 run:
-    uv run app
+    uv run pixgen
 
 [doc("Run linter and formatter")]
 [group("code-quality")]
@@ -43,12 +43,10 @@ test:
     echo "🧪 Testing app...! "
     @uv run pytest --tb=short -s tests/
 
-# ⚠ Type checker: choose ONE of type-check-ty or type-check-mypy (not both)
-
-[doc("Type-check with ty (choose ty OR mypy, not both) — https://docs.astral.sh/ty/")]
+[doc("Type-check with Pyrefly, the sole type checker — https://pyrefly.org/")]
 [group("code-quality")]
-type-check-ty:
-    uv run ty check
+type-check:
+    uv run pyrefly check
 
 [doc("Update project dependencies")]
 [group("development")]

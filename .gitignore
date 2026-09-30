@@ -125,3 +125,4 @@ env.bak/
 venv.bak/
 
 code/
+.agents/*
