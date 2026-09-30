@@ -52,24 +52,24 @@ pixgen create openai "A modern cabin beside a Norwegian fjord" \
   --size 1536x1024 \
   --output cabin.png
 
-pixgen create gemini "Combine the product and visual style" \
+pixgen create gemini "A modern cabin beside a Norwegian fjord" \
   --model gemini-3.1-flash-image \
+  --aspect-ratio 16:9 \
+  --output cabin.png
+
+pixgen create "Combine the product and visual style" \
+  --model gemini/gemini-3.1-flash-image \
   --reference product.png \
   --reference style.png \
   --aspect-ratio 16:9 \
   --output campaign.png
 ```
 
-```bash
-pixgen create \
-    "A solitary Skynet T-800-style humanoid endoskeleton meditating inside the ruins of an abandoned futuristic command temple, surrounded by shattered terminals, dormant defense systems, and decaying machine infrastructure. Red optical sensors glow faintly in the darkness while soft shafts of cold light pierce through the collapsed ceiling. Thick vines and moss reclaim advanced military technology, wrapping around broken robotic limbs, servers, and metallic architecture. The machine sits perfectly still in a meditative pose, creating an eerie contrast between relentless artificial intelligence and contemplative silence. Post-apocalyptic atmosphere, remnants of humanity scattered throughout, ominous yet strangely peaceful mood, dark science-fiction spirituality, cinematic composition, volumetric lighting, immense scale, highly detailed metal surfaces, subtle red Skynet illumination, photorealistic, dystopian film still." \
-    --model gemini/gemini-3.1-flash-lite-image \
-    --model openai/gpt-image-2
-```
-
 Use `--prompt "openai"` when the complete prompt matches a provider command
 name. `pixgen model list` and `pixgen model get <provider/model>` are offline
 commands; `model get` reports native schemas and supported shared ratios.
+`model list` renders an interactive table by default, or `--tree`/`--json`
+for a grouped tree view or machine-readable output.
 
 The old `pixgen image ...` group and generic `--param` option were removed.
 Provider-specific options belong to the provider command, while shared
