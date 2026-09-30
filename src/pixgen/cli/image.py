@@ -1,9 +1,9 @@
 """Build root image operation apps and shared multi-model commands."""
 
 from pathlib import Path  # noqa: TC003
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Annotated
 
-from cyclopts import App
+from cyclopts import App, Parameter
 
 from pixgen.cli.options import ExecutionOptions
 from pixgen.cli.outcome import CliOutcome, cli_command
@@ -24,17 +24,35 @@ def build_operation_app(
     factories: tuple[ProviderCliFactory, ...],
 ) -> App:
     """Build one root operation app with shared and native commands."""
-    app = App(name="create" if operation is ImageOperation.IMAGE_CREATE else "edit")
+    app = App(
+        name="create" if operation is ImageOperation.IMAGE_CREATE else "edit",
+        group="Operations",
+    )
+
+    image_prompt = Annotated[
+        str,
+        Parameter(
+            group=(app.group_parameters,),
+            help="Prompt describing the desired image.",
+        ),
+    ]
+    model_parameter = Annotated[
+        list[str] | None,
+        Parameter(
+            group=(app.group_parameters,),
+            help="Models to use for the operation.",
+        ),
+    ]
 
     if operation is ImageOperation.IMAGE_CREATE:
 
         @app.default
         @cli_command()
         async def create(
-            prompt: str,
+            prompt: image_prompt,
             *,
             reference: list[Path] | None = None,
-            model: list[str] | None = None,
+            model: model_parameter = None,
             aspect_ratio: str | None = None,
             variants: int = 1,
             output: Path | None = None,
@@ -66,10 +84,10 @@ def build_operation_app(
         @app.default
         @cli_command()
         async def edit(
-            prompt: str,
+            prompt: image_prompt,
             *,
             image: list[Path],
-            model: list[str] | None = None,
+            model: model_parameter = None,
             aspect_ratio: str | None = None,
             variants: int = 1,
             output: Path | None = None,

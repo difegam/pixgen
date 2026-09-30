@@ -31,6 +31,13 @@ def _get_version() -> str:
         return "unknown"
 
 
+def default() -> None:
+    """Generate and edit images with curated AI models.
+
+    [Docs](https://github.com/difegam/pixgen) | [GitHub](https://github.com/difegam/pixgen)
+    """
+
+
 def build_app(
     application: ImageApplication,
     registry: ProviderRegistry,
@@ -40,14 +47,17 @@ def build_app(
     _validate_factories(registry, factories)
     app = App(
         name="pixgen",
-        help="Generate and edit images with curated AI models.",
         version=_get_version,
+        help_format="markdown",
         result_action=RESULT_ACTION,
     )
     invoker = CommandInvoker(application)
+
     app.command(build_operation_app(ImageOperation.IMAGE_CREATE, invoker, factories))
     app.command(build_operation_app(ImageOperation.IMAGE_EDIT, invoker, factories))
     app.command(build_model_app(registry))
+    app.default(default)
+
     return app
 
 

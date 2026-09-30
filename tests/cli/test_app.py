@@ -214,6 +214,23 @@ def test_root_model_list_exits_successfully(app, capsys) -> None:
     assert json.loads(capsys.readouterr().out)["models"]
 
 
+def test_root_model_ls_renders_tree(app, capsys) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        app(["model", "ls", "--tree"])
+
+    assert exc_info.value.code == 0
+    output = capsys.readouterr().out
+    assert "id: openai/gpt-image-2" in output
+    assert "ops: image-create, image-edit" in output
+
+
+def test_root_model_list_rejects_json_with_tree(app) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        app(["model", "list", "--json", "--tree"])
+
+    assert exc_info.value.code == 1
+
+
 class BrokenRegistry(ProviderRegistry):
     """Registry whose lookup fails with an unexpected bug."""
 

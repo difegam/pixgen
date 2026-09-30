@@ -10,10 +10,14 @@ from rich import box
 from rich.console import Console
 from rich.table import Table
 from rich.text import Text
+from rich.tree import Tree
 
 from pixgen.cli.progress import GenerationProgress
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
+    from pixgen.core.models import ModelSpec
     from pixgen.core.results import CommandResult, ModelGetResult, ModelListResult
 
 __all__: list[str] = [
@@ -113,8 +117,13 @@ def _display_output_path(path: Path, *, relative_output_paths: bool) -> str:
     return os.path.relpath(path, Path.cwd())
 
 
-def render_model_list_result(result: ModelListResult, *, as_json: bool) -> None:
-    """Render a ModelListResult to stdout."""
+def render_model_list_result(
+    result: ModelListResult,
+    *,
+    as_json: bool,
+    as_tree: bool = False,
+) -> None:
+    """Render a ModelListResult to stdout as JSON, a table, or a provider tree."""
     if as_json:
         sys.stdout.write(result.model_dump_json(indent=2) + "\n")
         return
@@ -123,9 +132,46 @@ def render_model_list_result(result: ModelListResult, *, as_json: bool) -> None:
         _stderr_console.print(f"Error: {result.error.message}")
         return
 
-    for model in result.models:
-        ops = ", ".join(sorted(model.operations))
-        _stdout_console.print(f"{model.id} — {model.display_name} [{ops}]")
+    if as_tree:
+        _stdout_console.print(_model_tree(result.models))
+    else:
+        _stdout_console.print(_model_table(result.models))
+
+
+def _operations_label(model: ModelSpec) -> str:
+    return ", ".join(sorted(model.operations))
+
+
+def _model_table(models: Iterable[ModelSpec]) -> Table:
+
+    table = Table(box=box.SIMPLE, header_style="bold", highlight=False)
+    table.add_column("Provider", justify="left", style="green")
+    table.add_column("Model", justify="left")
+    table.add_column("ID", no_wrap=True)
+    table.add_column("Operations", justify="left")
+
+    for model in models:
+        table.add_row(
+            model.provider,
+            model.display_name,
+            model.id,
+            _operations_label(model),
+        )
+    return table
+
+
+def _model_tree(models: Iterable[ModelSpec]) -> Tree:
+    tree = Tree(Text("Models"), hide_root=True)
+    providers: dict[str, Tree] = {}
+    for model in models:
+        provider = providers.get(model.provider)
+        if provider is None:
+            provider = tree.add(Text(model.provider, style="green"))
+            providers[model.provider] = provider
+        branch = provider.add(Text(model.display_name, style="cyan"))
+        branch.add(Text(f"id: {model.id}"))
+        branch.add(Text(f"ops: [{_operations_label(model)}"))
+    return tree
 
 
 def render_model_get_result(result: ModelGetResult, *, as_json: bool) -> None:

@@ -6,7 +6,9 @@ from rich.console import Console
 
 from pixgen.cli import render
 from pixgen.core.errors import ErrorCode
-from pixgen.core.results import CommandResult, PublicError, TargetResult
+from pixgen.core.models import ImageOperation
+from pixgen.core.results import CommandResult, ModelListResult, PublicError, TargetResult
+from tests.factories import make_model_spec
 
 
 def _console(*, interactive: bool) -> Console:
@@ -123,3 +125,62 @@ def test_create_generation_progress_requires_both_interactive_streams(
     monkeypatch.setattr(render, "_stderr_console", _console(interactive=stderr_interactive))
 
     assert render.create_generation_progress(as_json=False) is None
+
+
+def _model_list_result() -> ModelListResult:
+    return ModelListResult(
+        models=(
+            make_model_spec(),
+            make_model_spec(
+                model_id="gemini/gemini-3-pro-image",
+                display_name="Gemini [Literal]",
+                operations=frozenset({ImageOperation.IMAGE_CREATE}),
+            ),
+        )
+    )
+
+
+class TestRenderModelListResult:
+    """Tests for model list rendering."""
+
+    def test_renders_table_by_default(self, monkeypatch) -> None:
+        stdout = _console(interactive=False)
+        monkeypatch.setattr(render, "_stdout_console", stdout)
+
+        render.render_model_list_result(_model_list_result(), as_json=False)
+
+        output = stdout.export_text()
+        for header in ("Provider", "Model", "ID", "Operations"):
+            assert header in output
+        assert "openai/gpt-image-2" in output
+        assert "GPT Image 2" in output
+        assert "image-create, image-edit" in output
+        assert "gemini/gemini-3-pro-image" in output
+        assert "Gemini [Literal]" in output
+
+    def test_renders_tree_grouped_by_provider(self, monkeypatch) -> None:
+        stdout = _console(interactive=False)
+        monkeypatch.setattr(render, "_stdout_console", stdout)
+
+        render.render_model_list_result(_model_list_result(), as_json=False, as_tree=True)
+
+        output = stdout.export_text()
+        lines = output.splitlines()
+        assert lines[0].strip() == "openai"
+        assert "└── GPT Image 2" in output
+        assert "├── id: openai/gpt-image-2" in output
+        assert "└── ops: image-create, image-edit" in output
+        assert "gemini" in lines
+        assert "id: gemini/gemini-3-pro-image" in output
+        assert "ops: image-create" in output
+        assert "Operations" not in output
+
+    def test_json_output_ignores_layout(self, monkeypatch, capsys) -> None:
+        stdout = _console(interactive=False)
+        monkeypatch.setattr(render, "_stdout_console", stdout)
+        result = _model_list_result()
+
+        render.render_model_list_result(result, as_json=True)
+
+        assert capsys.readouterr().out == result.model_dump_json(indent=2) + "\n"
+        assert stdout.export_text() == ""

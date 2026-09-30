@@ -63,6 +63,7 @@ class CliOutcome:
     result: PublicResult
     as_json: bool
     relative_output_paths: bool = False
+    as_tree: bool = False
 
     def __cyclopts_returncode__(self) -> int:
         return exit_status(self.result)
@@ -82,7 +83,7 @@ def render_outcome[T](outcome: T) -> T:
         case ModelGetResult() as result:
             render_model_get_result(result, as_json=outcome.as_json)
         case ModelListResult() as result:
-            render_model_list_result(result, as_json=outcome.as_json)
+            render_model_list_result(result, as_json=outcome.as_json, as_tree=outcome.as_tree)
     return outcome
 
 
