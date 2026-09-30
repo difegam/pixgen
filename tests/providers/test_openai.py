@@ -8,10 +8,11 @@ import pytest
 
 from pixgen.core.errors import ErrorCode
 from pixgen.core.models import ImageOperation, MediaRole
-from pixgen.core.requests import ImageCreateIntent
+from pixgen.core.requests import ImageCreateIntent, ValidatedImageRequest
 from pixgen.images.models import LocalImage
 from pixgen.providers.base import PreparedImageRequest, PreparedMedia
-from pixgen.providers.openai import OPENAI_MODELS, OpenAIParams, OpenAIProvider
+from pixgen.providers.openai import OPENAI_CATALOGUE, OPENAI_MODELS, OpenAIParams, OpenAIProvider
+from pixgen.providers.registry import ProviderRegistry
 
 
 def _make_local_image(
@@ -27,6 +28,12 @@ def _make_local_image(
         content=content,
         media_type=media_type,
     )
+
+
+def _validate(*, intent, model, parameters=None) -> ValidatedImageRequest:
+    """Validate a request through a registry holding the OpenAI adapter."""
+    registry = ProviderRegistry((OpenAIProvider(None),))
+    return registry.validate(intent=intent, model_id=model.id, parameters=parameters)
 
 
 class TestOpenAIParams:
@@ -54,16 +61,24 @@ class TestOpenAIParams:
             OpenAIParams(output_compression=True)
 
     def test_invalid_parameter_has_safe_provider_error(self) -> None:
-        provider = OpenAIProvider(None)
 
         with pytest.raises(Exception) as exc_info:  # noqa: PT011
-            provider.validate(
-                intent=ImageCreateIntent(prompt="test", params={"quality": "bogus"}),
+            _validate(
+                intent=ImageCreateIntent(prompt="test"),
                 model=OPENAI_MODELS[0],
+                parameters=OpenAIParams.model_construct(quality="bogus"),
             )
 
         assert exc_info.value.code == ErrorCode.INVALID_REQUEST
         assert "bogus" not in str(exc_info.value)
+
+    def test_mini_model_rejects_unsupported_native_size(self) -> None:
+        with pytest.raises(Exception, match="invalid parameters"):
+            _validate(
+                intent=ImageCreateIntent(prompt="test"),
+                model=OPENAI_MODELS[1],
+                parameters=OpenAIParams(size="1536x864"),
+            )
 
 
 class TestOpenAIProvider:
@@ -71,8 +86,8 @@ class TestOpenAIProvider:
 
     def test_models_returns_catalog(self) -> None:
         provider = OpenAIProvider(None)
-        assert provider.models() == OPENAI_MODELS
-        assert len(provider.models()) == 2
+        assert provider.catalogue == OPENAI_CATALOGUE
+        assert len(provider.catalogue) == 2
 
     def test_available_false_without_client(self) -> None:
         provider = OpenAIProvider(None)
@@ -84,35 +99,34 @@ class TestOpenAIProvider:
         assert provider.available is True
 
     def test_validate_returns_validated_request(self) -> None:
-        provider = OpenAIProvider(None)
-        intent = ImageCreateIntent(
-            prompt="test",
-            params={"quality": "high"},
-        )
+        intent = ImageCreateIntent(prompt="test")
         model = OPENAI_MODELS[0]
-        result = provider.validate(intent=intent, model=model)
+        result = _validate(intent=intent, model=model, parameters=OpenAIParams(quality="high"))
         assert result.intent is intent
         assert result.model is model
-        assert result.parameters["quality"] == "high"
+        assert result.parameters == OpenAIParams(quality="high")
 
     def test_declared_media_type_with_output_format(self) -> None:
         provider = OpenAIProvider(None)
         intent = ImageCreateIntent(prompt="test")
         model = OPENAI_MODELS[0]
-        request = provider.validate(intent=intent, model=model)
-        request = request.model_copy(update={"parameters": {"output_format": "jpeg"}})
+        request = _validate(
+            intent=intent, model=model, parameters=OpenAIParams(output_format="jpeg")
+        )
         assert provider.declared_media_type(request) == "image/jpeg"
 
     def test_declared_media_type_none_without_format(self) -> None:
         provider = OpenAIProvider(None)
         intent = ImageCreateIntent(prompt="test")
         model = OPENAI_MODELS[0]
-        request = provider.validate(intent=intent, model=model)
+        request = _validate(intent=intent, model=model)
         assert provider.declared_media_type(request) is None
 
     def test_parameter_schema_returns_json_schema(self) -> None:
         provider = OpenAIProvider(None)
-        schema: dict = provider.parameter_schema("openai/gpt-image-2", ImageOperation.IMAGE_CREATE)
+        schema: dict = ProviderRegistry((provider,)).parameter_schema(
+            "openai/gpt-image-2", ImageOperation.IMAGE_CREATE
+        )
         assert "properties" in schema
         assert "quality" in schema["properties"]
 
@@ -121,7 +135,7 @@ class TestOpenAIProvider:
         provider = OpenAIProvider(None)
         intent = ImageCreateIntent(prompt="test")
         model = OPENAI_MODELS[0]
-        request = provider.validate(intent=intent, model=model)
+        request = _validate(intent=intent, model=model)
         prepared = PreparedImageRequest(request=request, media=())
         with pytest.raises(Exception, match="credential"):
             await provider.generate(prepared)
@@ -144,7 +158,7 @@ class TestOpenAIProvider:
 
         intent = ImageCreateIntent(prompt="test prompt")
         model = OPENAI_MODELS[0]
-        request = provider.validate(intent=intent, model=model)
+        request = _validate(intent=intent, model=model)
         prepared = PreparedImageRequest(request=request, media=())
 
         result = await provider.generate(prepared)
@@ -164,11 +178,31 @@ class TestOpenAIProvider:
         client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
         provider = OpenAIProvider(client)
         intent = ImageCreateIntent(prompt="test prompt")
-        request = provider.validate(intent=intent, model=selected_model)
+        request = _validate(intent=intent, model=selected_model)
 
         await provider.generate(PreparedImageRequest(request=request, media=()))
 
         assert json.loads(observed_models[0])["model"] == "gpt-image-1-mini"
+
+    @pytest.mark.asyncio
+    async def test_generate_json_sends_only_set_parameters(self) -> None:
+        b64_data = base64.b64encode(b"fake image data").decode()
+        payloads: list[dict[str, object]] = []
+
+        def handler(request: httpx2.Request) -> httpx2.Response:
+            payloads.append(json.loads(request.read()))
+            return httpx2.Response(200, json={"data": [{"b64_json": b64_data}]})
+
+        provider = OpenAIProvider(httpx2.AsyncClient(transport=httpx2.MockTransport(handler)))
+        request = _validate(
+            intent=ImageCreateIntent(prompt="test prompt"),
+            model=OPENAI_MODELS[0],
+            parameters=OpenAIParams(quality="high"),
+        )
+
+        await provider.generate(PreparedImageRequest(request=request, media=()))
+
+        assert payloads == [{"model": "gpt-image-2", "prompt": "test prompt", "quality": "high"}]
 
     @pytest.mark.asyncio
     async def test_invalid_image_response_is_safe_provider_error(self) -> None:
@@ -176,7 +210,7 @@ class TestOpenAIProvider:
             return httpx2.Response(200, json={"data": [{"b64_json": "not-base64"}]})
 
         provider = OpenAIProvider(httpx2.AsyncClient(transport=httpx2.MockTransport(handler)))
-        request = provider.validate(intent=ImageCreateIntent(prompt="test"), model=OPENAI_MODELS[0])
+        request = _validate(intent=ImageCreateIntent(prompt="test"), model=OPENAI_MODELS[0])
 
         with pytest.raises(Exception) as exc_info:  # noqa: PT011
             await provider.generate(PreparedImageRequest(request=request, media=()))
@@ -202,7 +236,7 @@ class TestOpenAIProvider:
 
         intent = ImageCreateIntent(prompt="test", references=("/tmp/ref.png",))  # noqa: S108
         model = OPENAI_MODELS[0]
-        request = provider.validate(intent=intent, model=model)
+        request = _validate(intent=intent, model=model)
         local_image = _make_local_image()
         media = (PreparedMedia(role=MediaRole.REFERENCE, image=local_image),)
         prepared = PreparedImageRequest(request=request, media=media)
@@ -222,7 +256,7 @@ class TestOpenAIProvider:
 
         intent = ImageCreateIntent(prompt="test")
         model = OPENAI_MODELS[0]
-        request = provider.validate(intent=intent, model=model)
+        request = _validate(intent=intent, model=model)
         prepared = PreparedImageRequest(request=request, media=())
 
         with pytest.raises(Exception) as exc_info:  # noqa: PT011

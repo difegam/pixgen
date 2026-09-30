@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import httpx2
@@ -5,7 +6,9 @@ import httpx2
 from pixgen.application import ImageApplication
 from pixgen.config.models import Settings, load_settings
 from pixgen.providers.gemini import GeminiProvider
+from pixgen.providers.gemini_cli import GeminiCliFactory
 from pixgen.providers.openai import OpenAIProvider
+from pixgen.providers.openai_cli import OpenAICliFactory
 from pixgen.providers.registry import ProviderRegistry
 
 if TYPE_CHECKING:
@@ -14,9 +17,22 @@ if TYPE_CHECKING:
     from google.genai import Client
     from pydantic import SecretStr
 
+    from pixgen.cli.contracts import ProviderCliFactory
+
 __all__: list[str] = [
+    "Runtime",
     "build_runtime",
 ]
+
+
+@dataclass(frozen=True, slots=True)
+class Runtime:
+    """Hold application dependencies assembled for one CLI invocation."""
+
+    application: ImageApplication
+    registry: ProviderRegistry
+    settings: Settings
+    cli_factories: tuple[ProviderCliFactory, ...]
 
 
 def get_open_ai_factory(
@@ -58,7 +74,7 @@ def get_gemini_factory(
     return make_gemini_client
 
 
-def build_runtime() -> tuple[ImageApplication, ProviderRegistry, Settings]:
+def build_runtime() -> Runtime:
     """Construct settings, provider clients, registry, and application."""
     settings = load_settings()
 
@@ -79,4 +95,9 @@ def build_runtime() -> tuple[ImageApplication, ProviderRegistry, Settings]:
     registry = ProviderRegistry((openai_provider, gemini_provider))
     application = ImageApplication(registry, settings)
 
-    return application, registry, settings
+    return Runtime(
+        application=application,
+        registry=registry,
+        settings=settings,
+        cli_factories=(OpenAICliFactory(), GeminiCliFactory()),
+    )

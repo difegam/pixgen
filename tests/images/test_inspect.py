@@ -1,11 +1,11 @@
 """Tests for images.inspect."""
 
-from types import SimpleNamespace
+from io import BytesIO
 from typing import TYPE_CHECKING
 
 import pytest
+from PIL import Image
 
-from pixgen.images import inspect
 from pixgen.images.inspect import load_image
 from pixgen.images.models import ImageInputError, LocalImage
 
@@ -13,46 +13,33 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
+def _encode(fmt: str) -> bytes:
+    """Encode a minimal 1x1 image in the given Pillow format."""
+    buffer = BytesIO()
+    Image.new("RGB", (1, 1), color=(255, 0, 0)).save(buffer, format=fmt)
+    return buffer.getvalue()
+
+
 @pytest.fixture
 def png_bytes() -> bytes:
     """Minimal valid PNG file bytes."""
-    return (
-        b"\x89PNG\r\n\x1a\n"
-        b"\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
-        b"\x08\x02\x00\x00\x00\x90wS\xde"
-    )
+    return _encode("PNG")
 
 
 @pytest.fixture
 def jpeg_bytes() -> bytes:
     """Minimal valid JPEG file bytes."""
-    return b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00\xff\xd9"
+    return _encode("JPEG")
 
 
 @pytest.fixture
 def webp_bytes() -> bytes:
     """Minimal valid WebP file bytes."""
-    return b"RIFF\x00\x00\x00\x00WEBPVP8 \x00\x00\x00\x00"
+    return _encode("WEBP")
 
 
 class TestLoadImage:
     """Tests for load_image function."""
-
-    def test_uses_filetype_detected_mime(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        path = tmp_path / "detected-image"
-        path.write_bytes(b"image bytes delegated to filetype")
-        monkeypatch.setattr(
-            inspect,
-            "filetype",
-            SimpleNamespace(guess=lambda _content: SimpleNamespace(mime="image/png")),
-            raising=False,
-        )
-
-        result = inspect.load_image(path)
-
-        assert result.media_type == "image/png"
 
     def test_load_png(self, tmp_path: Path, png_bytes: bytes) -> None:
         path = tmp_path / "test.png"
@@ -102,6 +89,12 @@ class TestLoadImage:
         path = tmp_path / "unknown.xyz"
         path.write_bytes(b"not an image")
         with pytest.raises(ImageInputError, match="unrecognised"):
+            load_image(path)
+
+    def test_truncated_image_raises(self, tmp_path: Path, png_bytes: bytes) -> None:
+        path = tmp_path / "corrupt.png"
+        path.write_bytes(png_bytes[:-20])
+        with pytest.raises(ImageInputError, match="corrupt"):
             load_image(path)
 
     def test_preserves_original_bytes(self, tmp_path: Path, png_bytes: bytes) -> None:

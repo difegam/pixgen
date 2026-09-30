@@ -121,5 +121,5 @@ def load_settings() -> Settings:
     """Load settings, mapping validation errors to PixgenError."""
     try:
         return Settings()
-    except (OSError, tomllib.TOMLDecodeError, ValidationError) as exc:
+    except (OSError, tomllib.TOMLDecodeError, ValidationError, ValueError) as exc:
         raise PixgenError(ErrorCode.INVALID_CONFIGURATION, str(exc)) from exc

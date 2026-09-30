@@ -7,9 +7,9 @@ authors = [{ name = "Diego Gamboa", email = "difegam3@gmail.com" }]
 requires-python = ">=3.14"
 dependencies = [
     "cyclopts>=4.25.2,<5",
-    "filetype>=1.2.0",
     "google-genai>=2.24.0",
     "httpx2>=2.12.0",
+    "pillow>=12.3.0",
     "platformdirs>=4.0",
     "pydantic>=2.13.5",
     "pydantic-settings>=2.15.0",
@@ -35,6 +35,9 @@ addopts = "-vvv"
 testpaths = "tests"
 pythonpath = "src"
 asyncio_mode = "auto"
+filterwarnings = [
+    "ignore:'_UnionGenericAlias' is deprecated:DeprecationWarning:google.genai.types",
+]
 
 [dependency-groups]
 dev = [

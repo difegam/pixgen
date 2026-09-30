@@ -3,19 +3,17 @@
 from datetime import date
 from typing import TYPE_CHECKING, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import Field
 
-from pixgen.core.errors import ErrorCode, PixgenError, ProviderError, validation_message
+from pixgen.core.definitions import ModelDefinition
+from pixgen.core.errors import ErrorCode, PixgenError, ProviderError
 from pixgen.core.models import (
     ImageOperation,
-    JsonObject,
-    JsonSchema,
     MediaRole,
     MediaRoleSpec,
-    ModelId,
     ModelSpec,
 )
-from pixgen.core.requests import ImageIntent, ValidatedImageRequest
+from pixgen.core.parameters import ProviderParams
 from pixgen.providers.base import PreparedImageRequest, ProviderImage
 
 if TYPE_CHECKING:
@@ -23,21 +21,23 @@ if TYPE_CHECKING:
 
     from google.genai import Client
 
+    from pixgen.core.requests import ValidatedImageRequest
+
 __all__: list[str] = [
+    "GEMINI_CATALOGUE",
     "GEMINI_MODELS",
+    "GeminiParams",
     "GeminiProvider",
 ]
 
-type AspectRatio = Literal["1:1", "2:3", "3:2", "3:4", "4:3", "9:16", "16:9", "21:9"]
+type GeminiAspectRatio = Literal["1:1", "2:3", "3:2", "3:4", "4:3", "9:16", "16:9", "21:9"]
 type ImageSize = Literal["1K", "2K", "4K"]
 
 
-class GeminiParams(BaseModel):
+class GeminiParams(ProviderParams):
     """Validated parameters for Gemini image models."""
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    aspect_ratio: AspectRatio | None = Field(
+    aspect_ratio: GeminiAspectRatio | None = Field(
         default=None,
         description="Aspect ratio of generated image",
     )
@@ -53,19 +53,26 @@ class GeminiLiteParams(GeminiParams):
     image_size: Literal["1K"] | None = Field(default=None, description="Image size")
 
 
-def _parameter_model(model: ModelId) -> type[GeminiParams]:
-    """Return the parameter model for a curated Gemini model."""
-    if model == "gemini/gemini-3.1-flash-lite-image":
-        return GeminiLiteParams
-    return GeminiParams
+_GEMINI_SHARED_RATIOS: dict[str, GeminiAspectRatio] = {
+    "1:1": "1:1",
+    "2:3": "2:3",
+    "3:2": "3:2",
+    "3:4": "3:4",
+    "4:3": "4:3",
+    "9:16": "9:16",
+    "16:9": "16:9",
+    "7:3": "21:9",
+}
 
 
-def _make_gemini_spec(
+def _gemini_definition(
     model_id: str,
     display_name: str,
+    *,
     max_refs: int,
-) -> ModelSpec:
-    """Create a Gemini model specification."""
+    parameter_type: type[GeminiParams] = GeminiParams,
+) -> ModelDefinition[GeminiParams]:
+    """Define one Gemini model."""
     ref_spec = MediaRoleSpec(
         minimum=0,
         maximum=max_refs,
@@ -78,7 +85,9 @@ def _make_gemini_spec(
         formats=frozenset({"png", "jpeg", "webp"}),
         max_bytes=20_971_520,
     )
-    return ModelSpec(
+
+    # Model specification for the Gemini image model.
+    spec = ModelSpec(
         id=model_id,
         display_name=display_name,
         operations=frozenset({ImageOperation.IMAGE_CREATE, ImageOperation.IMAGE_EDIT}),
@@ -87,28 +96,45 @@ def _make_gemini_spec(
         verified_at=date(2026, 9, 24),
     )
 
+    return ModelDefinition[GeminiParams](
+        spec=spec,
+        parameter_type=parameter_type,
+        defaults=parameter_type(),
+        aspect_ratios={
+            shared: {"aspect_ratio": native} for shared, native in _GEMINI_SHARED_RATIOS.items()
+        },
+    )
 
-GEMINI_MODELS: tuple[ModelSpec, ...] = (
-    _make_gemini_spec("gemini/gemini-3.1-flash-image", "Gemini 3.1 Flash Image", max_refs=10),
-    _make_gemini_spec(
+
+# Define the Gemini catalogue of model definitions.
+GEMINI_CATALOGUE: tuple[ModelDefinition[GeminiParams], ...] = (
+    _gemini_definition(
+        "gemini/gemini-3.1-flash-image",
+        "Gemini 3.1 Flash Image",
+        max_refs=10,
+    ),
+    _gemini_definition(
         "gemini/gemini-3.1-flash-lite-image",
         "Gemini 3.1 Flash Lite Image",
         max_refs=14,
+        parameter_type=GeminiLiteParams,
     ),
-    _make_gemini_spec("gemini/gemini-3-pro-image", "Gemini 3 Pro Image", max_refs=6),
+    _gemini_definition(
+        "gemini/gemini-3-pro-image",
+        "Gemini 3 Pro Image",
+        max_refs=6,
+    ),
 )
 
-_GEMINI_IMAGE_SIZES: dict[ModelId, tuple[str, ...]] = {
-    "gemini/gemini-3.1-flash-image": ("1K", "2K", "4K"),
-    "gemini/gemini-3.1-flash-lite-image": ("1K",),
-    "gemini/gemini-3-pro-image": ("1K", "2K", "4K"),
-}
+# Extract the model specifications from the Gemini catalogue.
+GEMINI_MODELS: tuple[ModelSpec, ...] = tuple(definition.spec for definition in GEMINI_CATALOGUE)
 
 
 class GeminiProvider:
     """Gemini image generation provider."""
 
     name = "gemini"
+    catalogue = GEMINI_CATALOGUE
 
     def __init__(
         self,
@@ -132,29 +158,6 @@ class GeminiProvider:
             self._client = self._client_factory()
         return self._client
 
-    def models(self) -> tuple[ModelSpec, ...]:
-        return GEMINI_MODELS
-
-    def parameter_schema(
-        self,
-        model: ModelId,
-        operation: ImageOperation,  # noqa: ARG002
-    ) -> JsonSchema:
-        return _parameter_model(model).model_json_schema()
-
-    def validate(
-        self,
-        *,
-        intent: ImageIntent,
-        model: ModelSpec,
-    ) -> ValidatedImageRequest:
-        try:
-            params = _parameter_model(model.id).model_validate(intent.params)
-        except ValidationError as exc:
-            raise PixgenError(ErrorCode.INVALID_REQUEST, validation_message(exc)) from exc
-        parameters: JsonObject = params.model_dump(exclude_none=True)
-        return ValidatedImageRequest(intent=intent, model=model, parameters=parameters)
-
     def declared_media_type(self, request: ValidatedImageRequest) -> str | None:  # noqa: ARG002
         return None
 
@@ -164,14 +167,14 @@ class GeminiProvider:
         from google.genai import types
 
         intent = request.request.intent
-        params = request.request.parameters
+        params = request.request.parameters.model_dump(exclude_none=True)
         model_id = (
             request.request.model.id.split("/")[1]
             if "/" in request.request.model.id
             else request.request.model.id
         )
 
-        contents: list[types.Content | types.Part | str] = [intent.prompt]
+        contents: list[types.PartUnionDict] = [intent.prompt]
         contents.extend(
             types.Part.from_bytes(
                 data=media.image.content,

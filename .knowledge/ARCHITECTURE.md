@@ -37,8 +37,15 @@ flowchart LR
 ### CLI
 
 `src/pixgen/cli/` owns parsing, help, human rendering, JSON selection, and exit
-status. It builds generic `image` and `model` sub-apps from injected
-dependencies and never imports a provider module.
+status. It builds root `create`, `edit`, and `model` sub-apps from injected
+dependencies and never imports a concrete provider module. Shared commands use
+canonical `provider/model` IDs and `SharedImageParams`; provider sub-apps own
+their native Pydantic options and target one provider-local model. The removed
+`image` group and generic `--param` option are not compatibility aliases.
+
+The CLI receives provider factories as explicit dependencies. It validates that
+the factory list exactly covers registered providers, has unique names, and
+does not declare unsupported operations before it mounts any provider app.
 
 ### Core
 
@@ -48,9 +55,9 @@ network, or configuration work and imports no adapter.
 
 Pydantic checks field shapes only: the `ModelId` pattern, non-empty prompts,
 and at least one edit image. Model-dependent rules live elsewhere. Adapters
-validate `--param` values against their per-model parameter models.
-The application checks decoded media against each target's `MediaRoleSpec`
-after loading.
+validate typed native parameters against their per-model parameter models. The
+application checks decoded media against each target's `MediaRoleSpec` after
+loading.
 
 ### Images
 
@@ -69,8 +76,11 @@ types.
 
 `src/pixgen/providers/base.py` defines the internal `ImageProvider` protocol.
 The OpenAI and Gemini modules own their curated manifests, parameter models,
-request translation, response translation, and error mapping. Each receives an
-injected vendor client. The protocol is not a public plugin API.
+shared-ratio mapping, request translation, response translation, and error
+mapping. Each receives an injected vendor client. Providers expose explicit
+methods to resolve shared parameters and report supported shared ratios, so the
+application and registry do not inspect provider attributes dynamically. The
+protocol is not a public plugin API.
 
 ### Artifacts
 
@@ -81,10 +91,12 @@ atomic replacement.
 ### Runtime
 
 `src/pixgen/runtime.py` is the explicit composition root. It builds settings,
-the two vendor clients, the adapters, the registry, and the application, then
-the CLI. It creates only the clients the selected command needs, so `model list`
-and `model get` need no credentials or network. Clients are injected rather
-than held as global singletons.
+the two vendor client factories, adapters, registry, application, and ordered
+provider CLI factories. Its frozen `Runtime` value object carries those
+dependencies to `main()`, which passes factories to generic CLI assembly. It
+creates clients only when a provider request needs them, so `model list` and
+`model get` need no credentials or network. Clients are injected rather than
+held as global singletons.
 
 ### Configuration and credentials
 
@@ -100,6 +112,23 @@ Cyclopts runs async commands, so leaf commands are `async def` and never call
 `asyncio.run()` themselves. The application creates one job per
 `(model, variant)`, caps active submissions with one `asyncio.Semaphore`, and
 reassembles results in model-selection then variant order.
+
+## Command composition and extension
+
+Cyclopts composes named sub-apps directly. Pixgen builds one root operation app
+for each shared operation, then mounts a fresh provider-owned app for every
+factory that supports that operation. A provider command can keep a typed
+default handler while the root app retains its shared default handler.
+
+Adding a provider is an internal change: implement the provider protocol and
+its CLI factory, register both in `runtime.py`, and add provider and assembly
+tests. It does not require a branch in the generic CLI or application code.
+
+Do not add decorator registration, import-time global registries, plugin
+loaders, or fluent builders. They would hide the dependency list, make command
+order depend on imports, and weaken the explicit test seam. Add another helper
+only when a third provider demonstrates duplication that typed provider handlers
+cannot reasonably retain.
 
 ## Image data flow
 
@@ -135,24 +164,31 @@ src/pixgen/
 ├── artifacts.py
 ├── images/{models,inspect,mime}.py
 ├── config/{models,paths}.py
-├── core/{models,requests,results,errors}.py
-├── providers/{base,registry,openai,gemini}.py
-└── cli/{app,image,model,render}.py
+├── core/{definitions,models,parameters,requests,results,errors}.py
+├── providers/{base,registry,openai,gemini,openai_cli,gemini_cli}.py
+└── cli/{app,contracts,image,invoke,model,options,render}.py
 ```
 
-Do not add repositories, generic services, factories, plugin loaders, a shared
-transport, or provider subpackages until a concrete second implementation
-needs them.
+Do not add repositories, generic services, plugin loaders, a shared transport,
+or provider subpackages until a concrete second implementation needs them.
 
 ## Verification boundaries
 
-- Pure unit tests cover core types, parameter parsing, and result invariants.
+- Pure unit tests cover core types, shared-ratio resolution, and result invariants.
 - Provider tests use `httpx2.MockTransport` for OpenAI and an injected fake
   `google-genai` client for Gemini.
 - Application and CLI tests use temporary directories for artifacts and
-  configuration.
+  configuration. CLI assembly tests reject missing, unknown, duplicate, and
+  operation-incompatible factories before command parsing.
 - Live provider tests are explicitly marked and never run in ordinary CI.
 - Pyrefly is the sole type checker.
 
 `pixgen.md` records the current-versus-target divergence in "Current type
 review".
+
+## References
+
+- [Cyclopts command composition](https://github.com/brianpugh/cyclopts/blob/main/docs/source/commands.rst)
+  documents explicit named sub-app registration and default subcommands.
+- [PEP 8 public and internal interfaces](https://peps.python.org/pep-0008/#public-and-internal-interfaces)
+  explains why documented interfaces need clear boundaries.

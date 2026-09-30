@@ -1,14 +1,18 @@
 import asyncio
 import uuid
-from dataclasses import dataclass
-from typing import TYPE_CHECKING
-
-from pydantic import ValidationError
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from pixgen.artifacts import OutputPlan, plan_output, save_artifact
-from pixgen.core.errors import ErrorCode, PixgenError, ProviderError, validation_message
-from pixgen.core.params import parse_params
-from pixgen.core.requests import ImageCreateIntent, ImageIntent, ValidatedImageRequest
+from pixgen.core.errors import ErrorCode, PixgenError, ProviderError
+from pixgen.core.parameters import ProviderParams, SharedImageParams
+from pixgen.core.requests import (
+    ImageCreateIntent,
+    ImageIntent,
+    NativeSelection,
+    ParameterSelection,
+    SharedSelection,
+    ValidatedImageRequest,
+)
 from pixgen.core.results import CommandResult, PublicError, TargetResult
 from pixgen.images.inspect import load_image
 from pixgen.images.models import ImageInputError, LocalImage
@@ -22,17 +26,26 @@ if TYPE_CHECKING:
     from pixgen.providers.registry import ProviderRegistry
 
 __all__: list[str] = [
+    "GenerationObserver",
     "ImageApplication",
-    "RunOutcome",
 ]
 
 
-@dataclass(frozen=True, slots=True)
-class RunOutcome:
-    """Result of an image generation run."""
+@runtime_checkable
+class GenerationObserver(Protocol):
+    """Receive lifecycle events for one image generation run."""
 
-    result: CommandResult
-    exit_code: int
+    def run_started(self, plans: tuple[OutputPlan, ...]) -> None:
+        """Report planned targets after preflight completes."""
+        ...
+
+    def job_started(self, plan: OutputPlan) -> None:
+        """Report a target that acquired generation capacity."""
+        ...
+
+    def job_finished(self, plan: OutputPlan, result: TargetResult) -> None:
+        """Report a target's terminal result."""
+        ...
 
 
 class ImageApplication:
@@ -46,18 +59,26 @@ class ImageApplication:
         self,
         intent: ImageIntent,
         *,
-        models: list[str] | None = None,
+        selection: ParameterSelection | None = None,
         variants: int = 1,
         output: Path | None = None,
         output_dir: Path | None = None,
         mkdir: bool = False,
         force: bool = False,
         timeout_seconds: int | None = None,
-        raw_params: list[str] | None = None,
-    ) -> RunOutcome:
+        observer: GenerationObserver | None = None,
+    ) -> CommandResult:
         """Run an image generation command."""
         run_id = uuid.uuid7()
         try:
+            parameters: SharedImageParams | ProviderParams = SharedImageParams()
+            models: list[str] | None = None
+            if isinstance(selection, SharedSelection):
+                models = list(selection.models) if selection.models is not None else None
+                parameters = selection.parameters
+            elif isinstance(selection, NativeSelection):
+                models = [selection.model]
+                parameters = selection.parameters
             model_ids = self._resolve_models(intent, models)
             if not model_ids:
                 raise PixgenError(ErrorCode.INVALID_REQUEST, "at least one model must be selected")
@@ -68,7 +89,12 @@ class ImageApplication:
             self._check_provider_availability(model_ids)
             self._validate_variant_limits(len(model_ids), variants)
             images = _load_images(intent.input_paths)
-            prepared, providers = self._prepare(intent, model_ids, raw_params, images)
+            prepared, providers = self._prepare(
+                intent,
+                model_ids,
+                images,
+                parameters=parameters,
+            )
             plans = plan_output(
                 model_ids=model_ids,
                 variants=variants,
@@ -84,21 +110,15 @@ class ImageApplication:
                 },
             )
         except PixgenError as exc:
-            result = CommandResult(
+            return CommandResult(
                 run_id=run_id,
                 error=PublicError(code=exc.code, message=exc.message),
             )
-            return RunOutcome(result, 2)
 
-        results = await self._execute_jobs(plans, prepared, providers, timeout_seconds)
-        failures = sum(r.error is not None for r in results)
-        if failures == 0:
-            exit_code = 0
-        elif failures == len(results):
-            exit_code = 3
-        else:
-            exit_code = 4
-        return RunOutcome(CommandResult(run_id=run_id, results=tuple(results)), exit_code)
+        if observer is not None:
+            observer.run_started(tuple(plans))
+        results = await self._execute_jobs(plans, prepared, providers, timeout_seconds, observer)
+        return CommandResult(run_id=run_id, results=tuple(results))
 
     def _resolve_models(self, intent: ImageIntent, explicit: list[str] | None) -> list[str]:
         if explicit:
@@ -136,42 +156,17 @@ class ImageApplication:
         self,
         intent: ImageIntent,
         model_ids: list[str],
-        raw_params: list[str] | None,
         images: tuple[LocalImage, ...],
+        *,
+        parameters: SharedImageParams | ProviderParams,
     ) -> tuple[dict[ModelId, PreparedImageRequest], dict[ModelId, ImageProvider]]:
-        parsed_params = parse_params(raw_params or [], set(model_ids))
-        unscoped = parsed_params.get(None, {})
         media = tuple(PreparedMedia(role=intent.media_role, image=img) for img in images)
 
         providers = {mid: self._registry.provider_for(mid) for mid in model_ids}
 
         prepared: dict[ModelId, PreparedImageRequest] = {}
-        for mid, provider in providers.items():
-            model_spec = self._registry.get_model(mid)
-            if intent.operation not in model_spec.operations:
-                raise PixgenError(
-                    ErrorCode.INVALID_REQUEST,
-                    f"model {mid} does not support {intent.operation.value}",
-                )
-            params = {**unscoped, **parsed_params.get(mid, {})}
-            overlapping = set(intent.params).intersection(params)
-            if overlapping:
-                names = ", ".join(sorted(overlapping))
-                raise PixgenError(
-                    ErrorCode.INVALID_REQUEST,
-                    f"parameter already supplied by intent: {names}",
-                )
-            resolved_params = {**intent.params, **params}
-            intent_with_params = type(intent).model_validate(
-                {**intent.model_dump(), "params": resolved_params}
-            )
-            try:
-                request = provider.validate(
-                    intent=intent_with_params,
-                    model=model_spec,
-                )
-            except ValidationError as exc:
-                raise PixgenError(ErrorCode.INVALID_REQUEST, validation_message(exc)) from exc
+        for mid in providers:
+            request = self._registry.validate(intent=intent, model_id=mid, parameters=parameters)
             _validate_media(request, images)
             prepared[mid] = PreparedImageRequest(request=request, media=media)
         return prepared, providers
@@ -182,6 +177,7 @@ class ImageApplication:
         prepared: dict[ModelId, PreparedImageRequest],
         providers: dict[ModelId, ImageProvider],
         timeout_seconds: int | None,
+        observer: GenerationObserver | None,
     ) -> list[TargetResult]:
         generation = self._settings.generation
         semaphore = asyncio.Semaphore(generation.max_parallel_requests)
@@ -201,6 +197,7 @@ class ImageApplication:
                                 providers[plan.model_id],
                                 semaphore,
                                 request_timeout,
+                                observer,
                             )
                         )
                         for plan in plans
@@ -213,16 +210,17 @@ class ImageApplication:
             if not task.cancelled():
                 results.append(task.result())
             else:
-                results.append(
-                    TargetResult(
-                        model=plan.model_id,
-                        variant=plan.variant,
-                        error=PublicError(
-                            code=ErrorCode.TIMEOUT,
-                            message="run deadline exceeded",
-                        ),
-                    )
+                result = TargetResult(
+                    model=plan.model_id,
+                    variant=plan.variant,
+                    error=PublicError(
+                        code=ErrorCode.TIMEOUT,
+                        message="run deadline exceeded",
+                    ),
                 )
+                if observer is not None:
+                    observer.job_finished(plan, result)
+                results.append(result)
         return results
 
 
@@ -276,8 +274,11 @@ async def _run_job(
     provider: ImageProvider,
     semaphore: asyncio.Semaphore,
     request_timeout: int,
+    observer: GenerationObserver | None,
 ) -> TargetResult:
     async with semaphore:
+        if observer is not None:
+            observer.job_started(plan)
         try:
             async with asyncio.timeout(request_timeout):
                 image = await provider.generate(prepared)
@@ -297,11 +298,17 @@ async def _run_job(
                 message="unexpected provider failure",
             )
         else:
-            return TargetResult(
+            result = TargetResult(
                 model=plan.model_id,
                 variant=plan.variant,
                 artifact_path=publication.path,
                 media_type=image.media_type,
                 warnings=publication.warnings,
             )
-    return TargetResult(model=plan.model_id, variant=plan.variant, error=error)
+            if observer is not None:
+                observer.job_finished(plan, result)
+            return result
+        result = TargetResult(model=plan.model_id, variant=plan.variant, error=error)
+        if observer is not None:
+            observer.job_finished(plan, result)
+        return result

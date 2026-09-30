@@ -8,20 +8,19 @@ from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, ValidationError
 
-from pixgen.core.errors import ErrorCode, PixgenError, ProviderError, validation_message
+from pixgen.core.definitions import ModelDefinition
+from pixgen.core.errors import ErrorCode, PixgenError, ProviderError
 from pixgen.core.models import (
     ImageOperation,
     JsonObject,
-    JsonSchema,
     MediaRole,
     MediaRoleSpec,
-    ModelId,
     ModelSpec,
 )
+from pixgen.core.parameters import ProviderParams
 from pixgen.core.requests import (
     ImageCreateIntent,
     ImageEditIntent,
-    ImageIntent,
     ValidatedImageRequest,
 )
 from pixgen.providers.base import (
@@ -35,17 +34,17 @@ if TYPE_CHECKING:
     import httpx2
 
 __all__: list[str] = [
+    "OPENAI_CATALOGUE",
     "OPENAI_MODELS",
+    "OpenAIParams",
     "OpenAIProvider",
 ]
 
 _OPENAI_BASE_URL = "https://api.openai.com/v1"
 
 
-class OpenAIParams(BaseModel):
+class OpenAIParams(ProviderParams):
     """Validated parameters for OpenAI image models."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
 
     size: str | None = Field(default=None, description="Image size preset or WxH")
     quality: Literal["low", "medium", "high", "auto"] | None = Field(
@@ -62,6 +61,15 @@ class OpenAIParams(BaseModel):
     )
     moderation: Literal["auto", "low"] | None = Field(
         default=None, description="Content moderation level"
+    )
+
+
+class OpenAIMiniParams(OpenAIParams):
+    """Parameters supported by the GPT Image 1 Mini model."""
+
+    size: Literal["1024x1024", "1024x1536", "1536x1024"] | None = Field(
+        default=None,
+        description="Image size preset",
     )
 
 
@@ -82,12 +90,27 @@ class _OpenAIImageResponse(BaseModel):
     output_format: Literal["png", "jpeg", "webp"] = "png"
 
 
-def _make_openai_spec(
+_OPENAI_RATIO_SIZES: dict[str, str] = {
+    "1:1": "1024x1024",
+    "2:3": "1024x1536",
+    "3:2": "1536x1024",
+    "3:4": "864x1152",
+    "4:3": "1152x864",
+    "9:16": "864x1536",
+    "16:9": "1536x864",
+    "7:3": "1792x768",
+}
+
+
+def _openai_definition(
     model_id: str,
     display_name: str,
-) -> ModelSpec:
-    """Create an OpenAI model specification."""
-    media_spec = MediaRoleSpec(
+    *,
+    parameter_type: type[OpenAIParams],
+    ratios: tuple[str, ...] = tuple(_OPENAI_RATIO_SIZES),
+) -> ModelDefinition[OpenAIParams]:
+    """Define one OpenAI model."""
+    reference_spec = MediaRoleSpec(
         minimum=0,
         maximum=16,
         formats=frozenset({"png", "jpeg", "webp"}),
@@ -99,26 +122,44 @@ def _make_openai_spec(
         formats=frozenset({"png", "jpeg", "webp"}),
         max_bytes=52_428_800,
     )
-    return ModelSpec(
+    spec = ModelSpec(
         id=model_id,
         display_name=display_name,
         operations=frozenset({ImageOperation.IMAGE_CREATE, ImageOperation.IMAGE_EDIT}),
-        media={MediaRole.REFERENCE: media_spec, MediaRole.IMAGE: image_spec},
+        media={MediaRole.REFERENCE: reference_spec, MediaRole.IMAGE: image_spec},
         documentation_url="https://platform.openai.com/docs/guides/images",
         verified_at=date(2026, 9, 24),
     )
+    return ModelDefinition[OpenAIParams](
+        spec=spec,
+        parameter_type=parameter_type,
+        defaults=parameter_type(),
+        aspect_ratios={ratio: {"size": _OPENAI_RATIO_SIZES[ratio]} for ratio in ratios},
+    )
 
 
-OPENAI_MODELS: tuple[ModelSpec, ...] = (
-    _make_openai_spec("openai/gpt-image-2", "GPT Image 2"),
-    _make_openai_spec("openai/gpt-image-1-mini", "GPT Image 1 Mini"),
+OPENAI_CATALOGUE: tuple[ModelDefinition[OpenAIParams], ...] = (
+    _openai_definition(
+        "openai/gpt-image-2",
+        "GPT Image 2",
+        parameter_type=OpenAIParams,
+    ),
+    _openai_definition(
+        "openai/gpt-image-1-mini",
+        "GPT Image 1 Mini",
+        parameter_type=OpenAIMiniParams,
+        ratios=("1:1", "2:3", "3:2"),
+    ),
 )
+
+OPENAI_MODELS: tuple[ModelSpec, ...] = tuple(definition.spec for definition in OPENAI_CATALOGUE)
 
 
 class OpenAIProvider:
     """OpenAI image generation provider."""
 
     name = "openai"
+    catalogue = OPENAI_CATALOGUE
 
     def __init__(
         self,
@@ -142,38 +183,15 @@ class OpenAIProvider:
             self._client = self._client_factory()
         return self._client
 
-    def models(self) -> tuple[ModelSpec, ...]:
-        return OPENAI_MODELS
-
-    def parameter_schema(
-        self,
-        model: ModelId,  # noqa: ARG002
-        operation: ImageOperation,  # noqa: ARG002
-    ) -> JsonSchema:
-        return OpenAIParams.model_json_schema()
-
-    def validate(
-        self,
-        *,
-        intent: ImageIntent,
-        model: ModelSpec,
-    ) -> ValidatedImageRequest:
-        try:
-            params = OpenAIParams.model_validate(intent.params)
-        except ValidationError as exc:
-            raise PixgenError(ErrorCode.INVALID_REQUEST, validation_message(exc)) from exc
-        parameters: JsonObject = params.model_dump(exclude_none=True)
-        return ValidatedImageRequest(intent=intent, model=model, parameters=parameters)
-
     def declared_media_type(self, request: ValidatedImageRequest) -> str | None:
-        output_format = request.parameters.get("output_format")
+        output_format = request.parameters.model_dump().get("output_format")
         if output_format:
             return f"image/{output_format}"
         return None
 
     async def generate(self, request: PreparedImageRequest) -> ProviderImage:
         intent = request.request.intent
-        params = request.request.parameters
+        params = request.request.parameters.model_dump(exclude_none=True)
         model_id = request.request.model.id.split("/", 1)[-1]
 
         if isinstance(intent, ImageCreateIntent) and not intent.references:
@@ -202,7 +220,7 @@ class OpenAIProvider:
     async def _generate_multipart(self, request: PreparedImageRequest) -> ProviderImage:
         client = self._get_client()
         intent = request.request.intent
-        params = request.request.parameters
+        params = request.request.parameters.model_dump(exclude_none=True)
 
         files: list[tuple[str, tuple[str, bytes, str]]] = []
         if isinstance(intent, (ImageCreateIntent, ImageEditIntent)):

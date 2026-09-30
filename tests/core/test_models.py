@@ -44,6 +44,8 @@ class TestModelId:
             "openai/",
             "openai/Model",
             "openai/ model",
+            "/m",
+            "m/",
         ],
         ids=[
             "empty",
@@ -54,6 +56,8 @@ class TestModelId:
             "empty-model",
             "uppercase-model",
             "space-in-model",
+            "minimal-length",
+            "minimal-length",
         ],
     )
     def test_rejects_invalid_model_ids(self, invalid_id: str) -> None:

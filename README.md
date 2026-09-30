@@ -20,24 +20,60 @@ Video generation, OS-keyring credentials, UUIDv7 history, resumable background
 video, external provider plugins, MCP, workflow orchestration, and local
 inference are deferred.
 
-## Examples
+## CLI
+
+Shared commands use canonical `provider/model` IDs and keep each selected
+provider's defaults. The only shared generation parameter is the strict
+`width:height` aspect ratio. Ratios are reduced to canonical form (`21:9`
+becomes `7:3`) and every selected model must support the requested value.
 
 ```bash
-pixgen image create "A modern cabin beside a Norwegian fjord" \
+pixgen create "A modern cabin beside a Norwegian fjord" \
+  --model openai/gpt-image-2 \
   --model gemini/gemini-3.1-flash-image \
+  --aspect-ratio 16:9 \
   --output cabin.png
 
-pixgen image create "Combine the product and visual style" \
-  --reference product.png \
-  --reference style.png \
-  --model gemini/gemini-3.1-flash-image \
-  --output campaign.png
-
-pixgen image edit "Remove the background" \
+pixgen edit "Remove the background" \
   --image cabin.png \
   --model openai/gpt-image-2 \
+  --aspect-ratio 3:2 \
   --output cabin-transparent.png
 ```
+
+Provider commands expose their native Pydantic parameters as typed options and
+target one provider-local model. They use the same preflight, output, timeout,
+variant, and JSON rendering behaviour as shared commands.
+
+```bash
+pixgen create openai "A modern cabin beside a Norwegian fjord" \
+  --model gpt-image-2 \
+  --quality high \
+  --size 1536x1024 \
+  --output cabin.png
+
+pixgen create gemini "Combine the product and visual style" \
+  --model gemini-3.1-flash-image \
+  --reference product.png \
+  --reference style.png \
+  --aspect-ratio 16:9 \
+  --output campaign.png
+```
+
+```bash
+pixgen create \
+    "A solitary Skynet T-800-style humanoid endoskeleton meditating inside the ruins of an abandoned futuristic command temple, surrounded by shattered terminals, dormant defense systems, and decaying machine infrastructure. Red optical sensors glow faintly in the darkness while soft shafts of cold light pierce through the collapsed ceiling. Thick vines and moss reclaim advanced military technology, wrapping around broken robotic limbs, servers, and metallic architecture. The machine sits perfectly still in a meditative pose, creating an eerie contrast between relentless artificial intelligence and contemplative silence. Post-apocalyptic atmosphere, remnants of humanity scattered throughout, ominous yet strangely peaceful mood, dark science-fiction spirituality, cinematic composition, volumetric lighting, immense scale, highly detailed metal surfaces, subtle red Skynet illumination, photorealistic, dystopian film still." \
+    --model gemini/gemini-3.1-flash-lite-image \
+    --model openai/gpt-image-2
+```
+
+Use `--prompt "openai"` when the complete prompt matches a provider command
+name. `pixgen model list` and `pixgen model get <provider/model>` are offline
+commands; `model get` reports native schemas and supported shared ratios.
+
+The old `pixgen image ...` group and generic `--param` option were removed.
+Provider-specific options belong to the provider command, while shared
+multi-model calls accept only the common aspect-ratio field.
 
 ## Installation
 

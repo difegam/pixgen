@@ -1,11 +1,10 @@
 """Model sub-app with list and get commands."""
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Annotated
 
-from cyclopts import App
+from cyclopts import App, Group, Parameter, validators
 
-from pixgen.cli.render import render_model_get_result, render_model_list_result
-from pixgen.core.errors import ErrorCode
+from pixgen.cli.outcome import CliOutcome, cli_command
 from pixgen.core.results import ModelGetResult, ModelListResult, PublicError
 
 if TYPE_CHECKING:
@@ -16,40 +15,61 @@ __all__: list[str] = [
 ]
 
 
+def _model_get_error(error: PublicError) -> ModelGetResult:
+    """Wrap a lookup failure in a model get result."""
+    return ModelGetResult(error=error)
+
+
 def build_model_app(registry: ProviderRegistry) -> App:
     """Build the model sub-app."""
-    app = App(name="model", help="Offline curated-model catalogue")
+    app = App(
+        name="model",
+        help="Show supported models and their details.",
+        group="Model Details",
+    )
+
+    output_format = Group(
+        validator=validators.MutuallyExclusive(),
+        default_parameter=Parameter(show_default=False, negative=""),
+        help="Output format of the command result.",
+    )
 
     @app.command(name="list", alias=["ls"])
-    def list_models(*, json: bool = False) -> None:
-        """List available models and supported operations."""
-        models = registry.models()
-        result = ModelListResult(models=models)
-        render_model_list_result(result, as_json=json)
+    def list_models(
+        *,
+        json: Annotated[bool, Parameter(group=(app.group_parameters, output_format))] = False,
+        tree: Annotated[bool, Parameter(group=(app.group_parameters, output_format))] = False,
+    ) -> CliOutcome:
+        """List available models and supported operations.
+
+        Args:
+            json: Emit the machine-readable JSON result.
+            tree: Group models by provider in a tree.
+        """
+        return CliOutcome(ModelListResult(models=registry.models()), as_json=json, as_tree=tree)
 
     @app.command(name="get")
+    @cli_command(_model_get_error)
     def get_model(
         model_id: str,
         *,
         json: bool = False,
-    ) -> None:
+    ) -> CliOutcome:
         """Show one model's input and parameter schema."""
-
-        try:
-            spec = registry.get_model(model_id)
-        except Exception as exc:
-            result = ModelGetResult(
-                error=PublicError(code=ErrorCode.MODEL_NOT_FOUND, message=str(exc))
-            )
-            render_model_get_result(result, as_json=json)
-            raise SystemExit(2) from exc
-
-        provider = registry.provider_for(spec.id)
+        spec = registry.get_model(model_id)
         schemas = {}
+        shared_aspect_ratios = {}
         for op in spec.operations:
-            schemas[op.value] = provider.parameter_schema(spec.id, op)
+            schemas[op.value] = registry.parameter_schema(spec.id, op)
+            ratios = registry.shared_aspect_ratios(spec.id, op)
+            if ratios:
+                shared_aspect_ratios[op.value] = ratios
 
-        result = ModelGetResult(model=spec, parameter_schemas=schemas)
-        render_model_get_result(result, as_json=json)
+        result = ModelGetResult(
+            model=spec,
+            parameter_schemas=schemas,
+            shared_aspect_ratios=shared_aspect_ratios,
+        )
+        return CliOutcome(result, as_json=json)
 
     return app

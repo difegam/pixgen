@@ -54,7 +54,57 @@ def _generate_name(
     return f"{timestamp}-{run_id}-{provider}-{model}-v{variant}.{ext}"
 
 
-def plan_output(  # noqa: C901
+def _ensure_directory(path: Path, *, mkdir: bool, explicit: bool, label: str) -> None:
+    """Validate and create a directory if needed."""
+
+    if path.exists():
+        if not path.is_dir():
+            raise PixgenError(
+                ErrorCode.INVALID_REQUEST,
+                f"{label} is not a directory: {path}",
+            )
+        return  # Directory already exists.
+
+    if explicit and not mkdir:
+        raise PixgenError(
+            ErrorCode.INVALID_REQUEST,
+            f"{label} does not exist: {path} (use --mkdir to create)",
+        )
+
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise PixgenError(
+            ErrorCode.INVALID_REQUEST,
+            f"cannot create {label}: {path}",
+        ) from exc
+
+
+def _plan_explicit_output(
+    path: Path,
+    model_id: str,
+    *,
+    force: bool,
+    mkdir: bool,
+    declared_media_types: dict[str, str | None] | None,
+) -> Path:
+    """Validate and prepare an explicit output path."""
+    input_media_type = (declared_media_types or {}).get(model_id)
+    if input_media_type is not None and not _suffix_matches(path, input_media_type):
+        raise PixgenError(
+            ErrorCode.INVALID_REQUEST,
+            f"output suffix {path.suffix!r} conflicts with declared media type {input_media_type}",
+        )
+    if path.exists() and not force:
+        raise PixgenError(
+            ErrorCode.INVALID_REQUEST,
+            f"output file already exists: {path} (use --force to overwrite)",
+        )
+    _ensure_directory(path.parent, mkdir=mkdir, explicit=True, label="output directory")
+    return path
+
+
+def plan_output(
     *,
     model_ids: list[str],
     variants: int,
@@ -87,58 +137,22 @@ def plan_output(  # noqa: C901
     for model_id in model_ids:
         for v in range(1, variants + 1):
             if output is not None:
-                path = output
-                declared = (declared_media_types or {}).get(model_id)
-                if declared is not None and not _suffix_matches(path, declared):
-                    raise PixgenError(
-                        ErrorCode.INVALID_REQUEST,
-                        "output suffix "
-                        f"{path.suffix!r} conflicts with declared media type {declared}",
-                    )
-                if path.exists() and not force:
-                    raise PixgenError(
-                        ErrorCode.INVALID_REQUEST,
-                        f"output file already exists: {path} (use --force to overwrite)",
-                    )
-                parent = path.parent
-                if not parent.exists():
-                    if not mkdir:
-                        raise PixgenError(
-                            ErrorCode.INVALID_REQUEST,
-                            f"output directory does not exist: {parent} (use --mkdir to create)",
-                        )
-                    try:
-                        parent.mkdir(parents=True, exist_ok=True)
-                    except OSError as exc:
-                        raise PixgenError(
-                            ErrorCode.INVALID_REQUEST,
-                            f"cannot create output directory: {parent}",
-                        ) from exc
-                elif not parent.is_dir():
-                    raise PixgenError(
-                        ErrorCode.INVALID_REQUEST,
-                        f"output parent is not a directory: {parent}",
-                    )
+                path = _plan_explicit_output(
+                    output,
+                    model_id,
+                    force=force,
+                    mkdir=mkdir,
+                    declared_media_types=declared_media_types,
+                )
             else:
                 base_dir = output_dir or settings_output_dir or Path.cwd() / "pixgen"
-                if not base_dir.exists():
-                    if (output_dir is not None or settings_output_dir is not None) and not mkdir:
-                        raise PixgenError(
-                            ErrorCode.INVALID_REQUEST,
-                            f"output directory does not exist: {base_dir} (use --mkdir to create)",
-                        )
-                    try:
-                        base_dir.mkdir(parents=True, exist_ok=True)
-                    except OSError as exc:
-                        raise PixgenError(
-                            ErrorCode.INVALID_REQUEST,
-                            f"cannot create output directory: {base_dir}",
-                        ) from exc
-                elif not base_dir.is_dir():
-                    raise PixgenError(
-                        ErrorCode.INVALID_REQUEST,
-                        f"output directory is not a directory: {base_dir}",
-                    )
+                explicit = output_dir is not None or settings_output_dir is not None
+                _ensure_directory(
+                    base_dir,
+                    mkdir=mkdir,
+                    explicit=explicit,
+                    label="output directory",
+                )
 
                 declared = (declared_media_types or {}).get(model_id)
                 media_type = declared or "image/png"
@@ -168,19 +182,26 @@ def _suffix_matches(path: Path, media_type: str) -> bool:
     return suffix == MIME_TO_EXTENSION.get(media_type)
 
 
+def _check_extension_mismatch(plan: OutputPlan, media_type: str) -> str | None:
+    """Return a warning string if the output suffix doesn't match the media type."""
+    if not plan.explicit_path:
+        return None
+    expected = MIME_TO_EXTENSION.get(media_type)
+    actual = plan.path.suffix.lower().lstrip(".")
+    if not expected or not actual:
+        return None
+    accepted = {expected}
+    if media_type == "image/jpeg":
+        accepted.add("jpeg")
+    if actual not in accepted:
+        return f"output suffix .{actual} differs from actual media type {media_type}"
+    return None
+
+
 def save_artifact(plan: OutputPlan, data: bytes, media_type: str) -> ArtifactWriteResult:
     """Publish provider bytes according to an output plan."""
-    warnings: tuple[str, ...] = ()
-    expected_extension = MIME_TO_EXTENSION.get(media_type)
-    actual_extension = plan.path.suffix.lower().lstrip(".")
-    if plan.explicit_path and expected_extension and actual_extension:
-        accepted_extensions = {expected_extension}
-        if media_type == "image/jpeg":
-            accepted_extensions.add("jpeg")
-        if actual_extension not in accepted_extensions:
-            warnings = (
-                f"output suffix .{actual_extension} differs from actual media type {media_type}",
-            )
+    warning = _check_extension_mismatch(plan, media_type)
+    warnings = (warning,) if warning else ()
     write_atomic(plan.path, data, overwrite=plan.overwrite)
     return ArtifactWriteResult(path=plan.path, warnings=warnings)
 
