@@ -87,6 +87,17 @@ uv tool install pixgen
 
 Pixgen requires Python 3.14 or newer.
 
+Enable shell completion for bash, zsh, or fish with:
+
+```bash
+pixgen --install-completion
+```
+
+Restart the shell, or source its RC file, for completion to take effect. See
+the [cyclopts shell completion
+docs](https://cyclopts.readthedocs.io/en/latest/shell_completion.html) for
+manual installation and troubleshooting.
+
 ## Configuration
 
 Set API keys in the environment (both prefixed and unprefixed names work):

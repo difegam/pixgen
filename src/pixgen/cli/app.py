@@ -57,6 +57,7 @@ def build_app(
     app.command(build_operation_app(ImageOperation.IMAGE_EDIT, invoker, factories))
     app.command(build_model_app(registry))
     app.default(default)
+    app.register_install_completion_command()
 
     return app
 
