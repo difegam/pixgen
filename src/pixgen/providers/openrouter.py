@@ -215,7 +215,7 @@ class OpenRouterProvider:
     def available(self) -> bool:
         return self._client is not None or self._client_factory is not None
 
-    def declared_media_type(self, _request: ValidatedImageRequest) -> None:
+    def declared_media_type(self, request: ValidatedImageRequest) -> str | None:  # noqa: ARG002
         return None
 
     def _get_client(self) -> httpx2.AsyncClient:

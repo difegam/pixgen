@@ -124,6 +124,11 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("PIXGEN_GEMINI_API_KEY", "GEMINI_API_KEY"),
         description="Gemini API key",
     )
+    openrouter_api_key: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("PIXGEN_OPENROUTER_API_KEY", "OPENROUTER_API_KEY"),
+        description="OpenRouter API key",
+    )
 
     @model_validator(mode="after")
     def _validate_group_names(self) -> Settings:

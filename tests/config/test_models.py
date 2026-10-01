@@ -112,11 +112,32 @@ class TestSettings:
         monkeypatch.delenv("GEMINI_API_KEY", raising=False)
         monkeypatch.delenv("PIXGEN_OPENAI_API_KEY", raising=False)
         monkeypatch.delenv("PIXGEN_GEMINI_API_KEY", raising=False)
+        monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+        monkeypatch.delenv("PIXGEN_OPENROUTER_API_KEY", raising=False)
         settings = Settings(_env_file=None)
         assert settings.defaults.image_create_models == ("openai/gpt-image-2",)
         assert settings.groups == {}
         assert settings.openai_api_key is None
         assert settings.gemini_api_key is None
+        assert settings.openrouter_api_key is None
+
+    @pytest.mark.parametrize(
+        "variable",
+        ["OPENROUTER_API_KEY", "PIXGEN_OPENROUTER_API_KEY"],
+        ids=["standard-alias", "pixgen-alias"],
+    )
+    def test_openrouter_api_key_accepts_environment_aliases(
+        self, monkeypatch: pytest.MonkeyPatch, variable: str
+    ) -> None:
+        monkeypatch.delenv("PIXGEN_CONFIG", raising=False)
+        monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+        monkeypatch.delenv("PIXGEN_OPENROUTER_API_KEY", raising=False)
+        monkeypatch.setenv(variable, "or-test-key")
+
+        settings = Settings(_env_file=None)
+
+        assert settings.openrouter_api_key is not None
+        assert settings.openrouter_api_key.get_secret_value() == "or-test-key"
 
     def test_env_precedence(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("PIXGEN_CONFIG", raising=False)

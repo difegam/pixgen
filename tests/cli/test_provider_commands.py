@@ -1,13 +1,26 @@
 """Tests for provider-owned Cyclopts commands."""
 
+from typing import TYPE_CHECKING
+
+import httpx2
 import pytest
 from cyclopts.exceptions import UnknownOptionError
+from PIL import Image
 
+from pixgen.application import ImageApplication
+from pixgen.cli.invoke import CommandInvoker
 from pixgen.cli.outcome import ExitStatus, exit_status
+from pixgen.config.models import Defaults, GenerationSettings, Settings
 from pixgen.core.errors import ErrorCode
 from pixgen.core.models import ImageOperation
+
+if TYPE_CHECKING:
+    from pixgen.core.parameters import ProviderParams
 from pixgen.providers.gemini_cli import build_gemini_app
 from pixgen.providers.openai_cli import build_openai_app
+from pixgen.providers.openrouter import OpenRouterGPTImageParams, OpenRouterProvider
+from pixgen.providers.openrouter_cli import build_openrouter_app
+from pixgen.providers.registry import ProviderRegistry
 
 
 class DummyInvoker:
@@ -90,3 +103,121 @@ async def test_provider_apps_reject_foreign_model_without_invoking(build_app, ar
 
     assert outcome.result.error.code == ErrorCode.INVALID_REQUEST
     assert "native commands require" in outcome.result.error.message
+
+
+class RecordingInvoker:
+    """Capture native selections without running image generation."""
+
+    def __init__(self) -> None:
+        self.models: list[str] = []
+        self.parameters: list[ProviderParams] = []
+
+    async def invoke(self, _intent, selection, _options) -> None:
+        self.models.append(selection.model)
+        self.parameters.append(selection.parameters)
+
+
+@pytest.mark.parametrize(
+    ("model", "expected"),
+    [
+        (
+            "google/gemini-3.1-flash-image",
+            "openrouter/google/gemini-3.1-flash-image",
+        ),
+        ("openrouter/meta/muse-image", "openrouter/meta/muse-image"),
+        (
+            "openai/gpt-image-2.5-sunburst",
+            "openrouter/openai/gpt-image-2.5-sunburst",
+        ),
+    ],
+    ids=["google", "already-prefixed", "openai"],
+)
+async def test_openrouter_native_commands_normalise_nested_model_names(
+    model: str, expected: str
+) -> None:
+    invoker = RecordingInvoker()
+    app = build_openrouter_app(ImageOperation.IMAGE_CREATE, invoker)
+    command, bound, _ = app.parse_args(
+        ["--model", model, "A forest"],
+        print_error=False,
+        exit_on_error=False,
+    )
+
+    await command(*bound.args, **bound.kwargs)
+
+    assert invoker.models == [expected]
+
+
+@pytest.mark.parametrize(
+    ("build_app", "model"),
+    [
+        (build_openai_app, "google/gemini-3.1-flash-image"),
+        (build_gemini_app, "openai/gpt-image-2.5-sunburst"),
+    ],
+    ids=["openai", "gemini"],
+)
+async def test_existing_provider_commands_still_reject_nested_local_names(
+    build_app, model: str
+) -> None:
+    app = build_app(ImageOperation.IMAGE_CREATE, FailingInvoker())
+    command, bound, _ = app.parse_args(
+        ["--model", model, "A forest"],
+        print_error=False,
+        exit_on_error=False,
+    )
+
+    outcome = await command(*bound.args, **bound.kwargs)
+
+    assert outcome.result.error.code is ErrorCode.INVALID_REQUEST
+
+
+async def test_openrouter_cli_resolves_native_flags_from_selected_model() -> None:
+    invoker = RecordingInvoker()
+    app = build_openrouter_app(ImageOperation.IMAGE_CREATE, invoker)
+    command, bound, _ = app.parse_args(
+        [
+            "--model",
+            "openai/gpt-image-2.5-sunburst",
+            "--quality",
+            "max",
+            "--output-compression",
+            "52",
+            "A forest",
+        ],
+        print_error=False,
+        exit_on_error=False,
+    )
+
+    await command(*bound.args, **bound.kwargs)
+
+    params = invoker.parameters[0]
+    assert isinstance(params, OpenRouterGPTImageParams)
+    assert params.quality == "max"
+    assert params.output_compression == 52
+
+
+async def test_openrouter_cli_rejects_muse_edit_before_provider_generation(tmp_path) -> None:
+    image_path = tmp_path / "input.png"
+    Image.new("RGB", (2, 2)).save(image_path)
+    client = httpx2.AsyncClient(
+        transport=httpx2.MockTransport(lambda _request: pytest.fail("provider must not be called"))
+    )
+    provider = OpenRouterProvider(client)
+    registry = ProviderRegistry((provider,))
+    settings = Settings.model_construct(
+        defaults=Defaults(image_edit_models=("openrouter/meta/muse-image",)),
+        generation=GenerationSettings(),
+    )
+    invoker = CommandInvoker(ImageApplication(registry, settings))
+    app = build_openrouter_app(ImageOperation.IMAGE_EDIT, invoker)
+    command, bound, _ = app.parse_args(
+        ["--image", str(image_path), "--model", "meta/muse-image", "Edit the lighthouse"],
+        print_error=False,
+        exit_on_error=False,
+    )
+
+    outcome = await command(*bound.args, **bound.kwargs)
+
+    assert outcome.result.error.code is ErrorCode.INVALID_REQUEST
+    assert "does not support image-edit" in outcome.result.error.message
+    await client.aclose()

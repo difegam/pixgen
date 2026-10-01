@@ -10,6 +10,8 @@ from pixgen.providers.gemini_cli import GeminiCliFactory
 from pixgen.providers.http import make_http_client_factory
 from pixgen.providers.openai import OpenAIProvider
 from pixgen.providers.openai_cli import OpenAICliFactory
+from pixgen.providers.openrouter import OpenRouterProvider
+from pixgen.providers.openrouter_cli import OpenRouterCliFactory
 from pixgen.providers.registry import ProviderRegistry
 
 if TYPE_CHECKING:
@@ -81,6 +83,13 @@ def build_runtime(*, require_config_file: bool = True) -> Runtime:
         settings.generation.request_timeout_seconds,
     )
 
+    # OpenRouter client factory - lazy initialization
+    openrouter_factory = make_http_client_factory(
+        settings.openrouter_api_key,
+        base_url="https://openrouter.ai/api/v1",
+        request_timeout_seconds=settings.generation.request_timeout_seconds,
+    )
+
     # Gemini client factory - lazy initialization
     gemini_factory = get_gemini_factory(
         settings.gemini_api_key,
@@ -89,7 +98,8 @@ def build_runtime(*, require_config_file: bool = True) -> Runtime:
 
     openai_provider = OpenAIProvider(None, client_factory=openai_factory)
     gemini_provider = GeminiProvider(None, client_factory=gemini_factory)
-    registry = ProviderRegistry((openai_provider, gemini_provider))
+    openrouter_provider = OpenRouterProvider(None, client_factory=openrouter_factory)
+    registry = ProviderRegistry((openai_provider, gemini_provider, openrouter_provider))
     application = ImageApplication(registry, settings)
 
     return Runtime(
@@ -97,5 +107,5 @@ def build_runtime(*, require_config_file: bool = True) -> Runtime:
         registry=registry,
         settings=settings,
         group_repository=ConfigRepository(resolve_config_path()),
-        cli_factories=(OpenAICliFactory(), GeminiCliFactory()),
+        cli_factories=(OpenAICliFactory(), GeminiCliFactory(), OpenRouterCliFactory()),
     )
