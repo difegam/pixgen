@@ -14,8 +14,11 @@ from pixgen.core.errors import PixgenError
 from pixgen.core.models import ImageOperation
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from pixgen.application import ImageApplication
     from pixgen.cli.contracts import ProviderCliFactory
+    from pixgen.config.models import ModelGroup
     from pixgen.providers.registry import ProviderRegistry
 
 __all__: list[str] = [
@@ -42,6 +45,7 @@ def build_app(
     application: ImageApplication,
     registry: ProviderRegistry,
     factories: tuple[ProviderCliFactory, ...],
+    groups: Mapping[str, ModelGroup] | None = None,
 ) -> App:
     """Build the Pixgen app."""
     _validate_factories(registry, factories)
@@ -53,8 +57,8 @@ def build_app(
     )
     invoker = CommandInvoker(application)
 
-    app.command(build_operation_app(ImageOperation.IMAGE_CREATE, invoker, factories))
-    app.command(build_operation_app(ImageOperation.IMAGE_EDIT, invoker, factories))
+    app.command(build_operation_app(ImageOperation.IMAGE_CREATE, invoker, factories, groups=groups))
+    app.command(build_operation_app(ImageOperation.IMAGE_EDIT, invoker, factories, groups=groups))
     app.command(build_model_app(registry))
     app.default(default)
     app.register_install_completion_command()
@@ -71,7 +75,12 @@ def main() -> None:
     except PixgenError as exc:
         outcome = render_outcome(failure_outcome(exc, as_json="--json" in sys.argv[1:]))
         sys.exit(outcome.__cyclopts_returncode__())
-    app = build_app(runtime.application, runtime.registry, runtime.cli_factories)
+    app = build_app(
+        runtime.application,
+        runtime.registry,
+        runtime.cli_factories,
+        groups=runtime.settings.groups,
+    )
     app()
 
 

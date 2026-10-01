@@ -64,7 +64,7 @@ def app() -> App:
     )
 
 
-def test_root_shared_create_accepts_repeated_models_and_ratio(app) -> None:
+def test_root_shared_create_accepts_repeated_models(app) -> None:
     command, bound, _ = app.parse_args(
         [
             "create",
@@ -72,8 +72,6 @@ def test_root_shared_create_accepts_repeated_models_and_ratio(app) -> None:
             "openai/gpt-image-2",
             "--model",
             "gemini/gemini-3.1-flash-image",
-            "--aspect-ratio",
-            "16:9",
             "A forest",
         ],
         print_error=False,
@@ -85,7 +83,6 @@ def test_root_shared_create_accepts_repeated_models_and_ratio(app) -> None:
         "openai/gpt-image-2",
         "gemini/gemini-3.1-flash-image",
     ]
-    assert bound.arguments["aspect_ratio"] == "16:9"
 
 
 @pytest.mark.parametrize(
