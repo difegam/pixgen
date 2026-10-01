@@ -85,6 +85,35 @@ def test_root_shared_create_accepts_repeated_models(app) -> None:
     ]
 
 
+def test_root_group_create_accepts_repeated_models_and_metadata(app) -> None:
+    command, bound, _ = app.parse_args(
+        [
+            "group",
+            "create",
+            "product-hero",
+            "--model",
+            "openai/gpt-image-2",
+            "--model",
+            "gemini/gemini-3.1-flash-image",
+            "--description",
+            "Product images",
+            "--tag",
+            "product",
+        ],
+        print_error=False,
+        exit_on_error=False,
+    )
+
+    assert command.__name__ == "create"
+    assert bound.arguments["name"] == "product-hero"
+    assert bound.arguments["model"] == [
+        "openai/gpt-image-2",
+        "gemini/gemini-3.1-flash-image",
+    ]
+    assert bound.arguments["description"] == "Product images"
+    assert bound.arguments["tag"] == ["product"]
+
+
 @pytest.mark.parametrize(
     ("arguments", "command_name"),
     [

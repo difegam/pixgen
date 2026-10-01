@@ -8,7 +8,8 @@ max_variants = 10
 max_jobs = 10
 request_timeout_seconds = 300
 
-# Reusable create-only model groups can be defined here.
+# Reusable create-only model groups can be defined here or with
+# `pixgen group create <name> --model <provider/model> --description <text>`.
 # [groups.product-hero]
 # description = "Models suited to product hero images"
 # tags = ["product", "marketing"]

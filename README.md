@@ -69,6 +69,23 @@ pixgen create "Combine the product and visual style" \
 `create` commands. Provider-native commands keep their provider-specific
 options.
 
+Create a group explicitly with repeated model options:
+
+```bash
+pixgen group create product-hero \
+  --model openai/gpt-image-2 \
+  --model gemini/gemini-3.1-flash-image \
+  --description "Models suited to product hero images" \
+  --tag product \
+  --tag marketing
+```
+
+Omit `--model` in an interactive terminal to fuzzy-search and multi-select
+models, then enter the description and optional tags. Group names must be new;
+`group create` never replaces an existing group. The command validates models
+locally and writes the group to the resolved TOML configuration without using
+provider credentials.
+
 Use `--prompt "openai"` when the complete prompt matches a provider command
 name. `pixgen model list` and `pixgen model get <provider/model>` are offline
 commands; `model get` reports native schemas and supported shared ratios.
@@ -133,6 +150,9 @@ models = [
   "gemini/gemini-3.1-flash-image",
 ]
 ```
+
+The `description` and `tags` fields are presentation metadata reserved for
+future `group list` and `group show` commands. They do not affect generation.
 
 See `.env.example` for a template. Provider credentials are never read from TOML files.
 
