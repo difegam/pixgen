@@ -18,11 +18,17 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
 
     from pixgen.core.models import ModelSpec
-    from pixgen.core.results import CommandResult, ModelGetResult, ModelListResult
+    from pixgen.core.results import (
+        CommandResult,
+        GroupCreateResult,
+        ModelGetResult,
+        ModelListResult,
+    )
 
 __all__: list[str] = [
     "create_generation_progress",
     "render_command_result",
+    "render_group_create_result",
     "render_model_get_result",
     "render_model_list_result",
 ]
@@ -58,6 +64,20 @@ def render_command_result(
                 _stderr_console.print(f"  Warning: {warning}")
         elif target.error:
             _stderr_console.print(f"  {target.model} v{target.variant}: {target.error.message}")
+
+
+def render_group_create_result(result: GroupCreateResult, *, as_json: bool) -> None:
+    """Render a model-group creation result."""
+    if as_json:
+        sys.stdout.write(result.model_dump_json(indent=2) + "\n")
+        return
+
+    if result.error:
+        _stderr_console.print(f"Error: {result.error.message}")
+        return
+
+    if result.name is not None and result.config_path is not None:
+        _stdout_console.print(f"Created model group {result.name!r} in {result.config_path}")
 
 
 def create_generation_progress(*, as_json: bool) -> GenerationProgress | None:

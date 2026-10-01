@@ -1,0 +1,192 @@
+"""Tests for the model-group creation command."""
+
+import json
+from typing import TYPE_CHECKING
+
+import pytest
+
+from pixgen.cli.group import build_group_app
+from pixgen.cli.outcome import CliOutcome, exit_status, render_outcome
+from pixgen.cli.selector import InteractiveGroupSelection
+from pixgen.config.writer import ConfigRepository
+from pixgen.core.errors import ErrorCode
+from pixgen.core.results import GroupCreateResult
+from pixgen.providers.gemini import GeminiProvider
+from pixgen.providers.openai import OpenAIProvider
+from pixgen.providers.registry import ProviderRegistry
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    from inspect import BoundArguments
+    from pathlib import Path
+
+    from cyclopts import App
+
+    from pixgen.config.models import ModelGroup
+
+
+class RecordingRepository:
+    """Capture group writes for command tests."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self.groups: list[tuple[str, ModelGroup]] = []
+
+    def create_group(self, name: str, group: ModelGroup) -> None:
+        self.groups.append((name, group))
+
+
+class RecordingSelector:
+    """Return a known interactive selection."""
+
+    def __init__(self) -> None:
+        self.called = False
+
+    def select(self, _models) -> InteractiveGroupSelection:
+        self.called = True
+        return InteractiveGroupSelection(
+            models=("openai/gpt-image-2",),
+            description="Interactive images",
+            tags=("interactive",),
+        )
+
+
+class NeverSelector:
+    """Fail if non-interactive command execution reaches the selector."""
+
+    def select(self, _models: tuple[object, ...]) -> InteractiveGroupSelection:
+        pytest.fail("selector must not be called for non-interactive creation")
+
+
+def _registry() -> ProviderRegistry:
+    return ProviderRegistry((OpenAIProvider(None), GeminiProvider(None)))
+
+
+def _parse(app: App, argv: list[str]) -> tuple[Callable[..., object], BoundArguments]:
+    command, bound, _ = app.parse_args(argv, print_error=False, exit_on_error=False)
+    return command, bound
+
+
+def test_explicit_models_preserve_order_and_metadata(tmp_path: Path) -> None:
+    repository = RecordingRepository(tmp_path / "config.toml")
+    app = build_group_app(_registry(), repository)
+    command, bound = _parse(
+        app,
+        [
+            "create",
+            "product-hero",
+            "--model",
+            "gemini/gemini-3.1-flash-image",
+            "--model",
+            "openai/gpt-image-2",
+            "--description",
+            "Product images",
+            "--tag",
+            "product",
+            "--tag",
+            "marketing",
+        ],
+    )
+
+    outcome = command(*bound.args, **bound.kwargs)
+
+    assert exit_status(outcome.result).value == 0
+    name, group = repository.groups[0]
+    assert name == "product-hero"
+    assert group.models == ("gemini/gemini-3.1-flash-image", "openai/gpt-image-2")
+    assert group.description == "Product images"
+    assert group.tags == ("product", "marketing")
+
+
+def test_explicit_creation_requires_description(tmp_path: Path) -> None:
+    repository = RecordingRepository(tmp_path / "config.toml")
+    app = build_group_app(_registry(), repository)
+    command, bound = _parse(app, ["create", "product-hero", "--model", "openai/gpt-image-2"])
+
+    outcome = command(*bound.args, **bound.kwargs)
+
+    assert exit_status(outcome.result).name == "REJECTED"
+    assert outcome.result.error is not None
+    assert outcome.result.error.code is ErrorCode.INVALID_REQUEST
+    assert repository.groups == []
+
+
+def test_create_group_rejects_unknown_model_without_writing(tmp_path: Path) -> None:
+    repository = RecordingRepository(tmp_path / "config.toml")
+    selector = NeverSelector()
+    app = build_group_app(_registry(), repository, selector)
+    command, bound = _parse(
+        app,
+        ["create", "product-hero", "--model", "openai/missing", "--description", "Images"],
+    )
+
+    outcome = command(*bound.args, **bound.kwargs)
+
+    assert outcome.result.error is not None
+    assert outcome.result.error.code is ErrorCode.MODEL_NOT_FOUND
+    assert repository.groups == []
+
+
+def test_interactive_creation_delegates_selection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repository = RecordingRepository(tmp_path / "config.toml")
+    selector = RecordingSelector()
+    monkeypatch.setattr("pixgen.cli.group._is_interactive_terminal", lambda: True)
+    app = build_group_app(_registry(), repository, selector)
+    command, bound = _parse(app, ["create", "product-hero"])
+
+    outcome = command(*bound.args, **bound.kwargs)
+
+    assert outcome.result.error is None
+    assert selector.called is True
+    assert repository.groups[0][1].description == "Interactive images"
+
+
+def test_create_group_requires_models_when_noninteractive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repository = RecordingRepository(tmp_path / "config.toml")
+    monkeypatch.setattr("pixgen.cli.group._is_interactive_terminal", lambda: False)
+    app = build_group_app(_registry(), repository, NeverSelector())
+    command, bound = _parse(app, ["create", "product-hero"])
+
+    outcome = command(*bound.args, **bound.kwargs)
+
+    assert outcome.result.error is not None
+    assert outcome.result.error.code is ErrorCode.INVALID_REQUEST
+    assert repository.groups == []
+
+
+def test_duplicate_group_name_returns_invalid_request(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        """[groups.product-hero]
+description = "Original"
+tags = []
+models = ["openai/gpt-image-2"]
+"""
+    )
+    repository = ConfigRepository(config_path)
+    app = build_group_app(_registry(), repository)
+    command, bound = _parse(
+        app,
+        ["create", "product-hero", "--model", "openai/gpt-image-2", "--description", "New"],
+    )
+
+    outcome = command(*bound.args, **bound.kwargs)
+
+    assert outcome.result.error is not None
+    assert outcome.result.error.code is ErrorCode.INVALID_REQUEST
+    assert "Original" in config_path.read_text()
+
+
+def test_json_result_excludes_group_metadata(tmp_path: Path, capsys) -> None:
+    result = GroupCreateResult(name="product-hero", config_path=tmp_path / "config.toml")
+
+    render_outcome(CliOutcome(result, as_json=True))
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["name"] == "product-hero"
+    assert "description" not in payload
+    assert "tags" not in payload
