@@ -72,7 +72,17 @@ type GeminiAspectRatio = Literal[
     "21:9",
 ]
 type GeminiResolution = Literal["512", "1K", "2K", "4K"]
-type GPTAspectRatio = Literal["1:1", "3:2", "2:3", "4:3", "3:4", "16:9", "9:16", "21:9"]
+type GPTAspectRatio = Literal[
+    "1:1",
+    "3:2",
+    "2:3",
+    "4:3",
+    "3:4",
+    "16:9",
+    "9:16",
+    "21:9",
+    "auto",
+]
 
 
 class OpenRouterGeminiParams(ProviderParams):

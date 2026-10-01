@@ -63,13 +63,14 @@ class TestOpenRouterCatalogue:
 
     def test_gpt_parameters_validate_quality_background_ratio_and_compression(self) -> None:
         params = OpenRouterGPTImageParams(
-            aspect_ratio="21:9",
+            aspect_ratio="auto",
             quality="xhigh",
             background="transparent",
             output_compression=72,
         )
 
         assert params.output_compression == 72
+        assert params.aspect_ratio == "auto"
         with pytest.raises(ValidationError):
             OpenRouterGPTImageParams(quality="ultra")
         with pytest.raises(ValidationError):

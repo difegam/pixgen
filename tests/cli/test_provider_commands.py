@@ -180,6 +180,8 @@ async def test_openrouter_cli_resolves_native_flags_from_selected_model() -> Non
             "openai/gpt-image-2.5-sunburst",
             "--quality",
             "max",
+            "--aspect-ratio",
+            "auto",
             "--output-compression",
             "52",
             "A forest",
@@ -193,6 +195,7 @@ async def test_openrouter_cli_resolves_native_flags_from_selected_model() -> Non
     params = invoker.parameters[0]
     assert isinstance(params, OpenRouterGPTImageParams)
     assert params.quality == "max"
+    assert params.aspect_ratio == "auto"
     assert params.output_compression == 52
 
 

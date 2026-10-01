@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 __all__: list[str] = ["OpenRouterCliFactory", "build_openrouter_app"]
 
 OpenRouterCliAspectRatio = Literal[
+    "auto",
     "1:1",
     "1:4",
     "1:8",
