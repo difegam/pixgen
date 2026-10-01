@@ -16,7 +16,7 @@ def test_build_runtime_does_not_construct_clients_for_catalogue_commands() -> No
 
     with (
         patch("pixgen.runtime.load_settings", return_value=settings),
-        patch("pixgen.runtime.httpx2.AsyncClient", autospec=True) as async_client,
+        patch("pixgen.providers.http.httpx2.AsyncClient", autospec=True) as async_client,
     ):
         runtime = build_runtime()
 

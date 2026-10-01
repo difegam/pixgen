@@ -1,14 +1,13 @@
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-import httpx2
-
 from pixgen.application import ImageApplication
 from pixgen.config.models import Settings, load_settings
 from pixgen.config.paths import resolve_config_path
 from pixgen.config.writer import ConfigRepository
 from pixgen.providers.gemini import GeminiProvider
 from pixgen.providers.gemini_cli import GeminiCliFactory
+from pixgen.providers.http import make_http_client_factory
 from pixgen.providers.openai import OpenAIProvider
 from pixgen.providers.openai_cli import OpenAICliFactory
 from pixgen.providers.registry import ProviderRegistry
@@ -16,6 +15,7 @@ from pixgen.providers.registry import ProviderRegistry
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    import httpx2
     from google.genai import Client
     from pydantic import SecretStr
 
@@ -42,17 +42,11 @@ def get_open_ai_factory(
     openai_api_key: SecretStr | None,
     request_timeout_seconds: int,
 ) -> Callable[[], httpx2.AsyncClient] | None:
-    if not openai_api_key:
-        return None
-
-    def make_openai_client() -> httpx2.AsyncClient:
-        return httpx2.AsyncClient(
-            base_url="https://api.openai.com/v1",
-            headers={"Authorization": f"Bearer {openai_api_key.get_secret_value()}"},
-            timeout=httpx2.Timeout(request_timeout_seconds),
-        )
-
-    return make_openai_client
+    return make_http_client_factory(
+        openai_api_key,
+        base_url="https://api.openai.com/v1",
+        request_timeout_seconds=request_timeout_seconds,
+    )
 
 
 def get_gemini_factory(
