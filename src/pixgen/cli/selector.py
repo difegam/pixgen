@@ -2,8 +2,10 @@
 
 import sys
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+from InquirerPy import inquirer
+from InquirerPy.base.control import Choice
 from rich.console import Console
 
 from pixgen.core.errors import ErrorCode, PixgenError
@@ -17,7 +19,6 @@ __all__: list[str] = [
     "InteractiveGroupSelection",
     "InteractiveModelSelector",
     "ModelSelector",
-    "SelectionState",
     "filter_models",
     "fuzzy_rank",
     "prompt_group_metadata",
@@ -50,27 +51,10 @@ class ModelSelector(Protocol):
 
 @dataclass(slots=True)
 class SelectionState:
-    """Track filtered rows, cursor position, and selected model IDs."""
+    """Track selected model IDs for the line-oriented fallback selector."""
 
     models: tuple[ModelSpec, ...]
-    query: str = ""
-    cursor: int = 0
     _selected: set[ModelId] = field(default_factory=set, init=False, repr=False)
-
-    def set_query(self, query: str) -> None:
-        """Set the filter query and reset the cursor."""
-        self.query = query
-        self.cursor = 0
-
-    def filtered_models(self) -> tuple[ModelSpec, ...]:
-        """Return models matching the current query."""
-        return filter_models(self.query, self.models)
-
-    def move_cursor(self, offset: int) -> None:
-        """Move the cursor within the current filtered rows."""
-        matches = self.filtered_models()
-        if matches:
-            self.cursor = max(0, min(self.cursor + offset, len(matches) - 1))
 
     def toggle(self, model_id: ModelId) -> None:
         """Toggle one model by canonical ID."""
@@ -81,19 +65,9 @@ class SelectionState:
         else:
             self._selected.add(model_id)
 
-    def toggle_cursor(self) -> None:
-        """Toggle the model under the current cursor."""
-        matches = self.filtered_models()
-        if matches:
-            self.toggle(matches[self.cursor].id)
-
     def selected_models(self) -> tuple[ModelId, ...]:
         """Return selected IDs in catalogue order."""
         return tuple(model.id for model in self.models if model.id in self._selected)
-
-    def is_selected(self, model_id: ModelId) -> bool:
-        """Return whether one model is selected."""
-        return model_id in self._selected
 
     def confirm(self) -> tuple[ModelId, ...]:
         """Confirm the selection, requiring at least one model."""
@@ -111,9 +85,13 @@ class InteractiveModelSelector:
         *,
         console: Console | None = None,
         input_fn: Callable[[str], str] = input,
+        fuzzy_prompt: Callable[..., Any] = inquirer.fuzzy,
+        confirm_prompt: Callable[..., Any] = inquirer.confirm,
     ) -> None:
         self._console = console or Console()
         self._input_fn = input_fn
+        self._fuzzy_prompt = fuzzy_prompt
+        self._confirm_prompt = confirm_prompt
 
     def select(
         self,
@@ -125,12 +103,19 @@ class InteractiveModelSelector:
         """Interactively select models and presentation metadata."""
         if not models:
             raise PixgenError(ErrorCode.INVALID_REQUEST, "no curated models are available")
-        selected = self._select_raw(models) if _supports_raw_input() else self._select_lines(models)
+        selected = (
+            self._select_fuzzy(models) if _supports_raw_input() else self._select_lines(models)
+        )
         description, tags = prompt_group_metadata(
             input_fn=self._input_fn,
             description=description,
             tags=tags,
         )
+        if not self._confirm_prompt(
+            message=f"Create group with {len(selected)} model(s)?",
+            default=True,
+        ).execute():
+            raise PixgenError(ErrorCode.INVALID_REQUEST, "group creation cancelled")
         return InteractiveGroupSelection(models=selected, description=description, tags=tags)
 
     def _select_lines(self, models: tuple[ModelSpec, ...]) -> tuple[ModelId, ...]:
@@ -155,46 +140,21 @@ class InteractiveModelSelector:
             state.toggle(matches[index - 1].id)
         return state.confirm()
 
-    def _select_raw(self, models: tuple[ModelSpec, ...]) -> tuple[ModelId, ...]:
-        import termios
-        import tty
-
-        state = SelectionState(models)
-        file_descriptor = sys.stdin.fileno()
-        original_settings = termios.tcgetattr(file_descriptor)
-        try:
-            tty.setcbreak(file_descriptor)
-            while True:
-                self._render_raw(state)
-                character = sys.stdin.read(1)
-                if character in {"\r", "\n"}:
-                    return state.confirm()
-                if character == " ":
-                    state.toggle_cursor()
-                elif character == "\x7f":
-                    state.set_query(state.query[:-1])
-                elif character == "\x1b":
-                    self._handle_escape_sequence(state)
-                elif character.isprintable():
-                    state.set_query(state.query + character)
-        finally:
-            termios.tcsetattr(file_descriptor, termios.TCSADRAIN, original_settings)
-
-    def _handle_escape_sequence(self, state: SelectionState) -> None:
-        sequence = sys.stdin.read(2)
-        if sequence == "[A":
-            state.move_cursor(-1)
-        elif sequence == "[B":
-            state.move_cursor(1)
-
-    def _render_raw(self, state: SelectionState) -> None:
-        self._console.clear()
-        self._console.print("Filter models: " + state.query)
-        matches = state.filtered_models()
-        for index, model in enumerate(matches):
-            marker = "☑" if state.is_selected(model.id) else "☐"
-            cursor = ">" if index == state.cursor else " "
-            self._console.print(f"{cursor} {marker} {model.id} ({model.display_name})")
+    def _select_fuzzy(self, models: tuple[ModelSpec, ...]) -> tuple[ModelId, ...]:
+        choices = [
+            Choice(value=model.id, name=f"{model.id} ({model.display_name})") for model in models
+        ]
+        result = self._fuzzy_prompt(
+            message="Select models:",
+            choices=choices,
+            multiselect=True,
+            border=True,
+            instruction="(type to filter)",
+            long_instruction="↑/↓ move · tab/space select · enter confirm",
+            validate=lambda selection: len(selection) >= 1,
+            invalid_message="select at least one model",
+        ).execute()
+        return tuple(result)
 
 
 def fuzzy_rank(query: str, model: ModelSpec) -> tuple[int, int] | None:

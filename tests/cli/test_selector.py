@@ -6,6 +6,7 @@ import pytest
 
 from pixgen.cli.selector import (
     InteractiveGroupSelection,
+    InteractiveModelSelector,
     ModelSelector,
     SelectionState,
     filter_models,
@@ -86,6 +87,84 @@ def test_metadata_prompt_returns_trimmed_description_and_tags() -> None:
 
     assert description == "Product images"
     assert tags == ("product", "marketing")
+
+
+class TestFuzzySelection:
+    """Tests for the InquirerPy-backed interactive selection path."""
+
+    def test_select_fuzzy_returns_selection_on_confirm(self) -> None:
+        models = (
+            make_model_spec(model_id="openai/alpha", display_name="Alpha"),
+            make_model_spec(model_id="gemini/beta", display_name="Beta"),
+        )
+        answers = iter(["Product images", "product, marketing"])
+        fake_fuzzy = _FakeFuzzyPrompt(result=["openai/alpha"])
+        fake_confirm = _FakeConfirmPrompt(result=True)
+        selector = InteractiveModelSelector(
+            input_fn=lambda _prompt: next(answers),
+            fuzzy_prompt=fake_fuzzy,
+            confirm_prompt=fake_confirm,
+        )
+
+        selection = selector._select_fuzzy(models)
+
+        assert selection == ("openai/alpha",)
+        assert fake_fuzzy.calls[0]["multiselect"] is True
+        assert fake_fuzzy.calls[0]["border"] is True
+        assert fake_fuzzy.calls[0]["long_instruction"]
+        assert [choice.value for choice in fake_fuzzy.calls[0]["choices"]] == [
+            "openai/alpha",
+            "gemini/beta",
+        ]
+
+    def test_select_raises_when_confirmation_declined(self) -> None:
+        models = (make_model_spec(model_id="openai/alpha", display_name="Alpha"),)
+        # non-TTY path: filter query, selection index, description, tags.
+        answers = iter(["", "1", "Product images", ""])
+        selector = InteractiveModelSelector(
+            input_fn=lambda _prompt: next(answers),
+            fuzzy_prompt=_FakeFuzzyPrompt(result=["openai/alpha"]),
+            confirm_prompt=_FakeConfirmPrompt(result=False),
+        )
+
+        with pytest.raises(PixgenError) as exc_info:
+            selector.select(models)
+
+        assert exc_info.value.code is ErrorCode.INVALID_REQUEST
+
+
+class _FakeFuzzyPrompt:
+    """Record calls and return a canned fuzzy-selection result."""
+
+    def __init__(self, *, result: list[str]) -> None:
+        self._result = result
+        self.calls: list[dict[str, object]] = []
+
+    def __call__(self, **kwargs: object) -> _FakeExecutable:
+        self.calls.append(kwargs)
+        return _FakeExecutable(self._result)
+
+
+class _FakeConfirmPrompt:
+    """Record calls and return a canned confirmation result."""
+
+    def __init__(self, *, result: bool) -> None:
+        self._result = result
+        self.calls: list[dict[str, object]] = []
+
+    def __call__(self, **kwargs: object) -> _FakeExecutable:
+        self.calls.append(kwargs)
+        return _FakeExecutable(self._result)
+
+
+class _FakeExecutable:
+    """Mimic an InquirerPy prompt's `.execute()` return value."""
+
+    def __init__(self, result: object) -> None:
+        self._result = result
+
+    def execute(self) -> object:
+        return self._result
 
 
 def test_fake_selector_can_return_complete_selection() -> None:
