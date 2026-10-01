@@ -42,12 +42,40 @@ class RecordingSelector:
     def __init__(self) -> None:
         self.called = False
 
-    def select(self, _models) -> InteractiveGroupSelection:
+    def select(
+        self,
+        _models,
+        *,
+        description: str | None = None,
+        tags: tuple[str, ...] = (),
+    ) -> InteractiveGroupSelection:
+        del description, tags
         self.called = True
         return InteractiveGroupSelection(
             models=("openai/gpt-image-2",),
             description="Interactive images",
             tags=("interactive",),
+        )
+
+
+class MetadataRecordingSelector:
+    """Capture metadata supplied to interactive selection."""
+
+    def __init__(self) -> None:
+        self.metadata = None
+
+    def select(
+        self,
+        _models,
+        *,
+        description: str | None = None,
+        tags: tuple[str, ...] = (),
+    ) -> InteractiveGroupSelection:
+        self.metadata = (description, tags)
+        return InteractiveGroupSelection(
+            models=("openai/gpt-image-2",),
+            description=description or "Prompted description",
+            tags=tags,
         )
 
 
@@ -141,6 +169,33 @@ def test_interactive_creation_delegates_selection(
     assert outcome.result.error is None
     assert selector.called is True
     assert repository.groups[0][1].description == "Interactive images"
+
+
+def test_interactive_creation_preserves_provided_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repository = RecordingRepository(tmp_path / "config.toml")
+    selector = MetadataRecordingSelector()
+    monkeypatch.setattr("pixgen.cli.group._is_interactive_terminal", lambda: True)
+    app = build_group_app(_registry(), repository, selector)
+    command, bound = _parse(
+        app,
+        [
+            "create",
+            "product-hero",
+            "--description",
+            "Provided description",
+            "--tag",
+            "provided",
+        ],
+    )
+
+    outcome = command(*bound.args, **bound.kwargs)
+
+    assert outcome.result.error is None
+    assert selector.metadata == ("Provided description", ("provided",))
+    assert repository.groups[0][1].description == "Provided description"
+    assert repository.groups[0][1].tags == ("provided",)
 
 
 def test_create_group_requires_models_when_noninteractive(

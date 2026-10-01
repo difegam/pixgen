@@ -37,7 +37,13 @@ class InteractiveGroupSelection:
 class ModelSelector(Protocol):
     """Select a complete model group from the available catalogue."""
 
-    def select(self, models: tuple[ModelSpec, ...]) -> InteractiveGroupSelection:
+    def select(
+        self,
+        models: tuple[ModelSpec, ...],
+        *,
+        description: str | None = None,
+        tags: tuple[str, ...] = (),
+    ) -> InteractiveGroupSelection:
         """Select models and presentation metadata."""
         ...
 
@@ -109,12 +115,22 @@ class InteractiveModelSelector:
         self._console = console or Console()
         self._input_fn = input_fn
 
-    def select(self, models: tuple[ModelSpec, ...]) -> InteractiveGroupSelection:
+    def select(
+        self,
+        models: tuple[ModelSpec, ...],
+        *,
+        description: str | None = None,
+        tags: tuple[str, ...] = (),
+    ) -> InteractiveGroupSelection:
         """Interactively select models and presentation metadata."""
         if not models:
             raise PixgenError(ErrorCode.INVALID_REQUEST, "no curated models are available")
         selected = self._select_raw(models) if _supports_raw_input() else self._select_lines(models)
-        description, tags = prompt_group_metadata(input_fn=self._input_fn)
+        description, tags = prompt_group_metadata(
+            input_fn=self._input_fn,
+            description=description,
+            tags=tags,
+        )
         return InteractiveGroupSelection(models=selected, description=description, tags=tags)
 
     def _select_lines(self, models: tuple[ModelSpec, ...]) -> tuple[ModelId, ...]:
@@ -219,17 +235,21 @@ def filter_models(query: str, models: Sequence[ModelSpec]) -> tuple[ModelSpec, .
 def prompt_group_metadata(
     *,
     input_fn: Callable[[str], str] = input,
+    description: str | None = None,
+    tags: tuple[str, ...] = (),
 ) -> tuple[str, tuple[str, ...]]:
     """Prompt for a required description and optional comma-separated tags."""
-    description = input_fn("Description: ").strip()
-    if not description:
+    clean_description = (
+        description.strip() if description is not None else input_fn("Description: ").strip()
+    )
+    if not clean_description:
         raise PixgenError(ErrorCode.INVALID_REQUEST, "description must not be blank")
-    tags = tuple(
+    clean_tags = tags or tuple(
         tag.strip()
         for tag in input_fn("Tags (comma-separated, optional): ").split(",")
         if tag.strip()
     )
-    return description, tags
+    return clean_description, clean_tags
 
 
 def _is_subsequence(needle: str, candidate: str) -> bool:

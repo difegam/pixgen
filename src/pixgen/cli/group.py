@@ -66,7 +66,11 @@ def build_group_app(
                     ErrorCode.INVALID_REQUEST,
                     "at least one --model is required outside an interactive terminal",
                 )
-            selected = active_selector.select(registry.models())
+            selected = active_selector.select(
+                registry.models(),
+                description=description,
+                tags=tuple(tag or ()),
+            )
             group = _build_interactive_group(selected)
 
         repository.create_group(name, group)

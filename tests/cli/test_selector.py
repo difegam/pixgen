@@ -90,12 +90,18 @@ def test_metadata_prompt_returns_trimmed_description_and_tags() -> None:
 
 def test_fake_selector_can_return_complete_selection() -> None:
     class FakeSelector:
-        def select(self, models: tuple[ModelSpec, ...]) -> InteractiveGroupSelection:
+        def select(
+            self,
+            models: tuple[ModelSpec, ...],
+            *,
+            description: str | None = None,
+            tags: tuple[str, ...] = (),
+        ) -> InteractiveGroupSelection:
             del models
             return InteractiveGroupSelection(
                 models=("openai/gpt-image-2",),
-                description="Product images",
-                tags=("product",),
+                description=description or "Product images",
+                tags=tags or ("product",),
             )
 
     selector = FakeSelector()
