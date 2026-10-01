@@ -125,6 +125,12 @@ class Settings(BaseSettings):
         description="Gemini API key",
     )
 
+    @model_validator(mode="after")
+    def _validate_group_names(self) -> Settings:
+        if any(not name for name in self.groups):
+            raise ValueError("group names must not be empty")
+        return self
+
     @classmethod
     def settings_customise_sources(
         cls,

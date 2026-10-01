@@ -193,6 +193,24 @@ unexpected = true
 
         assert exc_info.value.code is ErrorCode.INVALID_CONFIGURATION
 
+    def test_settings_rejects_empty_group_name(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        config_file = tmp_path / "config.toml"
+        config_file.write_text(
+            """
+[groups.""]
+description = "Models for product images"
+models = ["openai/gpt-image-2"]
+"""
+        )
+        monkeypatch.setenv("PIXGEN_CONFIG", str(config_file))
+
+        with pytest.raises(PixgenError) as exc_info:
+            load_settings()
+
+        assert exc_info.value.code is ErrorCode.INVALID_CONFIGURATION
+
 
 class TestLoadSettings:
     """Tests for load_settings function."""
