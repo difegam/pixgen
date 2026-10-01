@@ -4,8 +4,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from pixgen.config.models import Defaults, GenerationSettings, Settings, load_settings
-from pixgen.core.errors import PixgenError
+from pixgen.config.models import Defaults, GenerationSettings, ModelGroup, Settings, load_settings
+from pixgen.core.errors import ErrorCode, PixgenError
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -25,6 +25,53 @@ class TestDefaults:
             image_edit_models=("openai/gpt-image-2", "gemini/gemini-3.1-flash-image"),
         )
         assert len(defaults.image_edit_models) == 2
+
+
+class TestModelGroup:
+    """Tests for model group configuration."""
+
+    def test_model_group_accepts_models_description_and_tags(self) -> None:
+        group = ModelGroup(
+            models=["openai/gpt-image-2", "gemini/gemini-3.1-flash-image"],
+            description="Models for product images",
+            tags=["product", "marketing"],
+        )
+
+        assert group.models == ("openai/gpt-image-2", "gemini/gemini-3.1-flash-image")
+        assert group.description == "Models for product images"
+        assert group.tags == ("product", "marketing")
+
+    def test_model_group_defaults_tags_to_empty(self) -> None:
+        group = ModelGroup(
+            models=["openai/gpt-image-2"],
+            description="Models for product images",
+        )
+
+        assert group.tags == ()
+
+    def test_model_group_rejects_empty_models(self) -> None:
+        with pytest.raises(ValueError, match="at least 1"):
+            ModelGroup(models=[], description="Models for product images")
+
+    def test_model_group_rejects_duplicate_models(self) -> None:
+        with pytest.raises(ValueError, match="duplicate"):
+            ModelGroup(
+                models=["openai/gpt-image-2", "openai/gpt-image-2"],
+                description="Models for product images",
+            )
+
+    def test_model_group_rejects_blank_description(self) -> None:
+        with pytest.raises(ValueError, match="description"):
+            ModelGroup(models=["openai/gpt-image-2"], description="   ")
+
+    @pytest.mark.parametrize(
+        "tag",
+        ["", "   ", " marketing", "marketing "],
+        ids=["empty", "blank", "leading-space", "trailing-space"],
+    )
+    def test_model_group_rejects_blank_or_padded_tags(self, tag: str) -> None:
+        with pytest.raises(ValueError, match="tag"):
+            ModelGroup(models=["openai/gpt-image-2"], description="Models", tags=[tag])
 
 
 class TestGenerationSettings:
@@ -64,6 +111,7 @@ class TestSettings:
         monkeypatch.delenv("PIXGEN_GEMINI_API_KEY", raising=False)
         settings = Settings(_env_file=None)
         assert settings.defaults.image_create_models == ("openai/gpt-image-2",)
+        assert settings.groups == {}
         assert settings.openai_api_key is None
         assert settings.gemini_api_key is None
 
@@ -102,6 +150,48 @@ class TestSettings:
         monkeypatch.setenv("PIXGEN_CONFIG", str(config_file))
         settings = Settings()
         assert settings.defaults.image_create_models == ("gemini/gemini-3.1-flash-image",)
+
+    def test_settings_loads_groups_from_toml(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        config_file = tmp_path / "config.toml"
+        config_file.write_text(
+            """
+[groups.product-hero]
+description = "Models for product images"
+tags = ["product", "marketing"]
+models = ["openai/gpt-image-2", "gemini/gemini-3.1-flash-image"]
+"""
+        )
+        monkeypatch.setenv("PIXGEN_CONFIG", str(config_file))
+
+        settings = Settings()
+
+        assert settings.groups["product-hero"].models == (
+            "openai/gpt-image-2",
+            "gemini/gemini-3.1-flash-image",
+        )
+        assert settings.groups["product-hero"].description == "Models for product images"
+        assert settings.groups["product-hero"].tags == ("product", "marketing")
+
+    def test_settings_rejects_unknown_group_fields(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        config_file = tmp_path / "config.toml"
+        config_file.write_text(
+            """
+[groups.product-hero]
+description = "Models for product images"
+models = ["openai/gpt-image-2"]
+unexpected = true
+"""
+        )
+        monkeypatch.setenv("PIXGEN_CONFIG", str(config_file))
+
+        with pytest.raises(PixgenError) as exc_info:
+            load_settings()
+
+        assert exc_info.value.code is ErrorCode.INVALID_CONFIGURATION
 
 
 class TestLoadSettings:
