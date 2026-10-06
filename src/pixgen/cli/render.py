@@ -18,11 +18,19 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
 
     from pixgen.core.models import ModelSpec
-    from pixgen.core.results import CommandResult, ModelGetResult, ModelListResult
+    from pixgen.core.results import (
+        CommandResult,
+        GroupCreateResult,
+        GroupListResult,
+        ModelGetResult,
+        ModelListResult,
+    )
 
 __all__: list[str] = [
     "create_generation_progress",
     "render_command_result",
+    "render_group_create_result",
+    "render_group_list_result",
     "render_model_get_result",
     "render_model_list_result",
 ]
@@ -58,6 +66,47 @@ def render_command_result(
                 _stderr_console.print(f"  Warning: {warning}")
         elif target.error:
             _stderr_console.print(f"  {target.model} v{target.variant}: {target.error.message}")
+
+
+def render_group_create_result(result: GroupCreateResult, *, as_json: bool) -> None:
+    """Render a model-group creation result."""
+    if as_json:
+        sys.stdout.write(result.model_dump_json(indent=2) + "\n")
+        return
+
+    if result.error:
+        _stderr_console.print(f"Error: {result.error.message}")
+        return
+
+    if result.name is not None and result.config_path is not None:
+        _stdout_console.print(f"Created model group {result.name!r} in {result.config_path}")
+
+
+def render_group_list_result(result: GroupListResult, *, as_json: bool) -> None:
+    """Render a model-group listing as JSON or a tree of group details."""
+    if as_json:
+        sys.stdout.write(result.model_dump_json(indent=2) + "\n")
+        return
+
+    if result.error:
+        _stderr_console.print(f"Error: {result.error.message}")
+        return
+
+    if not result.groups:
+        _stdout_console.print("No model groups configured.")
+        return
+
+    tree = Tree(Text("Model groups"), hide_root=True)
+    for group in result.groups:
+        branch = tree.add(Text(group.name, style="green"))
+        if group.description:
+            branch.add(Text(f"description: {group.description}"))
+        if group.tags:
+            branch.add(Text(f"tags: {', '.join(group.tags)}"))
+        models = branch.add(Text("models"))
+        for model_id in group.models:
+            models.add(Text(model_id, style="cyan"))
+    _stdout_console.print(tree)
 
 
 def create_generation_progress(*, as_json: bool) -> GenerationProgress | None:

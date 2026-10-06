@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from cyclopts import App
 
+from pixgen.cli.group import build_group_app
 from pixgen.cli.image import build_operation_app
 from pixgen.cli.invoke import CommandInvoker
 from pixgen.cli.model import build_model_app
@@ -14,8 +15,13 @@ from pixgen.core.errors import PixgenError
 from pixgen.core.models import ImageOperation
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from pixgen.application import ImageApplication
     from pixgen.cli.contracts import ProviderCliFactory
+    from pixgen.cli.selector import ModelSelector
+    from pixgen.config.models import ModelGroup
+    from pixgen.config.writer import ConfigRepository
     from pixgen.providers.registry import ProviderRegistry
 
 __all__: list[str] = [
@@ -42,6 +48,9 @@ def build_app(
     application: ImageApplication,
     registry: ProviderRegistry,
     factories: tuple[ProviderCliFactory, ...],
+    group_repository: ConfigRepository,
+    groups: Mapping[str, ModelGroup] | None = None,
+    group_selector: ModelSelector | None = None,
 ) -> App:
     """Build the Pixgen app."""
     _validate_factories(registry, factories)
@@ -53,9 +62,16 @@ def build_app(
     )
     invoker = CommandInvoker(application)
 
-    app.command(build_operation_app(ImageOperation.IMAGE_CREATE, invoker, factories))
-    app.command(build_operation_app(ImageOperation.IMAGE_EDIT, invoker, factories))
+    app.command(build_operation_app(ImageOperation.IMAGE_CREATE, invoker, factories, groups=groups))
+    app.command(build_operation_app(ImageOperation.IMAGE_EDIT, invoker, factories, groups=groups))
     app.command(build_model_app(registry))
+    app.command(
+        build_group_app(
+            registry,
+            group_repository,
+            group_selector,
+        )
+    )
     app.default(default)
     app.register_install_completion_command()
 
@@ -67,11 +83,17 @@ def main() -> None:
     from pixgen.runtime import build_runtime
 
     try:
-        runtime = build_runtime()
+        runtime = build_runtime(require_config_file=sys.argv[1:2] != ["group"])
     except PixgenError as exc:
         outcome = render_outcome(failure_outcome(exc, as_json="--json" in sys.argv[1:]))
         sys.exit(outcome.__cyclopts_returncode__())
-    app = build_app(runtime.application, runtime.registry, runtime.cli_factories)
+    app = build_app(
+        runtime.application,
+        runtime.registry,
+        runtime.cli_factories,
+        runtime.group_repository,
+        groups=runtime.settings.groups,
+    )
     app()
 
 

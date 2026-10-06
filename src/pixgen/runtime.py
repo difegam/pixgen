@@ -5,6 +5,8 @@ import httpx2
 
 from pixgen.application import ImageApplication
 from pixgen.config.models import Settings, load_settings
+from pixgen.config.paths import resolve_config_path
+from pixgen.config.writer import ConfigRepository
 from pixgen.providers.gemini import GeminiProvider
 from pixgen.providers.gemini_cli import GeminiCliFactory
 from pixgen.providers.openai import OpenAIProvider
@@ -32,6 +34,7 @@ class Runtime:
     application: ImageApplication
     registry: ProviderRegistry
     settings: Settings
+    group_repository: ConfigRepository
     cli_factories: tuple[ProviderCliFactory, ...]
 
 
@@ -74,9 +77,9 @@ def get_gemini_factory(
     return make_gemini_client
 
 
-def build_runtime() -> Runtime:
+def build_runtime(*, require_config_file: bool = True) -> Runtime:
     """Construct settings, provider clients, registry, and application."""
-    settings = load_settings()
+    settings = load_settings(require_config_file=require_config_file)
 
     # OpenAI client factory - lazy initialization
     openai_factory = get_open_ai_factory(
@@ -99,5 +102,6 @@ def build_runtime() -> Runtime:
         application=application,
         registry=registry,
         settings=settings,
+        group_repository=ConfigRepository(resolve_config_path()),
         cli_factories=(OpenAICliFactory(), GeminiCliFactory()),
     )

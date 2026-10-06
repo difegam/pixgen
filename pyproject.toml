@@ -9,11 +9,13 @@ dependencies = [
     "cyclopts>=4.25.2,<5",
     "google-genai>=2.24.0",
     "httpx2>=2.12.0",
+    "inquirerpy>=0.3.4,<0.4",
     "pillow>=12.3.0",
     "platformdirs>=4.0",
     "pydantic>=2.13.5",
     "pydantic-settings>=2.15.0",
     "rich>=15.0.0",
+    "tomlkit>=0.15.1",
 ]
 
 [project.urls]

@@ -11,6 +11,7 @@ artifacts and returns versioned JSON.
 ## Capabilities
 
 - OpenAI and Google image creation, multi-reference creation, and editing.
+- Named model groups for create commands.
 - Capability-gated native image counts and explicit concurrent variants.
 - Curated model discovery with local validation before paid requests.
 - Atomic local artifacts and versioned JSON for agents and scripts.
@@ -23,15 +24,15 @@ inference are deferred.
 ## CLI
 
 Shared commands use canonical `provider/model` IDs and keep each selected
-provider's defaults. The only shared generation parameter is the strict
-`width:height` aspect ratio. Ratios are reduced to canonical form (`21:9`
-becomes `7:3`) and every selected model must support the requested value.
+provider's defaults. Root `create` accepts repeated `--model` options or a
+configured `--group`. Root `edit` accepts explicit models and the common
+strict `width:height` aspect ratio. Ratios are reduced to canonical form
+(`21:9` becomes `7:3`) and every selected model must support the requested
+value.
 
 ```bash
 pixgen create "A modern cabin beside a Norwegian fjord" \
-  --model openai/gpt-image-2 \
-  --model gemini/gemini-3.1-flash-image \
-  --aspect-ratio 16:9 \
+  --group product-hero \
   --output cabin.png
 
 pixgen edit "Remove the background" \
@@ -58,12 +59,32 @@ pixgen create gemini "A modern cabin beside a Norwegian fjord" \
   --output cabin.png
 
 pixgen create "Combine the product and visual style" \
-  --model gemini/gemini-3.1-flash-image \
+  --group product-hero \
   --reference product.png \
   --reference style.png \
-  --aspect-ratio 16:9 \
   --output campaign.png
 ```
+
+`--group` and `--model` cannot be used together. Groups apply only to root
+`create` commands. Provider-native commands keep their provider-specific
+options.
+
+Create a group explicitly with repeated model options:
+
+```bash
+pixgen group create product-hero \
+  --model openai/gpt-image-2 \
+  --model gemini/gemini-3.1-flash-image \
+  --description "Models suited to product hero images" \
+  --tag product \
+  --tag marketing
+```
+
+Omit `--model` in an interactive terminal to fuzzy-search and multi-select
+models, then enter the description and optional tags. Group names must be new;
+`group create` never replaces an existing group. The command validates models
+locally and writes the group to the resolved TOML configuration without using
+provider credentials.
 
 Use `--prompt "openai"` when the complete prompt matches a provider command
 name. `pixgen model list` and `pixgen model get <provider/model>` are offline
@@ -72,8 +93,8 @@ commands; `model get` reports native schemas and supported shared ratios.
 for a grouped tree view or machine-readable output.
 
 The old `pixgen image ...` group and generic `--param` option were removed.
-Provider-specific options belong to the provider command, while shared
-multi-model calls accept only the common aspect-ratio field.
+Provider-specific options belong to the provider command. Group descriptions
+and tags are reserved for future `group list` and `group show` commands.
 
 ## Installation
 
@@ -117,6 +138,21 @@ PIXGEN_GENERATION__MAX_JOBS=10
 PIXGEN_GENERATION__REQUEST_TIMEOUT_SECONDS=300
 PIXGEN_GENERATION__OUTPUT_DIR=./output
 ```
+
+Reusable create-only model groups live in the TOML configuration:
+
+```toml
+[groups.product-hero]
+description = "Models suited to product hero images"
+tags = ["product", "marketing"]
+models = [
+  "openai/gpt-image-2",
+  "gemini/gemini-3.1-flash-image",
+]
+```
+
+The `description` and `tags` fields are presentation metadata reserved for
+future `group list` and `group show` commands. They do not affect generation.
 
 See `.env.example` for a template. Provider credentials are never read from TOML files.
 

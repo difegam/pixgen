@@ -11,6 +11,7 @@ from pydantic import (
     Field,
     SecretStr,
     ValidationError,
+    field_validator,
     model_validator,
 )
 from pydantic_settings import (
@@ -27,9 +28,38 @@ from pixgen.core.models import ModelId
 __all__: list[str] = [
     "Defaults",
     "GenerationSettings",
+    "ModelGroup",
     "Settings",
     "load_settings",
 ]
+
+
+class ModelGroup(BaseModel):
+    """Define a named create-only group of image models."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    models: tuple[ModelId, ...] = Field(
+        min_length=1,
+        description="Ordered models selected by the group",
+    )
+    description: str = Field(min_length=1, description="Presentation description for the group")
+    tags: tuple[str, ...] = Field(default=(), description="Presentation tags for the group")
+
+    @field_validator("tags")
+    @classmethod
+    def _validate_tags(cls, tags: tuple[str, ...]) -> tuple[str, ...]:
+        if any(not tag or tag != tag.strip() for tag in tags):
+            raise ValueError("tags must be non-empty and must not have leading or trailing spaces")
+        return tags
+
+    @model_validator(mode="after")
+    def _validate_group(self) -> ModelGroup:
+        if not self.description.strip():
+            raise ValueError("description must contain a non-whitespace character")
+        if len(self.models) != len(set(self.models)):
+            raise ValueError("models must not contain duplicate model IDs")
+        return self
 
 
 class Defaults(BaseModel):
@@ -79,6 +109,10 @@ class Settings(BaseSettings):
     )
 
     defaults: Defaults = Field(default_factory=Defaults)
+    groups: dict[str, ModelGroup] = Field(
+        default_factory=dict,
+        description="Named create-only model groups",
+    )
     generation: GenerationSettings = Field(default_factory=GenerationSettings)
     openai_api_key: SecretStr | None = Field(
         default=None,
@@ -90,6 +124,12 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("PIXGEN_GEMINI_API_KEY", "GEMINI_API_KEY"),
         description="Gemini API key",
     )
+
+    @model_validator(mode="after")
+    def _validate_group_names(self) -> Settings:
+        if any(not name for name in self.groups):
+            raise ValueError("group names must not be empty")
+        return self
 
     @classmethod
     def settings_customise_sources(
@@ -105,21 +145,21 @@ class Settings(BaseSettings):
         toml_source = TomlConfigSettingsSource(settings_cls, toml_file=config_path)
         return (init_settings, env_settings, dotenv_settings, toml_source)
 
-    @model_validator(mode="after")
-    def _validate_toml_file(self) -> Settings:
-        config_path = resolve_config_path()
-        env_path = os.environ.get("PIXGEN_CONFIG")
-        if env_path and not config_path.is_file():
-            raise PixgenError(
-                ErrorCode.INVALID_CONFIGURATION,
-                f"PIXGEN_CONFIG file not found: {config_path}",
-            )
-        return self
 
-
-def load_settings() -> Settings:
+def load_settings(*, require_config_file: bool = True) -> Settings:
     """Load settings, mapping validation errors to PixgenError."""
     try:
+        if require_config_file:
+            _require_explicit_config_file()
         return Settings()
     except (OSError, tomllib.TOMLDecodeError, ValidationError, ValueError) as exc:
         raise PixgenError(ErrorCode.INVALID_CONFIGURATION, str(exc)) from exc
+
+
+def _require_explicit_config_file() -> None:
+    config_path = resolve_config_path()
+    if os.environ.get("PIXGEN_CONFIG") and not config_path.is_file():
+        raise PixgenError(
+            ErrorCode.INVALID_CONFIGURATION,
+            f"PIXGEN_CONFIG file not found: {config_path}",
+        )
