@@ -202,8 +202,13 @@ def save_artifact(plan: OutputPlan, data: bytes, media_type: str) -> ArtifactWri
     """Publish provider bytes according to an output plan."""
     warning = _check_extension_mismatch(plan, media_type)
     warnings = (warning,) if warning else ()
-    write_atomic(plan.path, data, overwrite=plan.overwrite)
-    return ArtifactWriteResult(path=plan.path, warnings=warnings)
+    path = plan.path
+    if not plan.explicit_path:
+        extension = MIME_TO_EXTENSION.get(media_type)
+        if extension is not None:
+            path = path.with_suffix(f".{extension}")
+    write_atomic(path, data, overwrite=plan.overwrite)
+    return ArtifactWriteResult(path=path, warnings=warnings)
 
 
 def write_atomic(path: Path, data: bytes, *, overwrite: bool = False) -> None:

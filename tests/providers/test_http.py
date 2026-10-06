@@ -23,6 +23,16 @@ class TestMakeHttpClientFactory:
             is None
         )
 
+    def test_returns_none_for_empty_key(self) -> None:
+        assert (
+            http.make_http_client_factory(
+                SecretStr(""),
+                base_url="https://api.example.test/v1",
+                request_timeout_seconds=12,
+            )
+            is None
+        )
+
     def test_creates_authenticated_client_lazily(self, monkeypatch) -> None:
         calls: list[dict[str, object]] = []
 

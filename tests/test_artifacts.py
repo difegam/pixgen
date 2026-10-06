@@ -112,3 +112,27 @@ class TestPlanOutput:
         assert result.path == path
         assert result.warnings
         assert path.read_bytes() == b"jpeg-bytes"
+
+    def test_save_artifact_finalises_generated_suffix_from_media_type(self, tmp_path: Path) -> None:
+        plan = OutputPlan(
+            model_id="openrouter/meta/muse-image",
+            variant=1,
+            path=tmp_path / "run-openrouter-meta-muse-image-v1.png",
+        )
+
+        result = save_artifact(plan, b"webp-bytes", "image/webp")
+
+        expected = tmp_path / "run-openrouter-meta-muse-image-v1.webp"
+        assert result.path == expected
+        assert result.warnings == ()
+        assert expected.read_bytes() == b"webp-bytes"
+        assert not plan.path.exists()
+
+    def test_save_artifact_keeps_generated_suffix_for_unknown_media_type(
+        self, tmp_path: Path
+    ) -> None:
+        plan = OutputPlan(model_id="m", variant=1, path=tmp_path / "out-v1.png")
+
+        result = save_artifact(plan, b"bytes", "image/avif")
+
+        assert result.path == plan.path
