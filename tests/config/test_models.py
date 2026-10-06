@@ -114,7 +114,7 @@ class TestSettings:
         monkeypatch.delenv("PIXGEN_GEMINI_API_KEY", raising=False)
         monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
         monkeypatch.delenv("PIXGEN_OPENROUTER_API_KEY", raising=False)
-        settings = Settings(_env_file=None)
+        settings = Settings()
         assert settings.defaults.image_create_models == ("openai/gpt-image-2",)
         assert settings.groups == {}
         assert settings.openai_api_key is None
@@ -258,3 +258,59 @@ class TestLoadSettings:
         monkeypatch.setenv("PIXGEN_CONFIG", "relative/path.toml")
         with pytest.raises(PixgenError, match="must be an absolute path"):
             load_settings()
+
+
+class TestDotenvHandling:
+    """Tests for .env file handling."""
+
+    @pytest.fixture(autouse=True)
+    def _isolate(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        for name in (
+            "PIXGEN_CONFIG",
+            "OPENAI_API_KEY",
+            "GEMINI_API_KEY",
+            "PIXGEN_OPENAI_API_KEY",
+            "PIXGEN_GEMINI_API_KEY",
+        ):
+            monkeypatch.delenv(name, raising=False)
+        monkeypatch.setattr("pixgen.config.models.resolve_config_path", lambda: tmp_path / "x.toml")
+        monkeypatch.setattr(
+            "pixgen.config.models.resolve_env_file_path", lambda: tmp_path / "cfg" / ".env"
+        )
+
+    def test_unrelated_cwd_dotenv_does_not_crash(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        cwd = tmp_path / "work"
+        cwd.mkdir()
+        (cwd / ".env").write_text("DATABASE_URL=x\nDEBUG=1\n")
+        monkeypatch.chdir(cwd)
+        assert load_settings().openai_api_key is None
+
+    def test_cwd_dotenv_keys_are_not_read(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        cwd = tmp_path / "work"
+        cwd.mkdir()
+        (cwd / ".env").write_text("OPENAI_API_KEY=from-cwd\n")
+        monkeypatch.chdir(cwd)
+        assert load_settings().openai_api_key is None
+
+    def test_config_dir_dotenv_loads_keys_and_ignores_unrelated(self, tmp_path: Path) -> None:
+        env_dir = tmp_path / "cfg"
+        env_dir.mkdir()
+        (env_dir / ".env").write_text("OPENAI_API_KEY=from-config\nDATABASE_URL=x\n")
+        settings = load_settings()
+        assert settings.openai_api_key is not None
+        assert settings.openai_api_key.get_secret_value() == "from-config"
+
+    def test_environment_overrides_config_dir_dotenv(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        env_dir = tmp_path / "cfg"
+        env_dir.mkdir()
+        (env_dir / ".env").write_text("OPENAI_API_KEY=from-file\n")
+        monkeypatch.setenv("OPENAI_API_KEY", "from-env")
+        settings = load_settings()
+        assert settings.openai_api_key is not None
+        assert settings.openai_api_key.get_secret_value() == "from-env"
