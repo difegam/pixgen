@@ -49,6 +49,26 @@ class TestPlanOutput:
                 declared_media_types={"openai/gpt-image-2": "image/jpeg"},
             )
 
+    @pytest.mark.parametrize(
+        ("model_id", "expected"),
+        [
+            ("openai/gpt-image-2", "openai-gpt-image-2-v1"),
+            ("openrouter/meta/muse-image", "openrouter-meta-muse-image-v1"),
+        ],
+    )
+    def test_generated_name_stays_in_output_dir(
+        self, tmp_path: Path, model_id: str, expected: str
+    ) -> None:
+        (plan,) = plan_output(
+            model_ids=[model_id],
+            variants=1,
+            output_dir=tmp_path,
+            run_id="run1",
+        )
+
+        assert plan.path.parent == tmp_path
+        assert expected in plan.path.name
+
     def test_rejects_existing_output_directory_file(self, tmp_path: Path) -> None:
         output_dir = tmp_path / "output"
         output_dir.write_bytes(b"file")
@@ -92,3 +112,27 @@ class TestPlanOutput:
         assert result.path == path
         assert result.warnings
         assert path.read_bytes() == b"jpeg-bytes"
+
+    def test_save_artifact_finalises_generated_suffix_from_media_type(self, tmp_path: Path) -> None:
+        plan = OutputPlan(
+            model_id="openrouter/meta/muse-image",
+            variant=1,
+            path=tmp_path / "run-openrouter-meta-muse-image-v1.png",
+        )
+
+        result = save_artifact(plan, b"webp-bytes", "image/webp")
+
+        expected = tmp_path / "run-openrouter-meta-muse-image-v1.webp"
+        assert result.path == expected
+        assert result.warnings == ()
+        assert expected.read_bytes() == b"webp-bytes"
+        assert not plan.path.exists()
+
+    def test_save_artifact_keeps_generated_suffix_for_unknown_media_type(
+        self, tmp_path: Path
+    ) -> None:
+        plan = OutputPlan(model_id="m", variant=1, path=tmp_path / "out-v1.png")
+
+        result = save_artifact(plan, b"bytes", "image/avif")
+
+        assert result.path == plan.path

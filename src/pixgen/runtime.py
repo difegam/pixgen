@@ -1,21 +1,23 @@
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-import httpx2
-
 from pixgen.application import ImageApplication
 from pixgen.config.models import Settings, load_settings
 from pixgen.config.paths import resolve_config_path
 from pixgen.config.writer import ConfigRepository
 from pixgen.providers.gemini import GeminiProvider
 from pixgen.providers.gemini_cli import GeminiCliFactory
+from pixgen.providers.http import make_http_client_factory
 from pixgen.providers.openai import OpenAIProvider
 from pixgen.providers.openai_cli import OpenAICliFactory
+from pixgen.providers.openrouter import OpenRouterProvider
+from pixgen.providers.openrouter_cli import OpenRouterCliFactory
 from pixgen.providers.registry import ProviderRegistry
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    import httpx2
     from google.genai import Client
     from pydantic import SecretStr
 
@@ -42,17 +44,11 @@ def get_open_ai_factory(
     openai_api_key: SecretStr | None,
     request_timeout_seconds: int,
 ) -> Callable[[], httpx2.AsyncClient] | None:
-    if not openai_api_key:
-        return None
-
-    def make_openai_client() -> httpx2.AsyncClient:
-        return httpx2.AsyncClient(
-            base_url="https://api.openai.com/v1",
-            headers={"Authorization": f"Bearer {openai_api_key.get_secret_value()}"},
-            timeout=httpx2.Timeout(request_timeout_seconds),
-        )
-
-    return make_openai_client
+    return make_http_client_factory(
+        openai_api_key,
+        base_url="https://api.openai.com/v1",
+        request_timeout_seconds=request_timeout_seconds,
+    )
 
 
 def get_gemini_factory(
@@ -87,6 +83,13 @@ def build_runtime(*, require_config_file: bool = True) -> Runtime:
         settings.generation.request_timeout_seconds,
     )
 
+    # OpenRouter client factory - lazy initialization
+    openrouter_factory = make_http_client_factory(
+        settings.openrouter_api_key,
+        base_url="https://openrouter.ai/api/v1",
+        request_timeout_seconds=settings.generation.request_timeout_seconds,
+    )
+
     # Gemini client factory - lazy initialization
     gemini_factory = get_gemini_factory(
         settings.gemini_api_key,
@@ -95,7 +98,8 @@ def build_runtime(*, require_config_file: bool = True) -> Runtime:
 
     openai_provider = OpenAIProvider(None, client_factory=openai_factory)
     gemini_provider = GeminiProvider(None, client_factory=gemini_factory)
-    registry = ProviderRegistry((openai_provider, gemini_provider))
+    openrouter_provider = OpenRouterProvider(None, client_factory=openrouter_factory)
+    registry = ProviderRegistry((openai_provider, gemini_provider, openrouter_provider))
     application = ImageApplication(registry, settings)
 
     return Runtime(
@@ -103,5 +107,5 @@ def build_runtime(*, require_config_file: bool = True) -> Runtime:
         registry=registry,
         settings=settings,
         group_repository=ConfigRepository(resolve_config_path()),
-        cli_factories=(OpenAICliFactory(), GeminiCliFactory()),
+        cli_factories=(OpenAICliFactory(), GeminiCliFactory(), OpenRouterCliFactory()),
     )

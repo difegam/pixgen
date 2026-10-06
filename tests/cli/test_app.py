@@ -291,7 +291,6 @@ def test_model_get_does_not_relabel_unexpected_errors() -> None:
     [
         pytest.param(["--help"], id="help"),
         pytest.param(["--version"], id="version"),
-        pytest.param([], id="bare"),
         pytest.param(["create", "gemini", "--help"], id="subcommand-help"),
     ],
 )
@@ -301,6 +300,14 @@ def test_root_builtins_exit_successfully(app, capsys, argv) -> None:
 
     assert exc_info.value.code == 0
     assert capsys.readouterr().out
+
+
+def test_root_without_arguments_renders_help(app, capsys) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        app([])
+
+    assert exc_info.value.code == 0
+    assert "Usage: pixgen COMMAND" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize(

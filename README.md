@@ -2,7 +2,8 @@
 
 Pixgen is an open-source, local, bring-your-own-key CLI for generating and
 editing images. It gives humans and coding agents one typed command and JSON
-contract across independently authenticated Google and OpenAI accounts.
+contract across independently authenticated Google, OpenAI, and OpenRouter
+accounts.
 
 Pixgen has no hosted service or proxy. Providers own inference, billing,
 moderation, quotas, and remote retention; Pixgen writes explicit local
@@ -10,13 +11,15 @@ artifacts and returns versioned JSON.
 
 ## Capabilities
 
-- OpenAI and Google image creation, multi-reference creation, and editing.
+- Create and edit images with OpenAI, Google, or OpenRouter models that
+  support each operation.
 - Named model groups for create commands.
 - Capability-gated native image counts and explicit concurrent variants.
 - Curated model discovery with local validation before paid requests.
 - Atomic local artifacts and versioned JSON for agents and scripts.
 
-Credentials via `GEMINI_API_KEY` and `OPENAI_API_KEY` environment variables.
+Credentials use environment variables: `GEMINI_API_KEY`, `OPENAI_API_KEY`, and
+`OPENROUTER_API_KEY`.
 Video generation, OS-keyring credentials, UUIDv7 history, resumable background
 video, external provider plugins, MCP, workflow orchestration, and local
 inference are deferred.
@@ -58,12 +61,38 @@ pixgen create gemini "A modern cabin beside a Norwegian fjord" \
   --aspect-ratio 16:9 \
   --output cabin.png
 
+pixgen create openrouter "A modern cabin beside a Norwegian fjord" \
+  --model google/gemini-3.1-flash-image \
+  --resolution 2K \
+  --aspect-ratio 16:9 \
+  --output cabin.png
+
+pixgen edit openrouter "Remove the background" \
+  --image cabin.png \
+  --model openai/gpt-image-2.5-sunburst \
+  --quality high \
+  --output cabin-transparent.png
+
 pixgen create "Combine the product and visual style" \
   --group product-hero \
   --reference product.png \
   --reference style.png \
   --output campaign.png
 ```
+
+OpenRouter model IDs preserve OpenRouter's upstream model slug:
+
+- `openrouter/google/gemini-3.1-flash-image`: create and edit with up to 14
+  reference images.
+- `openrouter/meta/muse-image`: create only. Edit is not currently available
+  via the Images API because reference-image input is not documented for this
+  model.
+- `openrouter/openai/gpt-image-2.5-sunburst`: create and edit with up to 16
+  reference images.
+
+OpenRouter's model-native commands accept either the upstream slug or the full
+Pixgen ID after `--model`. Reference images use OpenRouter's [Images
+API](https://openrouter.ai/docs/guides/overview/multimodal/image-generation).
 
 `--group` and `--model` cannot be used together. Groups apply only to root
 `create` commands. Provider-native commands keep their provider-specific
@@ -126,6 +155,7 @@ Set API keys in the environment (both prefixed and unprefixed names work):
 ```bash
 OPENAI_API_KEY=sk-...        # or PIXGEN_OPENAI_API_KEY=sk-...
 GEMINI_API_KEY=...           # or PIXGEN_GEMINI_API_KEY=...
+OPENROUTER_API_KEY=...       # or PIXGEN_OPENROUTER_API_KEY=...
 ```
 
 Optional settings (prefix `PIXGEN_`, nested with `__`):

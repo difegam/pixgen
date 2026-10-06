@@ -32,7 +32,7 @@ type ModelId = Annotated[
     StringConstraints(
         min_length=3,
         max_length=200,
-        pattern=r"^[a-z0-9][a-z0-9-]*/[a-z0-9][a-z0-9._-]*$",
+        pattern=r"^[a-z0-9][a-z0-9-]*/[a-z0-9][a-z0-9._-]*(?:/[a-z0-9][a-z0-9._-]*)*$",
     ),
 ]
 type JsonObject = dict[str, JsonValue]

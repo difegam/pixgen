@@ -1,7 +1,5 @@
 """OpenAI image generation adapter."""
 
-import base64
-import binascii
 import json
 from datetime import date
 from typing import TYPE_CHECKING, Literal
@@ -23,15 +21,14 @@ from pixgen.core.requests import (
     ImageEditIntent,
     ValidatedImageRequest,
 )
-from pixgen.providers.base import (
-    PreparedImageRequest,
-    ProviderImage,
-)
+from pixgen.providers.http import decode_base64_image
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     import httpx2
+
+    from pixgen.providers.base import PreparedImageRequest, ProviderImage
 
 __all__: list[str] = [
     "OPENAI_CATALOGUE",
@@ -290,11 +287,12 @@ def _decode_image_response(payload: object) -> ProviderImage:
     """Validate and decode an OpenAI image response without exposing payload data."""
     try:
         response = _OpenAIImageResponse.model_validate(payload)
-        image_bytes = base64.b64decode(response.data[0].b64_json, validate=True)
-    except (ValidationError, ValueError, binascii.Error) as exc:
+    except ValidationError as exc:
         raise ProviderError(
             ErrorCode.PROVIDER_FAILURE, "OpenAI returned an invalid image response"
         ) from exc
-    if not image_bytes:
-        raise ProviderError(ErrorCode.PROVIDER_FAILURE, "OpenAI returned an empty image")
-    return ProviderImage(image_bytes, f"image/{response.output_format}")
+    return decode_base64_image(
+        response.data[0].b64_json,
+        media_type=f"image/{response.output_format}",
+        provider_name="OpenAI",
+    )

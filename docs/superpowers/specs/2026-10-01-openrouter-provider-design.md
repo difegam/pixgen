@@ -73,7 +73,8 @@ capability records:
 - GPT Image 2.5 Sunburst: `aspect_ratio`, `quality` (`auto`, `low`, `medium`,
   `high`, `xhigh`, `max`), `background` (`auto`, `transparent`, `opaque`), and
   `output_compression` (0–100). Its supported aspect ratios are `1:1`, `3:2`,
-  `2:3`, `4:3`, `3:4`, `16:9`, `9:16`, and `21:9`.
+  `2:3`, `4:3`, `3:4`, `16:9`, `9:16`, `21:9`, and `auto`. `auto` is a
+  model-native setting, not a shared aspect-ratio choice.
 - Muse Image: no provider-native parameters until the Images API publishes
   supported parameters for it.
 
