@@ -12,6 +12,7 @@ from pydantic import ValidationError
 from pixgen.cli.render import (
     render_command_result,
     render_group_create_result,
+    render_group_list_result,
     render_model_get_result,
     render_model_list_result,
 )
@@ -19,6 +20,7 @@ from pixgen.core.errors import ErrorCode, PixgenError, validation_message
 from pixgen.core.results import (
     CommandResult,
     GroupCreateResult,
+    GroupListResult,
     ModelGetResult,
     ModelListResult,
     PublicError,
@@ -38,7 +40,9 @@ __all__: list[str] = [
     "render_outcome",
 ]
 
-type PublicResult = CommandResult | GroupCreateResult | ModelGetResult | ModelListResult
+type PublicResult = (
+    CommandResult | GroupCreateResult | GroupListResult | ModelGetResult | ModelListResult
+)
 
 
 class ExitStatus(IntEnum):
@@ -89,6 +93,8 @@ def render_outcome[T](outcome: T) -> T:
             )
         case GroupCreateResult() as result:
             render_group_create_result(result, as_json=outcome.as_json)
+        case GroupListResult() as result:
+            render_group_list_result(result, as_json=outcome.as_json)
         case ModelGetResult() as result:
             render_model_get_result(result, as_json=outcome.as_json)
         case ModelListResult() as result:

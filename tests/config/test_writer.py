@@ -89,7 +89,21 @@ models = ["openai/gpt-image-2"]
             ConfigRepository(config_path).create_group("product-hero", _group())
 
         assert exc_info.value.code is ErrorCode.INVALID_REQUEST
+        assert "pixgen group edit product-hero" in exc_info.value.message
         assert config_path.read_text() == original
+
+    def test_list_groups_returns_empty_without_config_file(self, tmp_path: Path) -> None:
+        assert ConfigRepository(tmp_path / "missing.toml").list_groups() == {}
+
+    def test_list_groups_returns_saved_groups_in_order(self, tmp_path: Path) -> None:
+        repository = ConfigRepository(tmp_path / "pixgen.toml")
+        repository.create_group("zeta", _group())
+        repository.create_group("alpha", _group())
+
+        groups = repository.list_groups()
+
+        assert list(groups) == ["zeta", "alpha"]
+        assert groups["alpha"] == _group()
 
     def test_rejects_malformed_existing_toml_without_writing(self, tmp_path: Path) -> None:
         config_path = tmp_path / "pixgen.toml"
@@ -116,6 +130,64 @@ models = ["openai/gpt-image-2"]
 
         assert exc_info.value.code is ErrorCode.INVALID_CONFIGURATION
         assert not config_path.exists()
+
+    def test_create_group_preserves_comments(self, tmp_path: Path) -> None:
+        config_path = tmp_path / "pixgen.toml"
+        config_path.write_text(
+            """# my config
+[defaults]
+image_create_models = ["openai/gpt-image-2"]  # keep me
+
+[groups.existing]
+description = "Existing group"
+models = ["openai/gpt-image-2"]
+"""
+        )
+
+        ConfigRepository(config_path).create_group("product-hero", _group())
+
+        text = config_path.read_text()
+        assert text.startswith("# my config\n[defaults]\n")
+        assert 'image_create_models = ["openai/gpt-image-2"]  # keep me' in text
+        assert "[groups.product-hero]" in text
+
+    def test_create_group_does_not_materialise_defaults(self, tmp_path: Path) -> None:
+        config_path = tmp_path / "pixgen.toml"
+        config_path.write_text(
+            '[groups.existing]\ndescription = "Old"\nmodels = ["openai/gpt-image-2"]\n'
+        )
+
+        ConfigRepository(config_path).create_group("product-hero", _group())
+
+        text = config_path.read_text()
+        assert "[defaults]" not in text
+        assert "[generation]" not in text
+
+    def test_create_group_preserves_unknown_sections(self, tmp_path: Path) -> None:
+        config_path = tmp_path / "pixgen.toml"
+        config_path.write_text('[providers]\nname = "x"\n')
+
+        ConfigRepository(config_path).create_group("product-hero", _group())
+
+        assert '[providers]\nname = "x"' in config_path.read_text()
+
+    def test_group_name_needing_quotes_round_trips(self, tmp_path: Path) -> None:
+        repository = ConfigRepository(tmp_path / "pixgen.toml")
+
+        repository.create_group("we ird.name", _group())
+
+        assert repository.list_groups() == {"we ird.name": _group()}
+
+    def test_rejects_inline_groups_table_without_writing(self, tmp_path: Path) -> None:
+        config_path = tmp_path / "pixgen.toml"
+        original = "groups = {}\n"
+        config_path.write_text(original)
+
+        with pytest.raises(PixgenError) as exc_info:
+            ConfigRepository(config_path).create_group("product-hero", _group())
+
+        assert exc_info.value.code is ErrorCode.INVALID_CONFIGURATION
+        assert config_path.read_text() == original
 
     def test_serialised_output_excludes_credentials(self, tmp_path: Path) -> None:
         config_path = tmp_path / "pixgen.toml"

@@ -1,15 +1,20 @@
 """Write validated Pixgen configuration changes atomically."""
 
-import json
-import re
-import tomllib
-from pathlib import Path
+from typing import TYPE_CHECKING
 
+import tomlkit
 from pydantic import ValidationError
+from tomlkit.exceptions import TOMLKitError
+from tomlkit.items import Table
 
 from pixgen.artifacts import write_atomic
-from pixgen.config.models import ModelGroup, Settings
+from pixgen.config.models import Defaults, GenerationSettings, ModelGroup
 from pixgen.core.errors import ErrorCode, PixgenError
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from tomlkit.toml_document import TOMLDocument
 
 __all__: list[str] = [
     "ConfigRepository",
@@ -29,79 +34,60 @@ class ConfigRepository:
 
     def create_group(self, name: str, group: ModelGroup) -> None:
         """Create a new model group without replacing an existing group."""
-        try:
-            settings = self._load_settings()
-            if name in settings.groups:
-                raise PixgenError(ErrorCode.INVALID_REQUEST, f"model group already exists: {name}")
-            updated = settings.model_copy(
-                update={"groups": {**settings.groups, name: group}},
+        document, groups = self._load_document()
+        if name in groups:
+            raise PixgenError(
+                ErrorCode.INVALID_REQUEST,
+                f"model group already exists: {name}. Use 'pixgen group edit {name}' to change it.",
             )
-            data = _serialise_settings(updated).encode()
+        try:
+            _groups_table(document)[name] = _group_table(group)
+            data = tomlkit.dumps(document).encode()
             write_atomic(self._path, data, overwrite=True)
-        except PixgenError:
-            raise
-        except (OSError, tomllib.TOMLDecodeError, ValidationError, ValueError) as exc:
+        except (OSError, ValueError, TOMLKitError) as exc:
             raise PixgenError(
                 ErrorCode.INVALID_CONFIGURATION,
                 f"cannot write configuration: {self._path}: {exc}",
             ) from exc
 
-    def _load_settings(self) -> Settings:
-        if not self._path.exists():
-            return Settings.model_validate({})
-        with self._path.open("rb") as file:
-            raw = tomllib.load(file)
-        return Settings.model_validate(raw)
+    def list_groups(self) -> dict[str, ModelGroup]:
+        """Return the configured model groups in file order."""
+        return self._load_document()[1]
+
+    def _load_document(self) -> tuple[TOMLDocument, dict[str, ModelGroup]]:
+        try:
+            text = self._path.read_text(encoding="utf-8") if self._path.exists() else ""
+            document = tomlkit.parse(text)
+            raw = document.unwrap()
+            groups = raw.get("groups", {})
+            if not isinstance(groups, dict):
+                raise ValueError("groups must be a table")
+            if any(not group_name for group_name in groups):
+                raise ValueError("group names must not be empty")
+            Defaults.model_validate(raw.get("defaults", {}))
+            GenerationSettings.model_validate(raw.get("generation", {}))
+            validated = {key: ModelGroup.model_validate(value) for key, value in groups.items()}
+        except (OSError, TOMLKitError, ValidationError, ValueError) as exc:
+            raise PixgenError(
+                ErrorCode.INVALID_CONFIGURATION,
+                f"cannot read configuration: {self._path}: {exc}",
+            ) from exc
+        return document, validated
 
 
-def _serialise_settings(settings: Settings) -> str:
-    lines: list[str] = []
-    lines.extend(_serialise_table("defaults", settings.defaults.model_dump(mode="python")))
-    lines.extend(_serialise_table("generation", settings.generation.model_dump(mode="python")))
-    for name, group in settings.groups.items():
-        lines.append("")
-        lines.append(f"[groups.{_toml_key(name)}]")
-        lines.extend(
-            _serialise_fields(
-                {
-                    "description": group.description,
-                    "tags": group.tags,
-                    "models": group.models,
-                }
-            )
-        )
-    return "\n".join(lines) + "\n"
+def _groups_table(document: TOMLDocument) -> Table:
+    """Return the standard ``[groups]`` table, creating it when absent."""
+    if "groups" not in document:
+        document["groups"] = tomlkit.table(is_super_table=True)
+    groups = document["groups"]
+    if not isinstance(groups, Table):
+        raise ValueError("groups must be a standard table, not an inline table")
+    return groups
 
 
-def _serialise_table(name: str, values: dict[str, object]) -> list[str]:
-    lines = [f"[{name}]"]
-    lines.extend(_serialise_fields(values))
-    return lines
-
-
-def _serialise_fields(values: dict[str, object]) -> list[str]:
-    return [f"{key} = {_toml_value(value)}" for key, value in values.items() if value is not None]
-
-
-def _toml_value(value: object) -> str:
-    if isinstance(value, Path):
-        return _toml_string(str(value))
-    if isinstance(value, str):
-        return _toml_string(value)
-    if isinstance(value, tuple):
-        return "[" + ", ".join(_toml_value(item) for item in value) + "]"
-    if isinstance(value, list):
-        return "[" + ", ".join(_toml_value(item) for item in value) + "]"
-    if isinstance(value, (int, float, bool)):
-        return str(value).lower() if isinstance(value, bool) else str(value)
-    raise TypeError(f"unsupported TOML value: {type(value).__name__}")
-
-
-def _toml_string(value: str) -> str:
-    return json.dumps(value, ensure_ascii=False)
-
-
-def _toml_key(value: str) -> str:
-    if re.fullmatch(r"[A-Za-z0-9_-]+", value):
-        return value
-    return _toml_string(value)
+def _group_table(group: ModelGroup) -> Table:
+    table = tomlkit.table()
+    table.add("description", group.description)
+    table.add("tags", list(group.tags))
+    table.add("models", list(group.models))
+    return table

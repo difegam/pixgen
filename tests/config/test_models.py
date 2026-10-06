@@ -103,8 +103,11 @@ class TestGenerationSettings:
 class TestSettings:
     """Tests for Settings model."""
 
-    def test_defaults_without_config_file(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_defaults_without_config_file(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
         monkeypatch.delenv("PIXGEN_CONFIG", raising=False)
+        monkeypatch.setattr("pixgen.config.models.resolve_config_path", lambda: tmp_path / "x.toml")
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         monkeypatch.delenv("GEMINI_API_KEY", raising=False)
         monkeypatch.delenv("PIXGEN_OPENAI_API_KEY", raising=False)

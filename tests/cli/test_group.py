@@ -8,9 +8,10 @@ import pytest
 from pixgen.cli.group import build_group_app
 from pixgen.cli.outcome import CliOutcome, exit_status, render_outcome
 from pixgen.cli.selector import InteractiveGroupSelection
+from pixgen.config.models import ModelGroup
 from pixgen.config.writer import ConfigRepository
 from pixgen.core.errors import ErrorCode
-from pixgen.core.results import GroupCreateResult
+from pixgen.core.results import GroupCreateResult, GroupListResult
 from pixgen.providers.gemini import GeminiProvider
 from pixgen.providers.openai import OpenAIProvider
 from pixgen.providers.registry import ProviderRegistry
@@ -21,8 +22,6 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from cyclopts import App
-
-    from pixgen.config.models import ModelGroup
 
 
 class RecordingRepository:
@@ -233,7 +232,72 @@ models = ["openai/gpt-image-2"]
 
     assert outcome.result.error is not None
     assert outcome.result.error.code is ErrorCode.INVALID_REQUEST
+    assert "pixgen group edit product-hero" in outcome.result.error.message
+    assert exit_status(outcome.result) == 2
     assert "Original" in config_path.read_text()
+
+
+def _seeded_repository(tmp_path: Path) -> ConfigRepository:
+    repository = ConfigRepository(tmp_path / "config.toml")
+    repository.create_group(
+        "fast",
+        ModelGroup(
+            models=("openai/gpt-image-2", "gemini/gemini-3.1-flash-image"),
+            description="Quick drafts",
+            tags=("draft", "cheap"),
+        ),
+    )
+    return repository
+
+
+@pytest.mark.parametrize("alias", ["list", "ls"])
+def test_group_list_aliases_return_group_summaries(tmp_path: Path, alias: str) -> None:
+    app = build_group_app(_registry(), _seeded_repository(tmp_path))
+    command, bound = _parse(app, [alias])
+
+    outcome = command(*bound.args, **bound.kwargs)
+
+    assert isinstance(outcome.result, GroupListResult)
+    (summary,) = outcome.result.groups
+    assert summary.name == "fast"
+    assert summary.description == "Quick drafts"
+    assert summary.tags == ("draft", "cheap")
+    assert summary.models == ("openai/gpt-image-2", "gemini/gemini-3.1-flash-image")
+
+
+def test_group_list_renders_tree_with_details(tmp_path: Path, capsys) -> None:
+    app = build_group_app(_registry(), _seeded_repository(tmp_path))
+    command, bound = _parse(app, ["list"])
+
+    render_outcome(command(*bound.args, **bound.kwargs))
+
+    out = capsys.readouterr().out
+    assert "fast" in out
+    assert "description: Quick drafts" in out
+    assert "tags: draft, cheap" in out
+    assert "openai/gpt-image-2" in out
+    assert "gemini/gemini-3.1-flash-image" in out
+    assert "├──" in out or "└──" in out
+
+
+def test_group_list_reports_when_empty(tmp_path: Path, capsys) -> None:
+    app = build_group_app(_registry(), ConfigRepository(tmp_path / "config.toml"))
+    command, bound = _parse(app, ["ls"])
+
+    render_outcome(command(*bound.args, **bound.kwargs))
+
+    assert "No model groups configured." in capsys.readouterr().out
+
+
+def test_group_list_json(tmp_path: Path, capsys) -> None:
+    app = build_group_app(_registry(), _seeded_repository(tmp_path))
+    command, bound = _parse(app, ["list", "--json"])
+
+    render_outcome(command(*bound.args, **bound.kwargs))
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["groups"][0]["name"] == "fast"
+    assert payload["groups"][0]["models"][0] == "openai/gpt-image-2"
 
 
 def test_json_result_excludes_group_metadata(tmp_path: Path, capsys) -> None:

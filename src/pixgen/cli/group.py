@@ -13,7 +13,12 @@ from pixgen.cli.selector import (
 )
 from pixgen.config.models import ModelGroup
 from pixgen.core.errors import ErrorCode, PixgenError
-from pixgen.core.results import GroupCreateResult, PublicError
+from pixgen.core.results import (
+    GroupCreateResult,
+    GroupListResult,
+    GroupSummary,
+    PublicError,
+)
 
 if TYPE_CHECKING:
     from pixgen.config.writer import ConfigRepository
@@ -29,13 +34,18 @@ def _group_create_error(error: PublicError) -> GroupCreateResult:
     return GroupCreateResult(error=error)
 
 
+def _group_list_error(error: PublicError) -> GroupListResult:
+    """Wrap a group listing failure in a group list result."""
+    return GroupListResult(error=error)
+
+
 def build_group_app(
     registry: ProviderRegistry,
     repository: ConfigRepository,
     selector: ModelSelector | None = None,
 ) -> App:
     """Build the model-group command app."""
-    app = App(name="group", help="Create reusable groups of image models.")
+    app = App(name="group", help="Create and list reusable groups of image models.")
     active_selector = selector or InteractiveModelSelector()
 
     @app.command(name="create")
@@ -78,6 +88,16 @@ def build_group_app(
             GroupCreateResult(name=name, config_path=repository.path),
             as_json=json,
         )
+
+    @app.command(name="list", alias=["ls"])
+    @cli_command(_group_list_error)
+    def list_groups(*, json: bool = False) -> CliOutcome:
+        """List configured model groups as a tree."""
+        groups = repository.list_groups()
+        summaries = tuple(
+            GroupSummary(name=name, **group.model_dump()) for name, group in groups.items()
+        )
+        return CliOutcome(GroupListResult(groups=summaries), as_json=json)
 
     return app
 

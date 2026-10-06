@@ -10,6 +10,8 @@ from pixgen.core.models import JsonSchema, ModelId, ModelSpec
 __all__: list[str] = [
     "CommandResult",
     "GroupCreateResult",
+    "GroupListResult",
+    "GroupSummary",
     "ModelGetResult",
     "ModelListResult",
     "PublicError",
@@ -84,6 +86,27 @@ class GroupCreateResult(BaseModel):
         if has_success == (self.error is not None):
             raise ValueError("a group result requires success details or one command error")
         return self
+
+
+class GroupSummary(BaseModel):
+    """Public description of one configured model group."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    name: str = Field(description="Model group name")
+    description: str | None = Field(default=None, description="Model group description")
+    tags: tuple[str, ...] = Field(default=(), description="Model group tags")
+    models: tuple[ModelId, ...] = Field(default=(), description="Member model IDs in order")
+
+
+class GroupListResult(BaseModel):
+    """Public result envelope for model-group listing."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    schema_version: Literal["1"] = "1"
+    groups: tuple[GroupSummary, ...] = Field(default=(), description="Configured model groups")
+    error: PublicError | None = Field(default=None, description="Command-level error if any")
 
 
 class ModelListResult(BaseModel):
