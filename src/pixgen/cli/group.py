@@ -71,6 +71,11 @@ def build_group_app(
                 tags=tuple(tag or ()),
             )
         else:
+            if json:
+                raise PixgenError(
+                    ErrorCode.INVALID_REQUEST,
+                    "at least one --model is required with --json",
+                )
             if not _is_interactive_terminal():
                 raise PixgenError(
                     ErrorCode.INVALID_REQUEST,

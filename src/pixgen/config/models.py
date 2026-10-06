@@ -145,21 +145,21 @@ class Settings(BaseSettings):
         toml_source = TomlConfigSettingsSource(settings_cls, toml_file=config_path)
         return (init_settings, env_settings, dotenv_settings, toml_source)
 
-    @model_validator(mode="after")
-    def _validate_toml_file(self) -> Settings:
-        config_path = resolve_config_path()
-        env_path = os.environ.get("PIXGEN_CONFIG")
-        if env_path and not config_path.is_file():
-            raise PixgenError(
-                ErrorCode.INVALID_CONFIGURATION,
-                f"PIXGEN_CONFIG file not found: {config_path}",
-            )
-        return self
 
-
-def load_settings() -> Settings:
+def load_settings(*, require_config_file: bool = True) -> Settings:
     """Load settings, mapping validation errors to PixgenError."""
     try:
+        if require_config_file:
+            _require_explicit_config_file()
         return Settings()
     except (OSError, tomllib.TOMLDecodeError, ValidationError, ValueError) as exc:
         raise PixgenError(ErrorCode.INVALID_CONFIGURATION, str(exc)) from exc
+
+
+def _require_explicit_config_file() -> None:
+    config_path = resolve_config_path()
+    if os.environ.get("PIXGEN_CONFIG") and not config_path.is_file():
+        raise PixgenError(
+            ErrorCode.INVALID_CONFIGURATION,
+            f"PIXGEN_CONFIG file not found: {config_path}",
+        )

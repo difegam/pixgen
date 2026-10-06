@@ -11,8 +11,6 @@ from pixgen.cli.image import build_operation_app
 from pixgen.cli.invoke import CommandInvoker
 from pixgen.cli.model import build_model_app
 from pixgen.cli.outcome import RESULT_ACTION, failure_outcome, render_outcome
-from pixgen.config.paths import resolve_config_path
-from pixgen.config.writer import ConfigRepository
 from pixgen.core.errors import PixgenError
 from pixgen.core.models import ImageOperation
 
@@ -23,6 +21,7 @@ if TYPE_CHECKING:
     from pixgen.cli.contracts import ProviderCliFactory
     from pixgen.cli.selector import ModelSelector
     from pixgen.config.models import ModelGroup
+    from pixgen.config.writer import ConfigRepository
     from pixgen.providers.registry import ProviderRegistry
 
 __all__: list[str] = [
@@ -49,8 +48,8 @@ def build_app(
     application: ImageApplication,
     registry: ProviderRegistry,
     factories: tuple[ProviderCliFactory, ...],
+    group_repository: ConfigRepository,
     groups: Mapping[str, ModelGroup] | None = None,
-    group_repository: ConfigRepository | None = None,
     group_selector: ModelSelector | None = None,
 ) -> App:
     """Build the Pixgen app."""
@@ -69,7 +68,7 @@ def build_app(
     app.command(
         build_group_app(
             registry,
-            group_repository or ConfigRepository(resolve_config_path()),
+            group_repository,
             group_selector,
         )
     )
@@ -84,7 +83,7 @@ def main() -> None:
     from pixgen.runtime import build_runtime
 
     try:
-        runtime = build_runtime()
+        runtime = build_runtime(require_config_file=sys.argv[1:2] != ["group"])
     except PixgenError as exc:
         outcome = render_outcome(failure_outcome(exc, as_json="--json" in sys.argv[1:]))
         sys.exit(outcome.__cyclopts_returncode__())
@@ -92,6 +91,7 @@ def main() -> None:
         runtime.application,
         runtime.registry,
         runtime.cli_factories,
+        runtime.group_repository,
         groups=runtime.settings.groups,
     )
     app()

@@ -1,6 +1,7 @@
 """Tests for the root Pixgen command tree."""
 
 import json
+from pathlib import Path
 
 import pytest
 from cyclopts import App
@@ -10,6 +11,7 @@ from pixgen.application import ImageApplication
 from pixgen.cli.app import build_app
 from pixgen.cli.model import build_model_app
 from pixgen.config.models import Settings
+from pixgen.config.writer import ConfigRepository
 from pixgen.core.errors import ErrorCode, PixgenError
 from pixgen.core.models import ImageOperation, ModelSpec
 from pixgen.providers.gemini import GeminiProvider
@@ -53,6 +55,10 @@ class EditOnlyFactory(UnregisteredFactory):
     operations = frozenset({ImageOperation.IMAGE_EDIT})
 
 
+def _repository() -> ConfigRepository:
+    return ConfigRepository(Path("/nonexistent/pixgen.toml"))
+
+
 @pytest.fixture
 def app() -> App:
     """Build a credential-free root app for parser tests."""
@@ -61,6 +67,7 @@ def app() -> App:
         ImageApplication(registry, Settings()),
         registry,
         (OpenAICliFactory(), GeminiCliFactory()),
+        _repository(),
     )
 
 
@@ -169,6 +176,7 @@ def test_root_app_rejects_factory_without_registered_provider() -> None:
             ImageApplication(registry, Settings()),
             registry,
             (OpenAICliFactory(), GeminiCliFactory(), UnregisteredFactory()),
+            _repository(),
         )
 
 
@@ -180,6 +188,7 @@ def test_root_app_rejects_missing_provider_factory() -> None:
             ImageApplication(registry, Settings()),
             registry,
             (OpenAICliFactory(),),
+            _repository(),
         )
 
 
@@ -191,6 +200,7 @@ def test_root_app_rejects_duplicate_factory_names() -> None:
             ImageApplication(registry, Settings()),
             registry,
             (OpenAICliFactory(), OpenAICliFactory(), GeminiCliFactory()),
+            _repository(),
         )
 
 
@@ -202,6 +212,7 @@ def test_root_app_rejects_factory_operation_absent_from_provider() -> None:
             ImageApplication(registry, Settings()),
             registry,
             (EditOnlyFactory(),),
+            _repository(),
         )
 
 
@@ -209,7 +220,7 @@ def test_main_renders_configuration_error_without_traceback(monkeypatch, capsys)
     from pixgen import runtime
     from pixgen.cli.app import main
 
-    def fail_runtime() -> None:
+    def fail_runtime(**_kwargs) -> None:
         raise PixgenError(ErrorCode.INVALID_CONFIGURATION, "bad config file")
 
     monkeypatch.setattr(runtime, "build_runtime", fail_runtime)
@@ -290,3 +301,34 @@ def test_root_builtins_exit_successfully(app, capsys, argv) -> None:
 
     assert exc_info.value.code == 0
     assert capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("argv", "require_config_file"),
+    [
+        (["pixgen", "group", "create", "x"], False),
+        (["pixgen", "group", "list"], False),
+        (["pixgen", "model", "list"], True),
+        (["pixgen", "create", "prompt"], True),
+    ],
+    ids=["group-create", "group-list", "model-list", "create"],
+)
+def test_main_only_relaxes_config_file_requirement_for_group_commands(
+    monkeypatch, argv, require_config_file
+) -> None:
+    from pixgen import runtime
+    from pixgen.cli.app import main
+
+    seen: dict[str, bool] = {}
+
+    def fake_runtime(*, require_config_file: bool = True) -> None:
+        seen["value"] = require_config_file
+        raise PixgenError(ErrorCode.INVALID_CONFIGURATION, "stop")
+
+    monkeypatch.setattr(runtime, "build_runtime", fake_runtime)
+    monkeypatch.setattr("sys.argv", argv)
+
+    with pytest.raises(SystemExit):
+        main()
+
+    assert seen["value"] is require_config_file

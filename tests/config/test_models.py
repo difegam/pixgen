@@ -141,7 +141,17 @@ class TestSettings:
         missing = tmp_path / "nonexistent.toml"
         monkeypatch.setenv("PIXGEN_CONFIG", str(missing))
         with pytest.raises(PixgenError, match="file not found"):
-            Settings()
+            load_settings()
+
+    def test_pixgen_config_missing_file_allowed_when_not_required(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setenv("PIXGEN_CONFIG", str(tmp_path / "new.toml"))
+        monkeypatch.delenv("PIXGEN_GENERATION__OUTPUT_DIR", raising=False)
+
+        settings = load_settings(require_config_file=False)
+
+        assert settings.groups == {}
 
     def test_pixgen_config_valid_file(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path

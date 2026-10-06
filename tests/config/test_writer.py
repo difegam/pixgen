@@ -189,6 +189,19 @@ models = ["openai/gpt-image-2"]
         assert exc_info.value.code is ErrorCode.INVALID_CONFIGURATION
         assert config_path.read_text() == original
 
+    def test_create_group_ignores_environment_overrides(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        config_path = tmp_path / "pixgen.toml"
+        config_path.write_text(
+            '[groups.existing]\ndescription = "Old"\nmodels = ["openai/gpt-image-2"]\n'
+        )
+        monkeypatch.setenv("PIXGEN_GENERATION__OUTPUT_DIR", "leaked-output")
+
+        ConfigRepository(config_path).create_group("product-hero", _group())
+
+        assert "leaked-output" not in config_path.read_text()
+
     def test_serialised_output_excludes_credentials(self, tmp_path: Path) -> None:
         config_path = tmp_path / "pixgen.toml"
 

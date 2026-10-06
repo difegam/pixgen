@@ -212,6 +212,22 @@ def test_create_group_requires_models_when_noninteractive(
     assert repository.groups == []
 
 
+def test_create_group_json_requires_models_even_in_interactive_terminal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repository = RecordingRepository(tmp_path / "config.toml")
+    monkeypatch.setattr("pixgen.cli.group._is_interactive_terminal", lambda: True)
+    app = build_group_app(_registry(), repository, NeverSelector())
+    command, bound = _parse(app, ["create", "product-hero", "--json"])
+
+    outcome = command(*bound.args, **bound.kwargs)
+
+    assert outcome.result.error is not None
+    assert outcome.result.error.code is ErrorCode.INVALID_REQUEST
+    assert "--json" in outcome.result.error.message
+    assert repository.groups == []
+
+
 def test_duplicate_group_name_returns_invalid_request(tmp_path: Path) -> None:
     config_path = tmp_path / "config.toml"
     config_path.write_text(
