@@ -49,9 +49,9 @@ def _generate_name(
     timestamp: str,
 ) -> str:
     """Generate a unique artifact filename."""
-    provider, model = model_id.split("/", 1)
+    slug = model_id.replace("/", "-")
     ext = MIME_TO_EXTENSION.get(media_type, "png")
-    return f"{timestamp}-{run_id}-{provider}-{model}-v{variant}.{ext}"
+    return f"{timestamp}-{run_id}-{slug}-v{variant}.{ext}"
 
 
 def _ensure_directory(path: Path, *, mkdir: bool, explicit: bool, label: str) -> None:

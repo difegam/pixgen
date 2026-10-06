@@ -4,7 +4,7 @@
 
 Pixgen is an open-source, local, bring-your-own-key CLI for generating and
 editing images. People, shell scripts, CI jobs, and coding agents get one typed
-command shape across OpenAI and Gemini. Pixgen calls provider APIs directly,
+command shape across OpenAI, Gemini, and OpenRouter. Pixgen calls provider APIs directly,
 writes explicit local artifacts, and returns structured results.
 
 There is no hosted service, account, proxy, billing layer, MCP server, or
@@ -30,7 +30,7 @@ here would make this document wrong.
 - Developers using Pixgen directly from a terminal.
 - Coding agents with shell access, including Claude Code and Codex.
 - Scripts and CI jobs that require deterministic JSON and exit behavior.
-- Developers who use independently authenticated OpenAI and Gemini accounts.
+- Developers who use independently authenticated OpenAI, Gemini, and OpenRouter accounts.
 
 ## 0.1 scope
 
@@ -38,8 +38,10 @@ here would make this document wrong.
 
 - OpenAI: image creation, reference-guided creation, and image editing.
 - Gemini: image creation, reference-guided creation, and image editing.
+- OpenRouter: curated image models through its Images API. Create and edit
+  with references per model; `meta/muse-image` is create-only.
 
-Both are built-in adapters behind an internal protocol. There is no external
+All three are built-in adapters behind an internal protocol. There is no external
 plugin API in 0.1.
 
 ### User-visible capabilities
@@ -51,7 +53,8 @@ plugin API in 0.1.
 - Offline curated-model discovery with `model list` and `model get`, including
   each model's parameter schema.
 - Configured default model lists per operation and local execution limits.
-- Credentials from `OPENAI_API_KEY` and `GEMINI_API_KEY`.
+- Credentials from `OPENAI_API_KEY`, `GEMINI_API_KEY`, and
+  `OPENROUTER_API_KEY`.
 - Atomic local files, versioned JSON, stable errors, and stable exit statuses.
 
 ## Primary flow
@@ -79,8 +82,9 @@ The dependency reading list is in [`pixgen.md`](pixgen.md) under
 
 0.1 excludes video, masks, native provider batches, generation history and
 resume, cancellation of remote jobs, OS-keyring credentials, `info` and
-`doctor` commands, URL-returning providers, OpenAI-compatible and other
-third-party providers, external plugins, project configuration, live model
+`doctor` commands, URL-returning providers, generic OpenAI-compatible and other
+third-party providers (OpenRouter is the one built-in aggregator), external
+plugins, project configuration, live model
 discovery, model aliases, automatic routing or fallback, retries of paid
 submissions, MCP, local inference, audio, and 3D. The deferred list is
 "Nice to have" in [`pixgen.md`](pixgen.md).
@@ -88,7 +92,7 @@ submissions, MCP, local inference, audio, and 3D. The deferred list is
 ## Success criterion
 
 > A human or coding agent can discover a curated model, create or edit images
-> through OpenAI or Gemini, run independent variants in parallel, and consume
+> through OpenAI, Gemini, or OpenRouter, run independent variants in parallel, and consume
 > explicit local artifact paths or structured errors using only the CLI's help
 > and structured contracts.
 
@@ -105,5 +109,5 @@ guarantee that a particular account can use it.
   core paths, keep the feature adapter-specific or defer it.
 - If users converge on one provider or aggregator, stop expanding adapters and
   simplify around observed usage.
-- Do not publish a plugin API until both built-in adapters prove the internal
+- Do not publish a plugin API until the built-in adapters prove the internal
   provider contract.

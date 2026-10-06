@@ -7,7 +7,7 @@ checked-in code were reviewed).
 
 Pixgen is a local, bring-your-own-key CLI for generating and editing images.
 It gives people, shell scripts, CI jobs, and coding agents one typed command
-shape across OpenAI and Gemini. Pixgen writes explicit local artifacts and
+shape across OpenAI, Gemini, and OpenRouter. Pixgen writes explicit local artifacts and
 returns structured results for automation.
 
 The MVP succeeds when a caller can select one or more curated models, create
@@ -18,7 +18,7 @@ artifact paths or structured errors.
 
 - Create images from a prompt with ordered reference images.
 - Edit one or more ordered input images through a prompt.
-- Use built-in OpenAI and Gemini adapters.
+- Use built-in OpenAI, Gemini, and OpenRouter adapters.
 - Select repeated models and generate independent variants per model.
 - Discover curated models and their parameter schemas offline.
 - Configure default model lists and local execution limits.
@@ -195,8 +195,8 @@ an output directory always use the actual media type's extension.
 
 Pydantic Settings reads a user-level PlatformDirs TOML file. `PIXGEN_CONFIG`
 selects a different absolute TOML file. Environment values take precedence over
-the TOML file. The Settings model loads `OPENAI_API_KEY` and `GEMINI_API_KEY`
-into runtime-only `SecretStr` fields through `validation_alias`, because the
+the TOML file. The Settings model loads `OPENAI_API_KEY`, `GEMINI_API_KEY`, and
+`OPENROUTER_API_KEY` into runtime-only `SecretStr` fields through `validation_alias`, because the
 `PIXGEN_` environment prefix does not apply to them.
 
 The TOML path is resolved when settings are constructed, not at import:
@@ -229,7 +229,7 @@ overridden by `--timeout`; each request is bounded by the smaller of the
 request timeout and the time left before the run deadline. Pixgen does not
 hard-code any agent harness's tool limit. The generated TOML template does not
 write credentials.
-`runtime.py` reads the two `SecretStr` values only while constructing provider
+`runtime.py` reads the three `SecretStr` values only while constructing provider
 clients.
 
 ## Architecture
@@ -251,11 +251,15 @@ flowchart LR
     application --> registry[Provider registry]
     registry --> openai[OpenAI adapter]
     registry --> gemini[Gemini adapter]
+    registry --> openrouter[OpenRouter adapter]
     openai --> httpclient[Injected httpx2 AsyncClient]
     httpclient --> openai_api[OpenAI Images API]
     gemini --> gemini_api[Gemini SDK and API]
+    openrouter --> orclient[Injected httpx2 AsyncClient]
+    orclient --> openrouter_api[OpenRouter Images API]
     openai --> application
     gemini --> application
+    openrouter --> application
     application --> artifacts[Artifact writer]
     artifacts --> render
     render -->|human output| user
@@ -264,9 +268,11 @@ flowchart LR
 
 OpenAI uses an injected `httpx2.AsyncClient`; only its adapter owns OpenAI
 paths, payload fields, and response/error mapping. Gemini uses the official
-`google-genai` SDK. Both choices remain inside their adapter. Neither provider
-returns image URLs for these models: OpenAI GPT Image returns base64 data and
-Gemini returns inline image bytes, so the MVP has no download path.
+`google-genai` SDK. OpenRouter uses its own injected `httpx2.AsyncClient`
+against `POST /api/v1/images`. Each choice remains inside its adapter. None of
+the providers returns image URLs for these models: OpenAI GPT Image and
+OpenRouter return base64 data and Gemini returns inline image bytes, so the MVP
+has no download path.
 
 ### Image command sequence
 
@@ -653,10 +659,13 @@ fields to Pixgen codes such as `authentication_failed`, `model_not_found`,
 Gemini adapter maps SDK errors and finish reasons the same way. Raw response
 bodies, headers, and SDK exception text never reach public output.
 
-A shared HTTP transport package is deliberately absent. `httpx2` already
-provides timeouts, headers, and `MockTransport`, and only one adapter uses it.
-Extract a thin transport only when a second REST adapter, such as an
-OpenAI-compatible provider, needs the same boundary.
+The OpenRouter adapter sends the model slug, prompt, native parameters, and any
+references (as `input_references` data URLs) to `POST /images`, reads the first
+`data[].b64_json` item, and maps statuses and moderation markers to the same
+codes as OpenAI. A shared transport package is deliberately absent: `httpx2`
+already provides timeouts, headers, and `MockTransport`. The two REST adapters
+share only `providers/http.py` (`make_http_client_factory` for the lazy
+authenticated client and `decode_base64_image`).
 
 ## Image preparation
 
@@ -718,6 +727,13 @@ does not guarantee that a particular account can use it.
 | `gemini/gemini-3.1-flash-image` | Up to 10 object references; aspect ratios 1:1–21:9; sizes 1K–4K. |
 | `gemini/gemini-3.1-flash-lite-image` | Up to 14 object references; 1K only. |
 | `gemini/gemini-3-pro-image` | Up to 6 object references. |
+| `openrouter/google/gemini-3.1-flash-image` | Images API returns base64. Create and edit, up to 14 references. Parameters: `aspect_ratio` (1:1–21:9 incl. 1:4, 1:8, 4:1, 8:1), `resolution` (512, 1K, 2K, 4K). |
+| `openrouter/meta/muse-image` | Create only. Edit is unavailable because reference-image input is not documented. No native parameters. |
+| `openrouter/openai/gpt-image-2.5-sunburst` | Create and edit, up to 16 references. Parameters: `aspect_ratio`, `quality` (`auto`–`max`), `background`, `output_compression` (0–100). |
+
+OpenRouter IDs keep the upstream slug after the `openrouter/` prefix and were
+verified on 2026-10-01 against the
+[OpenRouter image generation guide](https://openrouter.ai/docs/guides/overview/multimodal/image-generation).
 
 Gemini states separate caps for object and character references. Pixgen cannot
 tell which kind a local file is, so `MediaRoleSpec.maximum` uses the documented

@@ -231,8 +231,6 @@ class OpenRouterProvider:
     def _get_client(self) -> httpx2.AsyncClient:
         if self._client is None:
             if self._client_factory is None:
-                from pixgen.core.errors import ErrorCode, ProviderError
-
                 raise ProviderError(
                     ErrorCode.CREDENTIAL_UNAVAILABLE,
                     "OpenRouter API key not configured",

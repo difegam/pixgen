@@ -49,6 +49,26 @@ class TestPlanOutput:
                 declared_media_types={"openai/gpt-image-2": "image/jpeg"},
             )
 
+    @pytest.mark.parametrize(
+        ("model_id", "expected"),
+        [
+            ("openai/gpt-image-2", "openai-gpt-image-2-v1"),
+            ("openrouter/meta/muse-image", "openrouter-meta-muse-image-v1"),
+        ],
+    )
+    def test_generated_name_stays_in_output_dir(
+        self, tmp_path: Path, model_id: str, expected: str
+    ) -> None:
+        (plan,) = plan_output(
+            model_ids=[model_id],
+            variants=1,
+            output_dir=tmp_path,
+            run_id="run1",
+        )
+
+        assert plan.path.parent == tmp_path
+        assert expected in plan.path.name
+
     def test_rejects_existing_output_directory_file(self, tmp_path: Path) -> None:
         output_dir = tmp_path / "output"
         output_dir.write_bytes(b"file")
