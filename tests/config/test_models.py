@@ -108,6 +108,9 @@ class TestSettings:
     ) -> None:
         monkeypatch.delenv("PIXGEN_CONFIG", raising=False)
         monkeypatch.setattr("pixgen.config.models.resolve_config_path", lambda: tmp_path / "x.toml")
+        monkeypatch.setattr(
+            "pixgen.config.models.resolve_env_file_path", lambda: tmp_path / "cfg" / ".env"
+        )
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         monkeypatch.delenv("GEMINI_API_KEY", raising=False)
         monkeypatch.delenv("PIXGEN_OPENAI_API_KEY", raising=False)
@@ -271,6 +274,8 @@ class TestDotenvHandling:
             "GEMINI_API_KEY",
             "PIXGEN_OPENAI_API_KEY",
             "PIXGEN_GEMINI_API_KEY",
+            "OPENROUTER_API_KEY",
+            "PIXGEN_OPENROUTER_API_KEY",
         ):
             monkeypatch.delenv(name, raising=False)
         monkeypatch.setattr("pixgen.config.models.resolve_config_path", lambda: tmp_path / "x.toml")
