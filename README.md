@@ -214,7 +214,8 @@ git push origin main vX.Y.Z
 The workflow runs the CI checks, builds with `uv build --no-sources`, smoke
 tests the wheel and source distribution, then publishes from the `pypi`
 environment once it is approved. The tag must match the version in
-`pyproject.toml`, or the workflow fails before building.
+`pyproject.toml`, or the workflow fails before building. See
+[Releasing](docs/releasing.md) for the one-time PyPI setup and troubleshooting.
 
 ## Documentation
 
@@ -222,6 +223,7 @@ environment once it is approved. The tag must match the version in
 - [Project scope](.knowledge/PROJECT.md)
 - [Architecture](.knowledge/ARCHITECTURE.md)
 - [Future ideas](.knowledge/IDEA.md)
+- [Releasing](docs/releasing.md)
 
 ## License
 
