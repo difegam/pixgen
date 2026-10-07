@@ -7,9 +7,11 @@ from platformdirs import PlatformDirs
 
 __all__: list[str] = [
     "resolve_config_path",
+    "resolve_env_file_path",
 ]
 
 _CONFIG_FILE_NAME = "config.toml"
+_ENV_FILE_NAME = ".env"
 _PIXGEN_CONFIG_ENV = "PIXGEN_CONFIG"
 
 
@@ -28,3 +30,9 @@ def resolve_config_path() -> Path:
 
     dirs = PlatformDirs(appname="pixgen")
     return dirs.user_config_path / _CONFIG_FILE_NAME
+
+
+def resolve_env_file_path() -> Path:
+    """Return the optional dotenv file path in the PlatformDirs user config directory."""
+    dirs = PlatformDirs(appname="pixgen")
+    return dirs.user_config_path / _ENV_FILE_NAME

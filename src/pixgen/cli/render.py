@@ -219,7 +219,7 @@ def _model_tree(models: Iterable[ModelSpec]) -> Tree:
             providers[model.provider] = provider
         branch = provider.add(Text(model.display_name, style="cyan"))
         branch.add(Text(f"id: {model.id}"))
-        branch.add(Text(f"ops: [{_operations_label(model)}"))
+        branch.add(Text(f"ops: {_operations_label(model)}"))
     return tree
 
 

@@ -16,12 +16,13 @@ from pydantic import (
 )
 from pydantic_settings import (
     BaseSettings,
+    DotEnvSettingsSource,
     PydanticBaseSettingsSource,
     SettingsConfigDict,
     TomlConfigSettingsSource,
 )
 
-from pixgen.config.paths import resolve_config_path
+from pixgen.config.paths import resolve_config_path, resolve_env_file_path
 from pixgen.core.errors import ErrorCode, PixgenError
 from pixgen.core.models import ModelId
 
@@ -103,7 +104,6 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="PIXGEN_",
         env_nested_delimiter="__",
-        env_file=".env",
         extra="forbid",
         frozen=True,
     )
@@ -145,10 +145,16 @@ class Settings(BaseSettings):
         dotenv_settings: PydanticBaseSettingsSource,
         file_secret_settings: PydanticBaseSettingsSource,
     ) -> tuple[PydanticBaseSettingsSource, ...]:
-        del file_secret_settings
+        del dotenv_settings, file_secret_settings
+        dotenv_source = DotEnvSettingsSource(
+            settings_cls,
+            env_file=resolve_env_file_path(),
+            env_file_encoding="utf-8",
+            dotenv_filtering="only_existing",
+        )
         config_path = resolve_config_path()
         toml_source = TomlConfigSettingsSource(settings_cls, toml_file=config_path)
-        return (init_settings, env_settings, dotenv_settings, toml_source)
+        return (init_settings, env_settings, dotenv_source, toml_source)
 
 
 def load_settings(*, require_config_file: bool = True) -> Settings:

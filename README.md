@@ -184,7 +184,7 @@ models = [
 The `description` and `tags` fields are presentation metadata reserved for
 future `group list` and `group show` commands. They do not affect generation.
 
-See `.env.example` for a template. Provider credentials are never read from TOML files.
+Provider credentials come from environment variables or an optional `.env` file in the pixgen user config directory (next to `config.toml`). A `.env` in the current directory is never read. Credentials are never read from TOML files.
 
 ## Development
 

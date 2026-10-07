@@ -8,6 +8,7 @@ from cyclopts import App
 
 from pixgen.cli.group import build_group_app
 from pixgen.cli.image import build_operation_app
+from pixgen.cli.info import build_info_command
 from pixgen.cli.invoke import CommandInvoker
 from pixgen.cli.model import build_model_app
 from pixgen.cli.outcome import RESULT_ACTION, failure_outcome, render_outcome
@@ -19,6 +20,7 @@ if TYPE_CHECKING:
 
     from pixgen.application import ImageApplication
     from pixgen.cli.contracts import ProviderCliFactory
+    from pixgen.cli.info import ReleaseChecker
     from pixgen.cli.selector import ModelSelector
     from pixgen.config.models import ModelGroup
     from pixgen.config.writer import ConfigRepository
@@ -44,6 +46,7 @@ def build_app(
     group_repository: ConfigRepository,
     groups: Mapping[str, ModelGroup] | None = None,
     group_selector: ModelSelector | None = None,
+    release_checker: ReleaseChecker | None = None,
 ) -> App:
     """Build the Pixgen app."""
     _validate_factories(registry, factories)
@@ -65,6 +68,7 @@ def build_app(
             group_selector,
         )
     )
+    app.command(build_info_command(release_checker), name="info")
     app.register_install_completion_command()
 
     return app
