@@ -4,6 +4,16 @@ version = "0.1.0"
 description = "A command-line tool for generating and managing images."
 readme = { file = "README.md", content-type = "text/markdown" }
 authors = [{ name = "Diego Gamboa", email = "difegam3@gmail.com" }]
+license = "MIT"
+license-files = ["LICENSE"]
+keywords = ["image-generation", "cli", "openai", "gemini", "openrouter"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Multimedia :: Graphics",
+]
 requires-python = ">=3.14"
 dependencies = [
     "cyclopts>=4.25.2,<5",
@@ -19,7 +29,9 @@ dependencies = [
 ]
 
 [project.urls]
+Homepage = "https://github.com/difegam/pixgen"
 Repository = "https://github.com/difegam/pixgen"
+Issues = "https://github.com/difegam/pixgen/issues"
 
 [project.scripts]
 pixgen = "pixgen.cli.app:main"

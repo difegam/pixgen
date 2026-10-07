@@ -65,3 +65,20 @@ clean:
 fresh: clean init
     uv run prek cache clean
     @echo "✅ Fresh setup complete, ready to code 🚀"
+
+[doc("Build sdist and wheel into dist/")]
+[group("release")]
+build:
+    uv build --no-sources
+
+[doc("Bump version (patch|minor|major), commit and tag; push the tag to release")]
+[group("release")]
+release bump:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    test -z "$(git status --porcelain)" || { echo "Working tree not clean" >&2; exit 1; }
+    uv version --bump {{bump}}
+    version="$(uv version --short)"
+    git commit -am "chore: release v${version}"
+    git tag "v${version}"
+    echo "Tagged v${version}. Run: git push origin main v${version}"

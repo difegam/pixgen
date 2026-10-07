@@ -127,13 +127,13 @@ and tags are reserved for future `group list` and `group show` commands.
 
 ## Installation
 
-Once published:
-
 ```bash
 uvx pixgen --help
 # or
 uv tool install pixgen
 ```
+
+Update an installed tool with `uv tool upgrade pixgen`.
 
 Pixgen requires Python 3.14 or newer.
 
@@ -199,6 +199,23 @@ just test
 just check
 ```
 
+### Releasing
+
+Releases are published to PyPI by the Release workflow when a version tag is
+pushed. Publishing uses PyPI trusted publishing (OIDC), so no token is stored,
+and uploads include PEP 740 attestations.
+
+```bash
+just build              # build sdist and wheel into dist/
+just release minor      # bump (patch|minor|major), commit, and tag vX.Y.Z
+git push origin main vX.Y.Z
+```
+
+The workflow runs the CI checks, builds with `uv build --no-sources`, smoke
+tests the wheel and source distribution, then publishes from the `pypi`
+environment once it is approved. The tag must match the version in
+`pyproject.toml`, or the workflow fails before building.
+
 ## Documentation
 
 - [Product and implementation plan](.knowledge/pixgen.md)
@@ -208,4 +225,4 @@ just check
 
 ## License
 
-Apache-2.0.
+MIT. See [LICENSE](LICENSE).
