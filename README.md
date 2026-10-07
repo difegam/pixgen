@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/difegam/pixgen/main/docs/assets/logo-dark.svg">
-    <img alt="pixgen" src="https://raw.githubusercontent.com/difegam/pixgen/main/docs/assets/logo.svg" width="360">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo-dark.svg">
+    <img alt="pixgen" src="docs/assets/logo.svg" width="360">
   </picture>
 </p>
 
@@ -30,7 +30,7 @@
 </p>
 
 <p align="center">
-  <img alt="pixgen fanning one prompt out to OpenAI, Google, and OpenRouter models, writing files atomically, and returning JSON" src="https://raw.githubusercontent.com/difegam/pixgen/main/docs/assets/demo.gif" width="720">
+  <img alt="pixgen fanning one prompt out to OpenAI, Google, and OpenRouter models, writing files atomically, and returning JSON" src="docs/assets/demo.gif" width="720">
 </p>
 
 ## Quickstart
@@ -59,17 +59,16 @@ That's it: `cabin.png` is on disk. Update later with `uv tool upgrade pixgen`.
   half-written image.
 - **Built for agents and scripts.** `--json` returns a versioned envelope with
   typed, per-target errors.
-- **No middleman.** No hosted service and no proxy. Providers own inference,
-  billing, moderation, quotas, and remote retention. Pixgen only writes local files.
+- **Bring your own keys.** Not tied to any single provider, account or subscription; pay for what you use with your own API keys.
 
 <p align="center">
-  <img alt="pixgen --json returns a versioned result envelope with per-target artifacts and typed errors" src="https://raw.githubusercontent.com/difegam/pixgen/main/docs/assets/demo/json.gif" width="880">
+  <img alt="pixgen --json returns a versioned result envelope with per-target artifacts and typed errors" src="docs/assets/demo/json.gif" width="880">
 </p>
 
 ## Providers and models
 
 | Provider | API key | Models | Create | Edit |
-|---|---|---|:-:|:-:|
+| --- | --- | --- | :-: | :-: |
 | OpenAI | `OPENAI_API_KEY` | `openai/gpt-image-2`, `openai/gpt-image-1-mini` | ✓ | ✓ |
 | Google Gemini | `GEMINI_API_KEY` | `gemini/gemini-3.1-flash-image`, `gemini/gemini-3.1-flash-lite-image`, `gemini/gemini-3-pro-image` | ✓ | ✓ |
 | OpenRouter | `OPENROUTER_API_KEY` | `openrouter/google/gemini-3.1-flash-image` (up to 14 reference images) | ✓ | ✓ |
@@ -106,7 +105,7 @@ pixgen edit "Remove the background" \
 ```
 
 <p align="center">
-  <img alt="pixgen create sends one prompt to OpenAI, Gemini, and OpenRouter at once and saves each result locally" src="https://raw.githubusercontent.com/difegam/pixgen/main/docs/assets/demo/create.gif" width="880">
+  <img alt="pixgen create sends one prompt to OpenAI, Gemini, and OpenRouter at once and saves each result locally" src="docs/assets/demo/create.gif" width="880">
 </p>
 
 Combine reference images with a prompt:
@@ -120,7 +119,7 @@ pixgen create "Combine the product and visual style" \
 ```
 
 <p align="center">
-  <img alt="pixgen edit removes the background from cabin.png and writes cabin-cutout.png" src="https://raw.githubusercontent.com/difegam/pixgen/main/docs/assets/demo/edit.gif" width="880">
+  <img alt="pixgen edit removes the background from cabin.png and writes cabin-cutout.png" src="docs/assets/demo/edit.gif" width="880">
 </p>
 
 ### Provider-native commands
@@ -191,7 +190,7 @@ or machine-readable output with `--json`. `model get` reports native parameter
 schemas and supported shared aspect ratios.
 
 <p align="center">
-  <img alt="pixgen model list --tree works offline, then pixgen group create and group ls save and show a model group" src="https://raw.githubusercontent.com/difegam/pixgen/main/docs/assets/demo/models.gif" width="880">
+  <img alt="pixgen model list --tree works offline, then pixgen group create and group ls save and show a model group" src="docs/assets/demo/models.gif" width="880">
 </p>
 
 <details>
