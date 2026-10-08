@@ -53,8 +53,11 @@ pixgen optimize SOURCE [OPTIONS]
 Options:
 
 ```text
---variant NAME=SIZE:MODE    Repeatable named output definition
 --web                       Expand the standard website preset
+--fit WIDTHxHEIGHT          Repeatable, preserve aspect ratio within bounds
+--cover WIDTHxHEIGHT        Repeatable, crop to exact dimensions
+--width PIXELS              Repeatable, scale to a width
+--height PIXELS             Repeatable, scale to a height
 --format keep|jpeg|png|webp|avif
 --quality 1..100            For lossy local encoders only
 --output PATH               Valid only when one output is planned
@@ -69,51 +72,49 @@ Options:
 
 `SOURCE` is a local regular file. Remote URLs are not accepted.
 
-### Variant grammar
+### Custom sizes
 
-```text
-NAME=WIDTHxHEIGHT:MODE
-NAME=WIDTHw:scale
-NAME=HEIGHTh:scale
-```
+Custom sizes use ordinary named CLI options rather than a packed
+`name=size:mode` expression. Each sizing option is repeatable and accepts
+positive integer dimensions. `--fit` and `--cover` accept `WIDTHxHEIGHT`;
+`--width` and `--height` accept one pixel value each. Fit preserves aspect
+ratio within the requested bounds; cover crops to exact dimensions using a
+center crop; width and height scale proportionally. Width and height options
+cannot be used together because that would imply stretching, which is not
+supported.
 
-Supported modes are `scale`, `fit`, and `cover`. Variant names match
-`[a-z][a-z0-9-]*`; dimensions are positive integers. `scale` accepts exactly
-one dimension; `fit` and `cover` require both. `cover` is a centered crop because
-Pillow does not provide Tinify-style content-aware cropping. There is no
-`thumb` mode in this release.
-
-Duplicate explicit names are rejected. An explicit variant replaces a preset
-variant of the same name in place; new explicit variants append in CLI order.
+Custom output names are derived from the operation and dimensions, for example
+`fit-400x400`, `cover-1200x630`, or `width-1280`. Custom outputs are ordered
+deterministically by option family (`fit`, `cover`, `width`, `height`) and then
+by the order values were supplied for that option. Duplicate operation-size
+pairs are rejected. `--web` keeps semantic names (`thumbnail`, `card`,
+`content`, `hero`).
 
 ### Website preset
 
 `--web` expands the following ordered set:
 
-```text
-thumbnail=400x400:cover
-card=1200x630:cover
-content=1280w:scale
-hero=1920x1080:cover
-format=webp
-quality=82
-```
+| Output | Transform | Default encoding |
+| --- | --- | --- |
+| `thumbnail` | centered crop, 400×400 | WebP, quality 82 |
+| `card` | centered crop, 1200×630 | WebP, quality 82 |
+| `content` | scale to width 1280 | WebP, quality 82 |
+| `hero` | centered crop, 1920×1080 | WebP, quality 82 |
 
-Explicit format and quality override preset defaults. Explicit same-name
-variants replace the preset variant in place. New names append in command-line
-order. No preset is persisted.
+Explicit format and quality override preset defaults. Custom size options may
+be combined with `--web`; website variants are planned first, followed by
+custom outputs in deterministic option order. No preset is persisted.
 
-If neither `--web` nor `--variant` is supplied, create one same-dimension
-result named `optimized`; the default format is `keep`.
+If neither `--web` nor any custom size option is supplied, create one
+same-dimension result named `optimized`; the default format is `keep`.
 
 ## Media and image policies
 
 Support static PNG, JPEG, WebP, and AVIF when the installed Pillow build can
 decode or encode the format. Determine capabilities from Pillow at runtime and
-report them in `pixgen info`; reject an unavailable input or output format
-before creating files. Pillow is already a runtime dependency. Do not add an
-AVIF plugin solely to duplicate support available from the installed Pillow
-build.
+reject an unavailable input or output format before creating files. Pillow is
+already a runtime dependency. Do not add an AVIF plugin solely to duplicate
+support available from the installed Pillow build.
 
 `--quality` applies only to lossy JPEG, WebP, or AVIF output. It is invalid for
 PNG. Converting transparency to JPEG is rejected; Pixgen never invents a
@@ -220,7 +221,7 @@ scope because Pixgen writes local artifacts rather than hosting images.
 Tests follow the current repository layout and use `tests/factories.py`,
 `tmp_path`, and local Pillow fixtures. No test contacts an external service.
 
-- Planner tests cover preset expansion and override order, grammar, format
+- Planner tests cover preset expansion and ordering, option parsing, format
   capability checks, alpha-to-JPEG rejection, dimensions, no-upscale skips,
   output naming, collision handling, and side-effect-free dry runs.
 - Image tests cover one decode per invocation, scale/fit/centered-cover
