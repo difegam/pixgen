@@ -206,7 +206,10 @@ def build_plan(request: OptimizeRequest, *, default_output_dir: Path | None = No
         destinations: set[Path] = set()
         for spec in specs:
             named_output = directory / f"{source.source_path.stem}-{spec.name}.{extension}"
-            destination = (request.output or named_output).resolve()
+            candidate = request.output or named_output
+            if candidate.is_symlink():
+                raise _invalid(f"output destination is a symbolic link: {candidate}")
+            destination = candidate.resolve()
             if destination in destinations:
                 raise _invalid("duplicate output destinations")
             destinations.add(destination)

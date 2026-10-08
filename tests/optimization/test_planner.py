@@ -155,6 +155,28 @@ class TestPlanning:
 
 
 class TestRejections:
+    @pytest.mark.parametrize("target_exists", [False, True], ids=["dangling", "existing"])
+    @pytest.mark.parametrize("force", [False, True], ids=["no-force", "force"])
+    @pytest.mark.parametrize("explicit", [False, True], ids=["named-output", "explicit-output"])
+    def test_rejects_leaf_output_symlinks(
+        self, source, tmp_path, target_exists, force, explicit
+    ) -> None:
+        target = tmp_path / "target.png"
+        if target_exists:
+            target.write_bytes(b"keep")
+        output = tmp_path / ("out.png" if explicit else "photo-optimized.png")
+        output.symlink_to(target)
+        options = {"output": output} if explicit else {"output_dir": tmp_path}
+
+        with pytest.raises(PixgenError, match="symbolic link") as exc_info:
+            build_plan(OptimizeRequest(source=source, force=force, **options))
+
+        assert exc_info.value.code is ErrorCode.INVALID_REQUEST
+        assert output.is_symlink()
+        assert target.exists() is target_exists
+        if target_exists:
+            assert target.read_bytes() == b"keep"
+
     def test_source_aliases_and_non_file_destinations(self, source, tmp_path) -> None:
         symlink = tmp_path / "alias.png"
         symlink.symlink_to(source)
