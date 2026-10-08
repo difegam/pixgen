@@ -1,6 +1,7 @@
 """Normalise image pixels, resize them, and encode clean local images."""
 
 from enum import StrEnum
+from fractions import Fraction
 from io import BytesIO
 from typing import assert_never
 
@@ -15,9 +16,18 @@ __all__: list[str] = [
     "ImageTransformError",
     "ResizeOperation",
     "encode_clean",
+    "fit_dimensions",
     "load_normalized",
     "resize_pixels",
+    "validate_encoding",
 ]
+
+_ENCODER_MODES: dict[str, frozenset[str]] = {
+    "JPEG": frozenset({"1", "L", "RGB", "CMYK"}),
+    "PNG": frozenset({"1", "L", "LA", "P", "RGB", "RGBA", "I;16", "I;16B"}),
+    "WEBP": frozenset({"1", "L", "LA", "P", "RGB", "RGBA"}),
+    "AVIF": frozenset({"1", "L", "LA", "P", "RGB", "RGBA"}),
+}
 
 
 class ColourProfilePolicy(StrEnum):
@@ -122,6 +132,12 @@ def _positive_dimension(value: int | None) -> int:
     return value
 
 
+def fit_dimensions(width: int, height: int, *, bounds: tuple[int, int]) -> tuple[int, int]:
+    """Calculate proportional fit dimensions with a one-pixel minimum."""
+    scale = min(Fraction(bounds[0], width), Fraction(bounds[1], height))
+    return max(1, round(width * scale)), max(1, round(height * scale))
+
+
 def resize_pixels(
     source: DecodedImage,
     *,
@@ -134,18 +150,7 @@ def resize_pixels(
     match operation:
         case ResizeOperation.FIT:
             bounds = (_positive_dimension(width), _positive_dimension(height))
-            scale = min(bounds[0] / image.width, bounds[1] / image.height)
-            size = (round(image.width * scale), round(image.height * scale))
-            if 0 in size:
-                # Pillow contain rounds extreme aspect ratios to a zero-sized axis.
-                return image.resize(
-                    (max(1, size[0]), max(1, size[1])), resample=Image.Resampling.LANCZOS
-                )
-            return ImageOps.contain(
-                image,
-                bounds,
-                method=Image.Resampling.LANCZOS,
-            )
+            size = fit_dimensions(image.width, image.height, bounds=bounds)
         case ResizeOperation.COVER:
             return ImageOps.fit(
                 image,
@@ -164,6 +169,30 @@ def resize_pixels(
     return image.resize(size, resample=Image.Resampling.LANCZOS)
 
 
+def validate_encoding(mode: str, *, output_format: str, icc_profile: bytes | None) -> None:
+    """Reject unsupported pixel modes and incompatible preserved colour profiles."""
+    output_format = output_format.upper()
+    if mode not in _ENCODER_MODES.get(output_format, ()):
+        raise ImageTransformError(f"pixel mode {mode} is unsupported for {output_format} output")
+    if icc_profile is None:
+        return
+    try:
+        with BytesIO(icc_profile) as buffer:
+            colour_space = ImageCms.ImageCmsProfile(buffer).profile.xcolor_space.strip()
+    except (OSError, ValueError, TypeError) as exc:
+        raise ImageTransformError("cannot read source colour profile") from exc
+    source_space = (
+        "CMYK" if mode == "CMYK" else "GRAY" if mode in {"1", "L", "LA", "I;16", "I;16B"} else "RGB"
+    )
+    output_space = source_space
+    if output_format == "WEBP" or (output_format == "AVIF" and mode == "LA"):
+        output_space = "RGB"
+    if colour_space != source_space or colour_space != output_space:
+        raise ImageTransformError(
+            f"cannot preserve {colour_space} colour profile with {mode} pixels in {output_format}"
+        )
+
+
 def encode_clean(
     image: Image.Image,
     *,
@@ -175,6 +204,7 @@ def encode_clean(
     output_format = output_format.upper()
     if not can_encode_format(output_format):
         raise ImageTransformError(f"encoder unavailable for {output_format}")
+    validate_encoding(image.mode, output_format=output_format, icc_profile=icc_profile)
     if quality is not None and not 0 <= quality <= 100:
         raise ImageTransformError("encoder quality must be between 0 and 100")
     try:

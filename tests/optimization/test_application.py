@@ -15,6 +15,7 @@ from pixgen.images.transform import ImageTransformError
 from pixgen.optimization import application
 from pixgen.optimization.application import OptimizeApplication
 from pixgen.optimization.models import OptimizeRequest
+from tests.factories import make_cmyk_profile
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -36,6 +37,114 @@ def app() -> OptimizeApplication:
 
 
 class TestExecution:
+    @pytest.mark.parametrize(
+        ("mode", "source_format", "output_format", "with_profile"),
+        [
+            ("CMYK", "JPEG", "webp", True),
+            ("CMYK", "JPEG", "avif", True),
+            ("CMYK", "JPEG", "png", False),
+            ("I;16", "PNG", "jpeg", False),
+        ],
+        ids=["cmyk-icc-webp", "cmyk-icc-avif", "cmyk-png", "16-bit-jpeg"],
+    )
+    @pytest.mark.parametrize("dry_run", [False, True], ids=["execute", "plan"])
+    def test_incompatible_mode_rejected_before_side_effects(
+        self, tmp_path, app, mode, source_format, output_format, with_profile, dry_run
+    ) -> None:
+        source = tmp_path / "source"
+        with Image.new(mode, (10, 10)) as image:
+            image.save(
+                source,
+                format=source_format,
+                icc_profile=make_cmyk_profile() if with_profile else None,
+            )
+        directory = tmp_path / "missing"
+        result = app.run(
+            OptimizeRequest(
+                source=source,
+                format=output_format,
+                output_dir=directory,
+                mkdir=True,
+                dry_run=dry_run,
+            )
+        )
+        assert result.error is not None
+        assert result.error.code is ErrorCode.INVALID_REQUEST
+        assert mode in result.error.message
+        assert not directory.exists()
+        assert list(tmp_path.iterdir()) == [source]
+
+    def test_cmyk_jpeg_preserves_matching_profile(self, tmp_path, app) -> None:
+        source = tmp_path / "source.jpg"
+        profile = make_cmyk_profile()
+        with BytesIO(profile) as buffer:
+            assert ImageCms.ImageCmsProfile(buffer).profile.xcolor_space == "CMYK"
+        with Image.new("CMYK", (10, 10)) as image:
+            image.save(source, icc_profile=profile)
+        destination = tmp_path / "out.jpg"
+        result = app.run(OptimizeRequest(source=source, output=destination))
+        assert result.variants[0].status is VariantStatus.COMPLETED
+        with Image.open(destination) as output:
+            assert output.mode == "CMYK"
+            assert output.info["icc_profile"] == profile
+
+    @pytest.mark.parametrize("profile_kind", ["mismatched", "invalid"], ids=str)
+    def test_incompatible_profile_rejected_during_planning(
+        self, tmp_path, app, profile_kind
+    ) -> None:
+        source = tmp_path / "source.png"
+        profile = make_cmyk_profile() if profile_kind == "mismatched" else b"invalid ICC"
+        with Image.new("RGB", (10, 10)) as image:
+            image.save(source, icc_profile=profile)
+        directory = tmp_path / "missing"
+        result = app.run(OptimizeRequest(source=source, output_dir=directory, mkdir=True))
+        assert result.error is not None
+        assert result.error.code is ErrorCode.INVALID_REQUEST
+        assert "profile" in result.error.message
+        assert not directory.exists()
+
+    @pytest.mark.parametrize(
+        ("output_format", "encoder", "source_format"),
+        [("jpeg", "jpeg_encoder", "PNG"), ("png", "zip_encoder", "JPEG")],
+        ids=["jpeg", "png"],
+    )
+    def test_missing_native_encoder_rejected_before_side_effects(
+        self, tmp_path, app, monkeypatch, output_format, encoder, source_format
+    ) -> None:
+        source = tmp_path / "source"
+        with Image.new("RGB", (10, 10)) as image:
+            image.save(source, format=source_format)
+        Image.init()
+        monkeypatch.delattr(Image.core, encoder)
+        directory = tmp_path / "missing"
+        result = app.run(
+            OptimizeRequest(source=source, format=output_format, output_dir=directory, mkdir=True)
+        )
+        assert result.error is not None
+        assert result.error.code is ErrorCode.INVALID_REQUEST
+        assert "encoder unavailable" in result.error.message
+        assert not directory.exists()
+        assert list(tmp_path.iterdir()) == [source]
+
+    @pytest.mark.parametrize(
+        ("size", "bounds", "expected"),
+        [((10, 45), "7x45", (7, 32)), ((45, 10), "45x7", (32, 7)), ((1000, 1), "1x1", (1, 1))],
+        ids=["portrait-rounding", "landscape-rounding", "one-pixel-minimum"],
+    )
+    def test_fit_planned_and_written_dimensions_agree(
+        self, tmp_path, app, size, bounds, expected
+    ) -> None:
+        source = tmp_path / "source.png"
+        with Image.new("RGB", size) as image:
+            image.save(source)
+        request = OptimizeRequest(source=source, fit=(bounds,), output=tmp_path / "out.png")
+        planned = app.run(request.model_copy(update={"dry_run": True}))
+        result = app.run(request)
+        assert result.variants[0].status is VariantStatus.COMPLETED
+        assert (planned.variants[0].width, planned.variants[0].height) == expected
+        with Image.open(request.output) as output:
+            assert output.size == expected
+
     def test_publication_collision_after_planning_preserves_existing_file(
         self, source, tmp_path, app, monkeypatch
     ) -> None:

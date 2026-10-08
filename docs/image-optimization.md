@@ -51,7 +51,11 @@ Without `--web`, the source encoding is kept by default. `--format` accepts
 lossy output formats. PNG does not accept a quality override. Pixgen rejects a
 JPEG conversion when the source has transparency. Encoder availability depends
 on the installed Pillow build. Output carries the source ICC colour profile
-when present; other source metadata is not retained.
+when it matches the output pixel colour space; other source metadata is not
+retained. Unsupported mode/format combinations and unreadable or incompatible
+ICC profiles are rejected during planning. For example, CMYK-to-WebP and
+16-bit PNG-to-JPEG conversions are rejected. Keep JPEG for CMYK pixels and
+PNG for 16-bit greyscale pixels. Pixgen does not silently discard their profiles.
 
 Variants that would enlarge the source are skipped rather than upscaled. A
 `--cover` target is skipped if either target dimension exceeds its corresponding
@@ -60,12 +64,17 @@ upscale`; other variants can still complete.
 
 ## Planning and safe writes
 
-`--dry-run` validates the source and destinations and reports the planned
-outputs without creating directories or writing files:
+`--dry-run` checks source headers, resize and encoding options, output paths,
+and existing collisions, then reports the planned outputs without creating
+directories or writing files:
 
 ```bash
 pixgen optimize photo.png --web --dry-run
 ```
+
+It does not fully decode source pixels or require missing explicit output
+directories to exist. Those checks happen during execution, so a successful
+dry run does not guarantee that execution will succeed.
 
 An explicit output directory must already exist. Pass `--mkdir` to let execution
 create an explicit output directory and its parents. Existing output files are

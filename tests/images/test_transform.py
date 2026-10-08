@@ -15,6 +15,7 @@ from pixgen.images.transform import (
     load_normalized,
     resize_pixels,
 )
+from tests.factories import make_cmyk_profile
 
 
 @pytest.fixture
@@ -146,6 +147,13 @@ class TestResizePixels:
 
 
 class TestEncodeClean:
+    def test_rejects_implicit_cmyk_conversion_with_preserved_profile(self) -> None:
+        with (
+            Image.new("CMYK", (2, 2)) as image,
+            pytest.raises(ImageTransformError, match="CMYK"),
+        ):
+            encode_clean(image, output_format="WEBP", quality=None, icc_profile=make_cmyk_profile())
+
     @pytest.mark.parametrize(
         "fmt",
         [f for f in ("PNG", "JPEG", "WEBP", "AVIF") if can_encode_format(f)],

@@ -155,6 +155,14 @@ class TestPlanning:
 
 
 class TestRejections:
+    @pytest.mark.parametrize("web", [False, True], ids=["default", "web"])
+    def test_explicit_empty_format_is_invalid(self, source, tmp_path, web) -> None:
+        directory = tmp_path / "missing"
+        with pytest.raises(PixgenError, match="invalid output format") as exc_info:
+            build_plan(OptimizeRequest(source=source, format="", web=web, output_dir=directory))
+        assert exc_info.value.code is ErrorCode.INVALID_REQUEST
+        assert not directory.exists()
+
     @pytest.mark.parametrize("target_exists", [False, True], ids=["dangling", "existing"])
     @pytest.mark.parametrize("force", [False, True], ids=["no-force", "force"])
     @pytest.mark.parametrize("explicit", [False, True], ids=["named-output", "explicit-output"])

@@ -12,7 +12,12 @@ from pixgen.core.errors import ErrorCode, PixgenError
 from pixgen.images.inspect import can_encode_format, can_read_format, load_image
 from pixgen.images.mime import MIME_TO_EXTENSION
 from pixgen.images.models import ImageInputError, LocalImage
-from pixgen.images.transform import ResizeOperation
+from pixgen.images.transform import (
+    ImageTransformError,
+    ResizeOperation,
+    fit_dimensions,
+    validate_encoding,
+)
 from pixgen.optimization.models import (
     OptimizePlan,
     OptimizeRequest,
@@ -109,7 +114,7 @@ def _header_exif(image: Image.Image, content: bytes) -> Image.Exif:
     return exif
 
 
-def _facts(source: LocalImage) -> tuple[str, int, int, bool]:
+def _facts(source: LocalImage) -> tuple[str, int, int, bool, str, bytes | None]:
     """Read header facts without loading a source pixel array."""
     try:
         with BytesIO(source.content) as buffer, Image.open(buffer) as image:
@@ -122,7 +127,17 @@ def _facts(source: LocalImage) -> tuple[str, int, int, bool]:
             if _header_exif(image, source.content).get(274) in {5, 6, 7, 8}:
                 width, height = height, width
             has_alpha = "A" in image.getbands() or "a" in image.getbands()
-            return source_format, width, height, has_alpha or "transparency" in image.info
+            transparency = "transparency" in image.info
+            mode = "RGBA" if transparency else "RGB" if image.mode == "P" else image.mode
+            profile = image.info.get("icc_profile")
+            return (
+                source_format,
+                width,
+                height,
+                has_alpha or transparency,
+                mode,
+                profile if isinstance(profile, bytes) else None,
+            )
     except (UnidentifiedImageError, OSError, SyntaxError, ValueError) as exc:
         raise _invalid("cannot read source image header") from exc
 
@@ -133,9 +148,11 @@ def _size(spec: ResizeSpec, width: int, height: int) -> tuple[ResizeSpec, int, i
         case ResizeOperation.FIT:
             bound_width = min(spec.width or width, width)
             bound_height = min(spec.height or height, height)
-            scale = min(bound_width / width, bound_height / height)
+            target_width, target_height = fit_dimensions(
+                width, height, bounds=(bound_width, bound_height)
+            )
             effective = spec.model_copy(update={"width": bound_width, "height": bound_height})
-            return effective, max(1, round(width * scale)), max(1, round(height * scale)), False
+            return effective, target_width, target_height, False
         case ResizeOperation.COVER:
             target_width, target_height = spec.width or width, spec.height or height
             upscale = target_width > width or target_height > height
@@ -169,7 +186,9 @@ def _encoding(
     request: OptimizeRequest, source_format: str, *, has_alpha: bool
 ) -> tuple[str, int | None]:
     """Resolve encoding defaults and validate format, quality and transparency."""
-    raw_format = request.format or (OutputFormat.WEBP if request.web else OutputFormat.KEEP)
+    raw_format = request.format
+    if raw_format is None:
+        raw_format = OutputFormat.WEBP if request.web else OutputFormat.KEEP
     try:
         selected = OutputFormat(raw_format)
     except ValueError as exc:
@@ -195,11 +214,12 @@ def build_plan(request: OptimizeRequest, *, default_output_dir: Path | None = No
         raise _invalid("output and output-dir are mutually exclusive")
     try:
         source = load_image(request.source.resolve())
-        source_format, width, height, has_alpha = _facts(source)
+        source_format, width, height, has_alpha, mode, icc_profile = _facts(source)
         specs = _specs(request, width, height)
         if request.output is not None and len(specs) != 1:
             raise _invalid("output requires exactly one planned result")
         output_format, quality = _encoding(request, source_format, has_alpha=has_alpha)
+        validate_encoding(mode, output_format=output_format, icc_profile=icc_profile)
         extension = MIME_TO_EXTENSION[f"image/{output_format.lower()}"]
         directory = (request.output_dir or default_output_dir or Path.cwd() / "pixgen").resolve()
         variants: list[PlannedVariant] = []
@@ -235,7 +255,7 @@ def build_plan(request: OptimizeRequest, *, default_output_dir: Path | None = No
             quality=quality,
             variants=tuple(variants),
         )
-    except ImageInputError as exc:
+    except (ImageInputError, ImageTransformError) as exc:
         raise _invalid(exc.reason) from exc
     except OSError as exc:
         raise _invalid("cannot resolve or inspect output paths") from exc

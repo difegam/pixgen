@@ -34,9 +34,13 @@ _FORMAT_TO_FEATURE: dict[str, str] = {
 
 
 def can_encode_format(output_format: str) -> bool:
-    """Return whether this Pillow build registers the requested encoder."""
+    """Return whether this Pillow build has the requested encoder and codec."""
     Image.init()
-    return output_format.upper() in Image.SAVE
+    output_format = output_format.upper()
+    if output_format not in Image.SAVE:
+        return False
+    feature = _FORMAT_TO_FEATURE.get(output_format)
+    return feature is None or features.check(feature) is True
 
 
 def can_read_format(source_format: str) -> bool:
