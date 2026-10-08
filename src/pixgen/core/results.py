@@ -104,6 +104,9 @@ class OptimizeResult(BaseModel):
         """Require variant results or a single command-level error."""
         if bool(self.variants) == (self.error is not None):
             raise ValueError("an optimise result requires variants or one command error")
+        incompatible_status = VariantStatus.COMPLETED if self.dry_run else VariantStatus.PLANNED
+        if any(variant.status is incompatible_status for variant in self.variants):
+            raise ValueError("variant status is incompatible with dry_run")
         return self
 
 

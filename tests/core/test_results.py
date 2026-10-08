@@ -129,6 +129,32 @@ class TestOptimizeVariantResult:
 class TestOptimizeResult:
     """Validate the versioned optimisation envelope and preserve variant order."""
 
+    @pytest.mark.parametrize(
+        ("dry_run", "status"),
+        [(True, VariantStatus.COMPLETED), (False, VariantStatus.PLANNED)],
+        ids=["dry-run-completed", "execution-planned"],
+    )
+    def test_rejects_status_incompatible_with_run_mode(self, dry_run, status) -> None:
+        details = {
+            "name": "card",
+            "status": status,
+            "output_path": "card.webp",
+            "format": "webp",
+            "width": 12,
+            "height": 6,
+        }
+        if status is VariantStatus.COMPLETED:
+            details["output_bytes"] = 42
+        variant = OptimizeVariantResult.model_validate(details)
+
+        with pytest.raises(ValidationError, match="variant status is incompatible with dry_run"):
+            OptimizeResult(
+                run_id="01a0e4be-5fc8-77e9-b949-88fdc04034d7",
+                source_path="source.png",
+                dry_run=dry_run,
+                variants=(variant,),
+            )
+
     def test_ordered_variants_and_json_schema(self) -> None:
         variants = tuple(
             OptimizeVariantResult(name=name, status="skipped", reason="would upscale")
