@@ -15,6 +15,7 @@ artifacts and returns versioned JSON.
 - Capability-gated native image counts and explicit concurrent variants.
 - Curated model discovery with local validation before paid requests.
 - Atomic local artifacts and versioned JSON for agents and scripts.
+- Local Pillow image optimisation; see [image optimisation](docs/image-optimization.md).
 
 Credentials via `GEMINI_API_KEY` and `OPENAI_API_KEY` environment variables.
 Video generation, OS-keyring credentials, UUIDv7 history, resumable background
