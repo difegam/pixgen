@@ -3,7 +3,7 @@
 from io import BytesIO
 from typing import TYPE_CHECKING
 
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, UnidentifiedImageError, features
 
 from pixgen.images.models import ImageInputError, LocalImage
 
@@ -25,6 +25,13 @@ _FORMAT_TO_MEDIA_TYPE: dict[str, str] = {
     "WEBP": "image/webp",
 }
 
+_FORMAT_TO_FEATURE: dict[str, str] = {
+    "AVIF": "avif",
+    "JPEG": "jpg",
+    "PNG": "zlib",
+    "WEBP": "webp",
+}
+
 
 def can_encode_format(output_format: str) -> bool:
     """Return whether this Pillow build registers the requested encoder."""
@@ -33,9 +40,13 @@ def can_encode_format(output_format: str) -> bool:
 
 
 def can_read_format(source_format: str) -> bool:
-    """Return whether this Pillow build registers the requested reader."""
+    """Return whether this Pillow build has the requested reader and codec."""
     Image.init()
-    return source_format.upper() in Image.OPEN
+    source_format = source_format.upper()
+    if source_format not in Image.OPEN:
+        return False
+    feature = _FORMAT_TO_FEATURE.get(source_format)
+    return feature is None or features.check(feature) is True
 
 
 def load_image(path: Path, *, max_bytes: int = _MAX_INPUT_BYTES) -> LocalImage:

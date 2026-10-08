@@ -4,7 +4,7 @@ from io import BytesIO
 from typing import TYPE_CHECKING
 
 import pytest
-from PIL import Image
+from PIL import Image, features
 
 from pixgen.images.inspect import can_encode_format, can_read_format, load_image
 from pixgen.images.mime import MIME_TO_EXTENSION
@@ -115,6 +115,21 @@ class TestLoadImage:
 
 
 class TestFormatCapabilities:
+    @pytest.mark.parametrize(
+        ("source_format", "feature"),
+        [("AVIF", "avif"), ("WEBP", "webp"), ("JPEG", "jpg"), ("PNG", "zlib")],
+        ids=["avif", "webp", "jpeg", "png"],
+    )
+    def test_registered_reader_requires_available_codec(
+        self, monkeypatch, source_format, feature
+    ) -> None:
+        Image.init()
+        monkeypatch.setitem(Image.OPEN, source_format, Image.OPEN["PNG"])
+        monkeypatch.setattr(features, "check", lambda name: name != feature)
+        assert source_format in Image.OPEN
+        assert not can_read_format(source_format)
+        assert not can_read_format(source_format.lower())
+
     def test_unknown_format_is_unavailable(self) -> None:
         assert not can_read_format("UNKNOWN")
         assert not can_encode_format("UNKNOWN")
