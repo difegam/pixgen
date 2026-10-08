@@ -10,6 +10,7 @@ from pixgen.cli.group import build_group_app
 from pixgen.cli.image import build_operation_app
 from pixgen.cli.invoke import CommandInvoker
 from pixgen.cli.model import build_model_app
+from pixgen.cli.optimize import build_optimize_app
 from pixgen.cli.outcome import RESULT_ACTION, failure_outcome, render_outcome
 from pixgen.core.errors import PixgenError
 from pixgen.core.models import ImageOperation
@@ -22,6 +23,7 @@ if TYPE_CHECKING:
     from pixgen.cli.selector import ModelSelector
     from pixgen.config.models import ModelGroup
     from pixgen.config.writer import ConfigRepository
+    from pixgen.optimization.application import OptimizeApplication
     from pixgen.providers.registry import ProviderRegistry
 
 __all__: list[str] = [
@@ -49,6 +51,7 @@ def build_app(
     registry: ProviderRegistry,
     factories: tuple[ProviderCliFactory, ...],
     group_repository: ConfigRepository,
+    optimize_application: OptimizeApplication,
     groups: Mapping[str, ModelGroup] | None = None,
     group_selector: ModelSelector | None = None,
 ) -> App:
@@ -65,6 +68,7 @@ def build_app(
     app.command(build_operation_app(ImageOperation.IMAGE_CREATE, invoker, factories, groups=groups))
     app.command(build_operation_app(ImageOperation.IMAGE_EDIT, invoker, factories, groups=groups))
     app.command(build_model_app(registry))
+    app.command(build_optimize_app(optimize_application))
     app.command(
         build_group_app(
             registry,
@@ -92,6 +96,7 @@ def main() -> None:
         runtime.registry,
         runtime.cli_factories,
         runtime.group_repository,
+        runtime.optimize_application,
         groups=runtime.settings.groups,
     )
     app()
