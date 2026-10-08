@@ -11,16 +11,31 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 __all__: list[str] = [
+    "can_encode_format",
+    "can_read_format",
     "load_image",
 ]
 
 _MAX_INPUT_BYTES = 52_428_800  # 50 MiB
 
 _FORMAT_TO_MEDIA_TYPE: dict[str, str] = {
+    "AVIF": "image/avif",
     "PNG": "image/png",
     "JPEG": "image/jpeg",
     "WEBP": "image/webp",
 }
+
+
+def can_encode_format(output_format: str) -> bool:
+    """Return whether this Pillow build registers the requested encoder."""
+    Image.init()
+    return output_format.upper() in Image.SAVE
+
+
+def can_read_format(source_format: str) -> bool:
+    """Return whether this Pillow build registers the requested reader."""
+    Image.init()
+    return source_format.upper() in Image.OPEN
 
 
 def load_image(path: Path, *, max_bytes: int = _MAX_INPUT_BYTES) -> LocalImage:

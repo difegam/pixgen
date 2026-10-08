@@ -6,7 +6,8 @@ from typing import TYPE_CHECKING
 import pytest
 from PIL import Image
 
-from pixgen.images.inspect import load_image
+from pixgen.images.inspect import can_encode_format, can_read_format, load_image
+from pixgen.images.mime import MIME_TO_EXTENSION
 from pixgen.images.models import ImageInputError, LocalImage
 
 if TYPE_CHECKING:
@@ -64,6 +65,14 @@ class TestLoadImage:
         result = load_image(path)
         assert result.media_type == "image/webp"
 
+    def test_load_avif_when_available(self, tmp_path: Path) -> None:
+        if not can_encode_format("AVIF"):
+            return
+        path = tmp_path / "photo.avif"
+        path.write_bytes(_encode("AVIF"))
+        assert load_image(path).media_type == "image/avif"
+        assert MIME_TO_EXTENSION["image/avif"] == "avif"
+
     def test_nonexistent_file_raises(self, tmp_path: Path) -> None:
         path = tmp_path / "missing.png"
         with pytest.raises(ImageInputError, match="does not exist"):
@@ -103,3 +112,16 @@ class TestLoadImage:
         result = load_image(path)
         assert result.content == png_bytes
         assert result.content is not png_bytes
+
+
+class TestFormatCapabilities:
+    def test_unknown_format_is_unavailable(self) -> None:
+        assert not can_read_format("UNKNOWN")
+        assert not can_encode_format("UNKNOWN")
+
+    def test_missing_registration_is_unavailable(self, monkeypatch) -> None:
+        Image.init()
+        monkeypatch.delitem(Image.OPEN, "AVIF", raising=False)
+        monkeypatch.delitem(Image.SAVE, "AVIF", raising=False)
+        assert not can_read_format("AVIF")
+        assert not can_encode_format("AVIF")
