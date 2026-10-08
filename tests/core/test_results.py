@@ -10,9 +10,165 @@ from pixgen.core.results import (
     CommandResult,
     ModelGetResult,
     ModelListResult,
+    OptimizeResult,
+    OptimizeVariantResult,
     PublicError,
     TargetResult,
+    VariantStatus,
 )
+
+
+class TestOptimizeVariantResult:
+    """Enforce mutually exclusive optimisation result states."""
+
+    @pytest.mark.parametrize(
+        "status", [VariantStatus.PLANNED, VariantStatus.COMPLETED], ids=["planned", "completed"]
+    )
+    def test_output_metadata_required(self, status) -> None:
+        fields = {
+            "name": "card",
+            "status": status,
+            "output_path": Path("card.webp"),
+            "format": "webp",
+            "width": 1200,
+            "height": 630,
+        }
+        if status is VariantStatus.COMPLETED:
+            fields["output_bytes"] = 42
+        result = OptimizeVariantResult.model_validate(fields)
+        assert result.status is status
+        assert result.output_bytes == (42 if status is VariantStatus.COMPLETED else None)
+        for field in fields.keys() - {"name", "status"}:
+            with pytest.raises(ValidationError):
+                OptimizeVariantResult.model_validate(
+                    {key: value for key, value in fields.items() if key != field}
+                )
+
+    @pytest.mark.parametrize(
+        ("status", "details"),
+        [
+            (VariantStatus.SKIPPED, {"reason": "would upscale"}),
+            (
+                VariantStatus.FAILED,
+                {"error": PublicError(code=ErrorCode.OPTIMIZATION_FAILED, message="encode failed")},
+            ),
+        ],
+        ids=["skipped", "failed"],
+    )
+    def test_non_output_states_require_details(self, status, details) -> None:
+        result = OptimizeVariantResult.model_validate({"name": "hero", "status": status, **details})
+        assert result.output_path is None
+        with pytest.raises(ValidationError):
+            OptimizeVariantResult(name="hero", status=status)
+
+    @pytest.mark.parametrize(
+        ("status", "details", "extra"),
+        [
+            (
+                "planned",
+                {"output_path": "card.webp", "format": "webp", "width": 12, "height": 6},
+                {"output_bytes": 42},
+            ),
+            (
+                "planned",
+                {"output_path": "card.webp", "format": "webp", "width": 12, "height": 6},
+                {"reason": "would upscale"},
+            ),
+            (
+                "completed",
+                {
+                    "output_path": "card.webp",
+                    "format": "webp",
+                    "width": 12,
+                    "height": 6,
+                    "output_bytes": 42,
+                },
+                {"error": {"code": "timeout", "message": "x"}},
+            ),
+            ("skipped", {"reason": "would upscale"}, {"output_path": "hero.webp"}),
+            ("skipped", {"reason": "would upscale"}, {"width": 12}),
+            (
+                "skipped",
+                {"reason": "would upscale"},
+                {"error": {"code": "timeout", "message": "x"}},
+            ),
+            (
+                "failed",
+                {"error": {"code": "timeout", "message": "x"}},
+                {"output_path": "hero.webp"},
+            ),
+            ("failed", {"error": {"code": "timeout", "message": "x"}}, {"format": "webp"}),
+            ("failed", {"error": {"code": "timeout", "message": "x"}}, {"reason": "would upscale"}),
+        ],
+        ids=[
+            "planned-bytes",
+            "planned-reason",
+            "completed-error",
+            "skipped-path",
+            "skipped-width",
+            "skipped-error",
+            "failed-path",
+            "failed-format",
+            "failed-reason",
+        ],
+    )
+    def test_rejects_fields_from_other_states(self, status, details, extra) -> None:
+        with pytest.raises(ValidationError):
+            OptimizeVariantResult.model_validate(
+                {"name": "card", "status": status, **details, **extra}
+            )
+
+    def test_frozen_and_forbids_extra_fields(self) -> None:
+        result = OptimizeVariantResult(name="hero", status="skipped", reason="would upscale")
+        with pytest.raises(ValidationError):
+            result.name = "other"
+        with pytest.raises(ValidationError):
+            OptimizeVariantResult.model_validate({**result.model_dump(), "unknown": True})
+
+
+class TestOptimizeResult:
+    """Validate the versioned optimisation envelope and preserve variant order."""
+
+    def test_ordered_variants_and_json_schema(self) -> None:
+        variants = tuple(
+            OptimizeVariantResult(name=name, status="skipped", reason="would upscale")
+            for name in ("hero", "card")
+        )
+        result = OptimizeResult(
+            run_id="01a0e4be-5fc8-77e9-b949-88fdc04034d7",
+            source_path="source.png",
+            dry_run=True,
+            variants=variants,
+        )
+        assert result.schema_version == "1"
+        assert result.variants == variants
+        assert result.source_path == Path("source.png")
+        assert result.dry_run is True
+        assert OptimizeResult.model_validate_json(result.model_dump_json()) == result
+        with pytest.raises(ValidationError):
+            result.dry_run = False
+        with pytest.raises(ValidationError):
+            OptimizeResult.model_validate({**result.model_dump(), "unknown": True})
+
+    @pytest.mark.parametrize("has_variants", [False, True], ids=["neither", "both"])
+    def test_requires_variants_or_command_error(self, has_variants) -> None:
+        fields = {"run_id": "01a0e4be-5fc8-77e9-b949-88fdc04034d7", "source_path": "source.png"}
+        if has_variants:
+            fields.update(
+                variants=[{"name": "card", "status": "skipped", "reason": "upscale"}],
+                error={"code": "invalid_request", "message": "bad input"},
+            )
+        with pytest.raises(ValidationError):
+            OptimizeResult.model_validate(fields)
+
+    def test_command_error_without_variants(self) -> None:
+        result = OptimizeResult(
+            run_id="01a0e4be-5fc8-77e9-b949-88fdc04034d7",
+            source_path="source.png",
+            error=PublicError(code=ErrorCode.INVALID_REQUEST, message="bad input"),
+        )
+        assert result.variants == ()
+        assert result.error is not None
 
 
 class TestPublicError:

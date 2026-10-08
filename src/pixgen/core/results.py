@@ -1,4 +1,7 @@
+"""Define immutable public result envelopes and per-output states."""
+
 import uuid
+from enum import StrEnum
 from pathlib import Path
 from typing import Literal, Self
 
@@ -14,8 +17,11 @@ __all__: list[str] = [
     "GroupSummary",
     "ModelGetResult",
     "ModelListResult",
+    "OptimizeResult",
+    "OptimizeVariantResult",
     "PublicError",
     "TargetResult",
+    "VariantStatus",
 ]
 
 
@@ -26,6 +32,79 @@ class PublicError(BaseModel):
 
     code: ErrorCode = Field(description="Machine-readable error code")
     message: str = Field(min_length=1, description="Human-readable error description")
+
+
+class VariantStatus(StrEnum):
+    """Describe the outcome of a local optimisation variant."""
+
+    PLANNED = "planned"
+    COMPLETED = "completed"
+    SKIPPED = "skipped"
+    FAILED = "failed"
+
+
+class OptimizeVariantResult(BaseModel):
+    """Record one variant's resolved output or its skip/failure details."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    name: str = Field(min_length=1, description="Stable variant name")
+    status: VariantStatus = Field(description="Planning or execution outcome")
+    output_path: Path | None = Field(default=None, description="Resolved output path")
+    format: str | None = Field(default=None, min_length=1, description="Resolved output format")
+    width: int | None = Field(default=None, gt=0, description="Output width in pixels")
+    height: int | None = Field(default=None, gt=0, description="Output height in pixels")
+    output_bytes: int | None = Field(default=None, ge=0, description="Written output byte count")
+    reason: str | None = Field(
+        default=None, min_length=1, description="Reason the variant was skipped"
+    )
+    error: PublicError | None = Field(default=None, description="Error if optimisation failed")
+    warnings: tuple[str, ...] = Field(default=(), description="Non-fatal variant warnings")
+
+    @model_validator(mode="after")
+    def _validate_outcome(self) -> Self:
+        """Require exactly the details corresponding to the variant's status."""
+        output_details = (self.output_path, self.format, self.width, self.height)
+        if self.status in (VariantStatus.PLANNED, VariantStatus.COMPLETED):
+            if any(value is None for value in output_details):
+                raise ValueError(
+                    "planned/completed variants require output path, format and dimensions"
+                )
+            if self.reason is not None or self.error is not None:
+                raise ValueError("planned/completed variants cannot have a reason or error")
+            if (self.output_bytes is not None) != (self.status is VariantStatus.COMPLETED):
+                raise ValueError("only completed variants require an output byte count")
+        else:
+            if any(value is not None for value in (*output_details, self.output_bytes)):
+                raise ValueError("skipped/failed variants cannot have output details")
+            if self.status is VariantStatus.SKIPPED:
+                if self.reason is None or self.error is not None:
+                    raise ValueError("skipped variants require a reason and no error")
+            elif self.error is None or self.reason is not None:
+                raise ValueError("failed variants require an error and no reason")
+        return self
+
+
+class OptimizeResult(BaseModel):
+    """Expose a versioned local optimisation run in supplied variant order."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    schema_version: Literal["1"] = "1"
+    run_id: uuid.UUID = Field(description="Unique identifier for this run")
+    source_path: Path = Field(description="Source image path")
+    dry_run: bool = Field(default=False, description="Whether this run only reports a plan")
+    variants: tuple[OptimizeVariantResult, ...] = Field(
+        default=(), description="Variants in plan order"
+    )
+    error: PublicError | None = Field(default=None, description="Command-level rejection error")
+
+    @model_validator(mode="after")
+    def _validate_outcome(self) -> Self:
+        """Require variant results or a single command-level error."""
+        if bool(self.variants) == (self.error is not None):
+            raise ValueError("an optimise result requires variants or one command error")
+        return self
 
 
 class TargetResult(BaseModel):

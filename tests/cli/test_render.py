@@ -1,3 +1,6 @@
+"""Test human and JSON rendering of public results."""
+
+import json
 import uuid
 from io import StringIO
 
@@ -7,7 +10,14 @@ from rich.console import Console
 from pixgen.cli import render
 from pixgen.core.errors import ErrorCode
 from pixgen.core.models import ImageOperation
-from pixgen.core.results import CommandResult, ModelListResult, PublicError, TargetResult
+from pixgen.core.results import (
+    CommandResult,
+    ModelListResult,
+    OptimizeResult,
+    OptimizeVariantResult,
+    PublicError,
+    TargetResult,
+)
 from tests.factories import make_model_spec
 
 
@@ -21,6 +31,109 @@ def _console(*, interactive: bool) -> Console:
         record=True,
         width=120,
     )
+
+
+class TestRenderOptimizeResult:
+    """Render planned/saved outputs and send skip/failure details to stderr."""
+
+    @pytest.mark.parametrize("interactive", [False, True], ids=["plain", "interactive"])
+    def test_human_states_and_streams(self, monkeypatch, tmp_path, interactive) -> None:
+        stdout, stderr = _console(interactive=interactive), _console(interactive=interactive)
+        monkeypatch.setattr(render, "_stdout_console", stdout)
+        monkeypatch.setattr(render, "_stderr_console", stderr)
+        result = OptimizeResult(
+            run_id=uuid.uuid7(),
+            source_path=tmp_path / "source.png",
+            variants=(
+                OptimizeVariantResult(
+                    name="card",
+                    status="completed",
+                    output_path=tmp_path / "card.webp",
+                    format="webp",
+                    width=12,
+                    height=6,
+                    output_bytes=42,
+                    warnings=("literal [warning]",),
+                ),
+                OptimizeVariantResult(name="hero", status="skipped", reason="would upscale"),
+                OptimizeVariantResult(
+                    name="failed",
+                    status="failed",
+                    error=PublicError(
+                        code=ErrorCode.OPTIMIZATION_FAILED, message="literal [error]"
+                    ),
+                ),
+            ),
+        )
+        render.render_optimize_result(result, as_json=False)
+        output, errors = stdout.export_text(), stderr.export_text()
+        assert "Saved card:" in output
+        assert str(tmp_path / "card.webp") in output
+        assert "12x6" in output
+        assert "42 bytes" in output
+        assert "failed" not in output
+        assert "Skipped hero: would upscale" in errors
+        assert "Failed failed: literal [error]" in errors
+        assert "Warning: literal [warning]" in errors
+
+    def test_dry_run_says_planned_and_supports_relative_paths(self, monkeypatch, tmp_path) -> None:
+        monkeypatch.chdir(tmp_path)
+        stdout = _console(interactive=False)
+        monkeypatch.setattr(render, "_stdout_console", stdout)
+        monkeypatch.setattr(render, "_stderr_console", _console(interactive=False))
+        result = OptimizeResult(
+            run_id=uuid.uuid7(),
+            source_path=tmp_path / "source.png",
+            dry_run=True,
+            variants=(
+                OptimizeVariantResult(
+                    name="card",
+                    status="planned",
+                    output_path=tmp_path / "card.webp",
+                    format="webp",
+                    width=12,
+                    height=6,
+                ),
+            ),
+        )
+        render.render_optimize_result(result, as_json=False, relative_output_paths=True)
+        output = stdout.export_text()
+        assert "Planned card: card.webp" in output
+        assert "Saved" not in output
+        assert str(tmp_path) not in output
+        assert "bytes" not in output
+
+    def test_json_is_complete_and_only_on_stdout(self, capsys) -> None:
+        result = OptimizeResult(
+            run_id=uuid.uuid7(),
+            source_path="source.png",
+            variants=(
+                OptimizeVariantResult(
+                    name="failed",
+                    status="failed",
+                    warnings=("warning",),
+                    error=PublicError(code=ErrorCode.OPTIMIZATION_FAILED, message="failed"),
+                ),
+            ),
+        )
+        render.render_optimize_result(result, as_json=True)
+        captured = capsys.readouterr()
+        assert json.loads(captured.out) == json.loads(result.model_dump_json())
+        assert json.loads(captured.out)["schema_version"] == "1"
+        assert captured.err == ""
+
+    def test_command_error_only_on_stderr(self, monkeypatch) -> None:
+        stdout, stderr = _console(interactive=False), _console(interactive=False)
+        monkeypatch.setattr(render, "_stdout_console", stdout)
+        monkeypatch.setattr(render, "_stderr_console", stderr)
+        result = OptimizeResult(
+            run_id=uuid.uuid7(),
+            source_path="missing.png",
+            error=PublicError(code=ErrorCode.INVALID_REQUEST, message="missing source"),
+        )
+        render.render_optimize_result(result, as_json=False)
+        assert stdout.export_text() == ""
+        assert "Error: missing source" in stderr.export_text()
 
 
 def _mixed_result() -> CommandResult:
