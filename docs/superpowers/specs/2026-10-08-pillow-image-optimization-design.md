@@ -1,6 +1,6 @@
 # Pillow Image Optimization Design
 
-**Status:** Revised design for review
+**Status:** Approved design
 
 **Date:** 2026-10-08
 
