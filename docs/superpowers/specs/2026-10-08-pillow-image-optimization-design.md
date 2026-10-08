@@ -66,8 +66,6 @@ Options:
 --mkdir
 --force
 --json
---quiet
---no-color
 ```
 
 `SOURCE` is a local regular file. Remote URLs are not accepted.
@@ -127,11 +125,12 @@ strips the source profile. Shared transform primitives must accept explicit
 colour/profile policy so these workflows do not silently inherit one another's
 metadata decisions.
 
-Pixgen never upscales. A scale variant is skipped if its requested axis is
-larger than the oriented source. A cover variant is skipped when its exact
-target dimensions would require enlargement. Fit uses the smaller of its bounds
-and source dimensions. Other valid variants continue. A plan with no runnable
-variants is rejected before output, with `invalid_request`.
+Pixgen never upscales. A width or height variant is skipped if its requested
+axis is larger than the oriented source. A cover variant is skipped when
+cropping to its target aspect ratio and resizing the crop would require
+enlargement. Fit uses the smaller of its bounds and source dimensions. Other
+valid variants continue. Valid skip-only plans return skipped results
+successfully; malformed requests still fail with `invalid_request`.
 
 ## Architecture
 
@@ -146,7 +145,7 @@ The optimization-specific code is a small planner and application flow under
 
 ```text
 optimization/models.py       Request, variant, plan, and result detail types
-optimization/planner.py      Parse variants, inspect facts, validate paths
+optimization/planner.py      Expand size options, inspect facts, validate paths
 optimization/application.py  Execute the plan and collect per-variant results
 ```
 
@@ -166,7 +165,7 @@ and remain intact until a complete replacement is ready.
 ```text
 parse CLI request
 → inspect source header and dimensions without loading its full pixel array
-→ expand --web and merge explicit variants
+→ expand --web and append custom size options
 → validate formats, quality, dimensions, no-upscale rules, and all destinations
 → return the plan immediately for --dry-run
 → load normalized Pillow pixels once for execution
@@ -187,8 +186,10 @@ directory, follow the existing `Path.cwd() / "pixgen"` fallback. `--output` is
 valid only for a single result. `--output` and `--output-dir` are mutually
 exclusive. Resolve reported paths to absolute paths.
 
-Preserve the result state order `completed`, `skipped`, or `failed`; JSON uses
-the current Pixgen string schema version `"1"`. All results remain in plan
+Preserve the result state order `planned`, `completed`, `skipped`, or `failed`;
+JSON uses the current Pixgen string schema version `"1"`. A dry run returns
+`dry_run: true` and `planned` variants with resolved paths and output details,
+without claiming that files were written. Executed results remain in plan
 order. Skip-only runs are successful because no-upscale is an expected
 planning result. A mixture of failed and completed variants is a partial
 failure; successful outputs remain available.
@@ -201,9 +202,10 @@ existing exit statuses: success `0`, rejected input `2`, all variants failed
 
 `--dry-run` validates that the source can be opened and its header metadata is
 readable, plus variant grammar, format and quality compatibility, no-upscale
-classification, output paths, and collisions. It does not fully decode source
-pixels, write files, or create directories. A truncated/corrupt pixel payload
-may therefore fail only during execution, before that variant is written.
+classification, output paths, and collisions. It reports the plan with
+`planned` variant states. It does not fully decode source pixels, write files,
+or create directories. A truncated/corrupt pixel payload may therefore fail
+only during execution, before that variant is written.
 
 ## Tool choice
 
@@ -224,9 +226,9 @@ Tests follow the current repository layout and use `tests/factories.py`,
 - Planner tests cover preset expansion and ordering, option parsing, format
   capability checks, alpha-to-JPEG rejection, dimensions, no-upscale skips,
   output naming, collision handling, and side-effect-free dry runs.
-- Image tests cover one decode per invocation, scale/fit/centered-cover
-  dimensions, orientation, metadata stripping, ICC policy, quality defaults,
-  and format round trips for available encoders.
+- Image tests cover one normalized pixel load per invocation, scale/fit/centered-
+  cover dimensions, orientation, metadata stripping, ICC policy, quality
+  defaults, and format round trips for available encoders.
 - Application tests cover sequential processing, ordered results, partial
   failures, and preserving completed outputs.
 - CLI tests cover `pixgen optimize --help`, `--json`, `--mkdir`, `--force`,
