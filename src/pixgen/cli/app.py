@@ -39,13 +39,6 @@ def _get_version() -> str:
         return "unknown"
 
 
-def default() -> None:
-    """Generate and edit images with curated AI models.
-
-    [Docs](https://github.com/difegam/pixgen) | [GitHub](https://github.com/difegam/pixgen)
-    """
-
-
 def build_app(
     application: ImageApplication,
     registry: ProviderRegistry,
@@ -76,7 +69,6 @@ def build_app(
             group_selector,
         )
     )
-    app.default(default)
     app.register_install_completion_command()
 
     return app
