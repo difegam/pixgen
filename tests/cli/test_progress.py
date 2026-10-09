@@ -21,7 +21,7 @@ def test_generation_progress_renders_target_statuses() -> None:
     )
     first = OutputPlan(model_id="fake/first", variant=1, path=Path("first.png"))
     second = OutputPlan(model_id="fake/second", variant=1, path=Path("second.png"))
-    progress = GenerationProgress(console)
+    progress = GenerationProgress(console, transient=False)
 
     progress.run_started((first, second))
     progress.job_started(first)

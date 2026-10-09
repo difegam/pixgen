@@ -2,8 +2,10 @@
 
 Status: proposed on 2026-09-21. Deferred on 2026-09-24 until after the MVP.
 The image MVP contract is [`pixgen.md`](pixgen.md), which drops the shared
-REST transport and URL downloads for now. Revisit this proposal when a
-second REST adapter is scheduled.
+REST transport and URL downloads for now. Update 2026-10-07: OpenRouter is now
+a built-in adapter and is the second REST adapter. It shares only the thin
+`providers/http.py` helpers (client factory, base64 decoding), not the generic
+transport this proposal describes. The rest remains deferred.
 
 ## Purpose
 

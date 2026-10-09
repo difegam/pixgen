@@ -5,8 +5,8 @@
 Pixgen 0.1 is a local Python 3.14 image CLI. Cyclopts parses a command into a
 frozen Pydantic image intent. The application resolves curated model targets,
 preflights every target, submits independent jobs under one semaphore, writes
-artifacts atomically, and returns one public result. Built-in OpenAI and Gemini
-adapters sit behind one internal protocol. Pixgen has no database: the local
+artifacts atomically, and returns one public result. Built-in OpenAI, Gemini, and
+OpenRouter adapters sit behind one internal protocol. Pixgen has no database: the local
 artifact files and the returned result are the whole output.
 
 `pixgen.md` holds the full contracts: commands, types, error codes, exit
@@ -22,10 +22,13 @@ flowchart LR
   D --> F[Provider registry]
   F --> G[OpenAI adapter]
   F --> H[Gemini adapter]
+  F --> Q[OpenRouter adapter]
   G --> I[Injected httpx2 client]
   I --> J[OpenAI Images API]
   H --> K[Injected google-genai client]
   K --> L[Gemini API]
+  Q --> R[Injected httpx2 client]
+  R --> S[OpenRouter Images API]
   D --> M[Atomic local artifacts]
   N[Provider env keys] --> O[Runtime composition]
   P[TOML + PlatformDirs] --> O
@@ -75,9 +78,13 @@ types.
 ### Providers
 
 `src/pixgen/providers/base.py` defines the internal `ImageProvider` protocol.
-The OpenAI and Gemini modules own their curated manifests, parameter models,
-shared-ratio mapping, request translation, response translation, and error
-mapping. Each receives an injected vendor client. Providers expose explicit
+The OpenAI, Gemini, and OpenRouter modules own their curated manifests,
+parameter models, shared-ratio mapping, request translation, response
+translation, and error mapping. Each receives an injected vendor client. The
+two REST adapters (OpenAI and OpenRouter) share `providers/http.py`, which
+holds the lazy authenticated `httpx2` client factory and base64 image decoding.
+OpenRouter model IDs keep the upstream slug, so `openrouter/google/gemini-...`
+has a nested path after the provider prefix. Providers expose explicit
 methods to resolve shared parameters and report supported shared ratios, so the
 application and registry do not inspect provider attributes dynamically. The
 protocol is not a public plugin API.
@@ -91,7 +98,7 @@ atomic replacement.
 ### Runtime
 
 `src/pixgen/runtime.py` is the explicit composition root. It builds settings,
-the two vendor client factories, adapters, registry, application, and ordered
+the three vendor client factories, adapters, registry, application, and ordered
 provider CLI factories. Its frozen `Runtime` value object carries those
 dependencies to `main()`, which passes factories to generic CLI assembly. It
 creates clients only when a provider request needs them, so `model list` and
@@ -102,7 +109,8 @@ held as global singletons.
 
 Pydantic Settings loads the PlatformDirs user `config.toml`, or an absolute
 `PIXGEN_CONFIG` override, with environment values taking precedence. Provider
-keys come from `OPENAI_API_KEY` and `GEMINI_API_KEY` as runtime-only secrets;
+keys come from `OPENAI_API_KEY`, `GEMINI_API_KEY`, and `OPENROUTER_API_KEY` as
+runtime-only secrets;
 they never appear in configuration files, results, or logs. There is no
 project config or `.env` discovery.
 
@@ -127,8 +135,9 @@ tests. It does not require a branch in the generic CLI or application code.
 Do not add decorator registration, import-time global registries, plugin
 loaders, or fluent builders. They would hide the dependency list, make command
 order depend on imports, and weaken the explicit test seam. Add another helper
-only when a third provider demonstrates duplication that typed provider handlers
-cannot reasonably retain.
+only when duplication survives in typed provider handlers. The third provider
+(OpenRouter) justified one such extraction: `providers/http.py` and
+`providers/shared.py` hold the helpers OpenAI and OpenRouter had in common.
 
 ## Image data flow
 
@@ -163,20 +172,23 @@ src/pixgen/
 ├── application.py
 ├── artifacts.py
 ├── images/{models,inspect,mime}.py
-├── config/{models,paths}.py
+├── config/{models,paths,writer}.py
 ├── core/{definitions,models,parameters,requests,results,errors}.py
-├── providers/{base,registry,openai,gemini,openai_cli,gemini_cli}.py
+├── providers/{base,registry,http,shared}.py
+├── providers/{openai,gemini,openrouter}.py
+├── providers/{openai_cli,gemini_cli,openrouter_cli}.py
 └── cli/{app,contracts,image,invoke,model,options,render}.py
 ```
 
-Do not add repositories, generic services, plugin loaders, a shared transport,
-or provider subpackages until a concrete second implementation needs them.
+Do not add repositories, generic services, plugin loaders, a transport
+abstraction beyond the `http.py` helpers, or provider subpackages until a
+concrete second implementation needs them.
 
 ## Verification boundaries
 
 - Pure unit tests cover core types, shared-ratio resolution, and result invariants.
-- Provider tests use `httpx2.MockTransport` for OpenAI and an injected fake
-  `google-genai` client for Gemini.
+- Provider tests use `httpx2.MockTransport` for OpenAI and OpenRouter and an
+  injected fake `google-genai` client for Gemini.
 - Application and CLI tests use temporary directories for artifacts and
   configuration. CLI assembly tests reject missing, unknown, duplicate, and
   operation-incompatible factories before command parsing.

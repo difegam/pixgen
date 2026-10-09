@@ -527,13 +527,14 @@ wheels = [
 
 [[package]]
 name = "pixgen"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "." }
 dependencies = [
     { name = "cyclopts" },
     { name = "google-genai" },
     { name = "httpx2" },
     { name = "inquirerpy" },
+    { name = "packaging" },
     { name = "pillow" },
     { name = "platformdirs" },
     { name = "pydantic" },
@@ -557,6 +558,7 @@ requires-dist = [
     { name = "google-genai", specifier = ">=2.24.0" },
     { name = "httpx2", specifier = ">=2.12.0" },
     { name = "inquirerpy", specifier = ">=0.3.4,<0.4" },
+    { name = "packaging", specifier = ">=24.0" },
     { name = "pillow", specifier = ">=12.3.0" },
     { name = "platformdirs", specifier = ">=4.0" },
     { name = "pydantic", specifier = ">=2.13.5" },

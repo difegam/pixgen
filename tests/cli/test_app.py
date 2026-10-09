@@ -142,7 +142,9 @@ class TestRootOptimize:
         )
         with (
             patch("pixgen.runtime.load_settings", return_value=settings),
-            patch("pixgen.runtime.httpx2.AsyncClient.__init__", autospec=True) as http_client,
+            patch(
+                "pixgen.providers.http.httpx2.AsyncClient.__init__", autospec=True
+            ) as http_client,
             patch("google.genai.Client.__init__", autospec=True) as gemini_client,
             pytest.warns(UserWarning, match="Cyclopts application invoked without tokens"),
             pytest.raises(SystemExit) as exc_info,

@@ -42,7 +42,7 @@ class _GenerationSpinnerColumn(SpinnerColumn):
 class GenerationProgress:
     """Render lifecycle events as a transient Rich progress display."""
 
-    def __init__(self, console: Console) -> None:
+    def __init__(self, console: Console, *, transient: bool = True) -> None:
         self._progress = Progress(
             _GenerationSpinnerColumn(finished_text="✓"),
             TextColumn("{task.fields[ordinal]}", markup=False),
@@ -57,7 +57,7 @@ class GenerationProgress:
             console=console,
             redirect_stderr=False,
             redirect_stdout=False,
-            transient=True,
+            transient=transient,
         )
         self._task_ids: dict[tuple[str, int], TaskID] = {}
         self._started = False

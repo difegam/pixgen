@@ -12,6 +12,7 @@ from pixgen.core.requests import ImageCreateIntent, ImageEditIntent
 from pixgen.providers.base import ProviderImage
 from pixgen.providers.gemini import GEMINI_MODELS, GeminiProvider
 from pixgen.providers.openai import OPENAI_MODELS, OpenAIProvider
+from pixgen.providers.openrouter import OpenRouterProvider
 from pixgen.providers.registry import ProviderRegistry
 from tests.factories import make_model_definition, make_model_spec
 
@@ -32,6 +33,12 @@ class TestProviderRegistry:
         registry = ProviderRegistry((openai, GeminiProvider(None)))
         provider = registry.provider_for("openai/gpt-image-2")
         assert provider is openai
+
+    def test_provider_for_nested_openrouter_model(self) -> None:
+        openrouter = OpenRouterProvider(None)
+        registry = ProviderRegistry((openrouter,))
+
+        assert registry.provider_for("openrouter/google/gemini-3.1-flash-image") is openrouter
 
     def test_provider_for_gemini_model(self) -> None:
         gemini = GeminiProvider(None)

@@ -17,7 +17,7 @@ Run `just lint && just type-check && just test` before claiming done. Single tes
 - `src/pixgen/cli/` — cyclopts commands, rendering, exit codes. Never imports providers.
 - `src/pixgen/core/` — provider-neutral types, intents, results, errors. No I/O.
 - `src/pixgen/images/` — reads local inputs, returns bytes + metadata.
-- `src/pixgen/providers/` — OpenAI and Gemini adapters behind `ImageProvider` protocol.
+- `src/pixgen/providers/` — OpenAI, Gemini, and OpenRouter adapters behind `ImageProvider` protocol.
 - `src/pixgen/application.py` — orchestration: preflight, variants, concurrency, results.
 - `src/pixgen/artifacts.py` — atomic file writes via temp-file + rename.
 - `src/pixgen/runtime.py` — composition root. Builds everything, injects clients.
@@ -39,7 +39,7 @@ Run `just lint && just type-check && just test` before claiming done. Single tes
 - No database. Output = local artifact files + returned result.
 - Providers are not plugins. The `ImageProvider` protocol is internal.
 - `runtime.py` creates only the clients the selected command needs (`model list` needs no credentials).
-- Provider keys: `OPENAI_API_KEY`, `GEMINI_API_KEY` env vars only. Never in config files or logs.
+- Provider keys: `OPENAI_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY` env vars only. Never in config files or logs.
 - `pixgen.toml` is runtime defaults (model lists, concurrency limits), not dev config.
 
 ## Testing

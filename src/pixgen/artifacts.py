@@ -49,9 +49,9 @@ def _generate_name(
     timestamp: str,
 ) -> str:
     """Generate a unique artifact filename."""
-    provider, model = model_id.split("/", 1)
+    slug = model_id.replace("/", "-")
     ext = MIME_TO_EXTENSION.get(media_type, "png")
-    return f"{timestamp}-{run_id}-{provider}-{model}-v{variant}.{ext}"
+    return f"{timestamp}-{run_id}-{slug}-v{variant}.{ext}"
 
 
 def _ensure_directory(path: Path, *, mkdir: bool, explicit: bool, label: str) -> None:
@@ -202,8 +202,13 @@ def save_artifact(plan: OutputPlan, data: bytes, media_type: str) -> ArtifactWri
     """Publish provider bytes according to an output plan."""
     warning = _check_extension_mismatch(plan, media_type)
     warnings = (warning,) if warning else ()
-    write_atomic(plan.path, data, overwrite=plan.overwrite)
-    return ArtifactWriteResult(path=plan.path, warnings=warnings)
+    path = plan.path
+    if not plan.explicit_path:
+        extension = MIME_TO_EXTENSION.get(media_type)
+        if extension is not None:
+            path = path.with_suffix(f".{extension}")
+    write_atomic(path, data, overwrite=plan.overwrite)
+    return ArtifactWriteResult(path=path, warnings=warnings)
 
 
 def write_atomic(path: Path, data: bytes, *, overwrite: bool = False) -> None:

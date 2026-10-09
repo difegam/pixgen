@@ -22,8 +22,9 @@ class TestModelId:
             "gemini/gemini-3.1-flash-image",
             "a/b",
             "openai-2/gpt-image-1.5",
+            "openrouter/google/gemini-3.1-flash-image",
         ],
-        ids=["openai", "gemini", "minimal", "hyphenated"],
+        ids=["openai", "gemini", "minimal", "hyphenated", "nested"],
     )
     def test_accepts_valid_model_ids(self, valid_id: str) -> None:
 
@@ -32,6 +33,13 @@ class TestModelId:
         adapter = TypeAdapter(ModelId)
         result = adapter.validate_python(valid_id)
         assert result == valid_id
+
+    def test_accepts_nested_provider_model_id(self) -> None:
+        from pydantic import TypeAdapter
+
+        result = TypeAdapter(ModelId).validate_python("openrouter/google/gemini-3.1-flash-image")
+
+        assert result == "openrouter/google/gemini-3.1-flash-image"
 
     @pytest.mark.parametrize(
         "invalid_id",
@@ -44,6 +52,8 @@ class TestModelId:
             "openai/",
             "openai/Model",
             "openai/ model",
+            "openrouter//gemini-image",
+            "openrouter/google/",
             "/m",
             "m/",
         ],
@@ -56,6 +66,8 @@ class TestModelId:
             "empty-model",
             "uppercase-model",
             "space-in-model",
+            "empty-intermediate-model-segment",
+            "empty-trailing-model-segment",
             "minimal-length",
             "minimal-length",
         ],
@@ -120,6 +132,12 @@ class TestModelSpec:
         assert model_spec.id == "openai/gpt-image-2"
         assert MediaRole.REFERENCE in model_spec.media
         assert MediaRole.IMAGE in model_spec.media
+
+    def test_model_spec_splits_nested_provider_model_id(self, model_spec: ModelSpec) -> None:
+        spec = model_spec.model_copy(update={"id": "openrouter/google/gemini-3.1-flash-image"})
+
+        assert spec.provider == "openrouter"
+        assert spec.model == "google/gemini-3.1-flash-image"
 
     def test_frozen_raises_on_assignment(self, model_spec: ModelSpec) -> None:
         with pytest.raises(ValidationError):
