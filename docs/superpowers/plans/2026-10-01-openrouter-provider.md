@@ -1,6 +1,6 @@
 # OpenRouter Provider Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add OpenRouter image creation and the documented edit capabilities for three curated image models.
 
@@ -39,7 +39,7 @@
 **Interfaces:**
 - Produces: `ModelId` accepts one provider segment followed by one or more non-empty model path segments. `ModelSpec.provider` remains the first segment and `ModelSpec.model` remains the full remainder.
 
-- [x] **Step 1: Add nested ID validation tests**
+- [ ] **Step 1: Add nested ID validation tests**
 
   Add `test_accepts_nested_provider_model_id` with
   `openrouter/google/gemini-3.1-flash-image`; assert `ModelId` preserves the
@@ -49,27 +49,27 @@
   intermediate and trailing segments, such as `openrouter//gemini-image` and
   `openrouter/google/`.
 
-- [x] **Step 2: Run the focused tests and confirm the new case fails**
+- [ ] **Step 2: Run the focused tests and confirm the new case fails**
 
   Run: `uv run pytest tests/core/test_models.py -k 'nested or invalid' -v`
 
   Expected: the valid nested ID is rejected by the current one-slash pattern;
   existing invalid-ID assertions remain green.
 
-- [x] **Step 3: Update the `ModelId` pattern**
+- [ ] **Step 3: Update the `ModelId` pattern**
 
   In `src/pixgen/core/models.py`, allow a provider segment and slash-separated
   model segments, each beginning with a lowercase alphanumeric character and
   followed only by lowercase alphanumerics, dots, underscores, or hyphens.
   Keep the existing overall minimum and maximum lengths.
 
-- [x] **Step 4: Run the focused tests**
+- [ ] **Step 4: Run the focused tests**
 
   Run: `uv run pytest tests/core/test_models.py -k 'nested or invalid' -v`
 
   Expected: PASS, including the new nested ID and malformed path assertions.
 
-- [x] **Step 5: Commit the model ID contract**
+- [ ] **Step 5: Commit the model ID contract**
 
   ```bash
   git add src/pixgen/core/models.py tests/core/test_models.py
@@ -91,7 +91,7 @@
 - Produces: `decode_base64_image(encoded: str, *, media_type: str, provider_name: str) -> ProviderImage`.
 - Consumes: the helper signatures above in OpenAI and later OpenRouter runtime composition.
 
-- [x] **Step 1: Add failing tests for the shared HTTP helpers**
+- [ ] **Step 1: Add failing tests for the shared HTTP helpers**
 
   Create `tests/providers/test_http.py` with:
 
@@ -103,25 +103,25 @@
   - `test_decode_base64_image_rejects_invalid_or_empty_data_safely`, asserting
     `ErrorCode.PROVIDER_FAILURE` and no encoded data in the error message.
 
-- [x] **Step 2: Run the helper tests and verify they fail**
+- [ ] **Step 2: Run the helper tests and verify they fail**
 
   Run: `uv run pytest tests/providers/test_http.py -v`
 
   Expected: FAIL because `pixgen.providers.http` and the helpers do not exist.
 
-- [x] **Step 3: Implement the two focused helpers**
+- [ ] **Step 3: Implement the two focused helpers**
 
   In `src/pixgen/providers/http.py`, implement the exact signatures above. Use
   `httpx2.AsyncClient`, `httpx2.Timeout(request_timeout_seconds)`, and a bearer
   Authorization header. Decode base64 with validation and reject empty bytes.
 
-- [x] **Step 4: Run the helper tests**
+- [ ] **Step 4: Run the helper tests**
 
   Run: `uv run pytest tests/providers/test_http.py -v`
 
   Expected: PASS.
 
-- [x] **Step 5: Refactor OpenAI to use the helpers**
+- [ ] **Step 5: Refactor OpenAI to use the helpers**
 
   Replace `get_open_ai_factory`'s client-building body in `runtime.py` with
   `make_http_client_factory(..., base_url="https://api.openai.com/v1", ...)`.
@@ -129,13 +129,13 @@
   OpenAI response decoding to validate its response envelope locally and then
   call `decode_base64_image` with its output format.
 
-- [x] **Step 6: Run OpenAI and runtime tests**
+- [ ] **Step 6: Run OpenAI and runtime tests**
 
   Run: `uv run pytest tests/providers/test_openai.py tests/test_runtime.py -v`
 
   Expected: PASS with OpenAI behavior unchanged and no eager client creation.
 
-- [x] **Step 7: Commit the shared HTTP helpers**
+- [ ] **Step 7: Commit the shared HTTP helpers**
 
   ```bash
   git add src/pixgen/providers/http.py src/pixgen/runtime.py src/pixgen/providers/openai.py tests/providers/test_http.py tests/providers/test_openai.py tests/test_runtime.py
@@ -154,7 +154,7 @@
 - Consumes: `make_http_client_factory` and `decode_base64_image` from Task 2.
 - `OpenRouterProvider.name` is `"openrouter"`; its `catalogue` contains exactly the three spec IDs in the design spec.
 
-- [x] **Step 1: Add failing catalogue and parameter tests**
+- [ ] **Step 1: Add failing catalogue and parameter tests**
 
   In `tests/providers/test_openrouter.py`, assert exact IDs and upstream model
   suffixes; create/edit operations and reference maxima (Gemini 14, GPT 16,
@@ -163,13 +163,13 @@
   Muse provider-native parameters. Add a registry test proving nested
   `openrouter/google/...` IDs resolve to `OpenRouterProvider`.
 
-- [x] **Step 2: Run the catalogue tests and verify they fail**
+- [ ] **Step 2: Run the catalogue tests and verify they fail**
 
   Run: `uv run pytest tests/providers/test_openrouter.py tests/providers/test_registry.py -k 'openrouter or nested' -v`
 
   Expected: FAIL because the OpenRouter adapter and catalogue do not exist.
 
-- [x] **Step 3: Implement model parameter types and catalogue**
+- [ ] **Step 3: Implement model parameter types and catalogue**
 
   Define model-owned parameter types in `openrouter.py`. Match the spec's
   parameter values and aspect-ratio lists exactly. Give Muse only the
@@ -177,14 +177,14 @@
   `ModelDefinition` aspect-ratio overrides that pass through
   `{"aspect_ratio": ratio}` for ratios the model supports.
 
-- [x] **Step 4: Run catalogue tests**
+- [ ] **Step 4: Run catalogue tests**
 
   Run: `uv run pytest tests/providers/test_openrouter.py tests/providers/test_registry.py -k 'openrouter or nested' -v`
 
   Expected: PASS for catalogue, parameters, registry ownership, and operation
   validation.
 
-- [x] **Step 5: Add failing generation and response tests**
+- [ ] **Step 5: Add failing generation and response tests**
 
   Add tests asserting that create posts to `/api/v1/images` with the exact
   upstream model slug and only set parameters; edit sends references as
@@ -193,13 +193,13 @@
   `image/png`; missing credentials raise `CREDENTIAL_UNAVAILABLE`; and invalid
   or empty response data raises a safe provider error.
 
-- [x] **Step 6: Run generation tests and verify they fail**
+- [ ] **Step 6: Run generation tests and verify they fail**
 
   Run: `uv run pytest tests/providers/test_openrouter.py -k 'generate or response' -v`
 
   Expected: FAIL because generation has not yet been implemented.
 
-- [x] **Step 7: Implement lazy client access and generation**
+- [ ] **Step 7: Implement lazy client access and generation**
 
   Build the JSON payload from the validated request, base64 data URLs from
   `PreparedImageRequest.media`, and response models for the OpenRouter
@@ -209,7 +209,7 @@
   request failures through `_map_error`, initially returning a safe
   `PROVIDER_FAILURE` for unclassified exceptions.
 
-- [x] **Step 8: Add failing provider error mapping tests**
+- [ ] **Step 8: Add failing provider error mapping tests**
 
   Parameterise mocked HTTP responses and transport exceptions to assert:
   timeout → `TIMEOUT`, connect/5xx → `PROVIDER_UNAVAILABLE`, 401/403 →
@@ -217,7 +217,7 @@
   ordinary 4xx → `INVALID_REQUEST`, and recognised moderation/content policy
   4xx → `CONTENT_REJECTED`. Assert raw response bodies are not exposed.
 
-- [x] **Step 9: Implement OpenRouter error mapping and rerun adapter tests**
+- [ ] **Step 9: Implement OpenRouter error mapping and rerun adapter tests**
 
   Keep the status mapping local to `OpenRouterProvider._map_error`; run:
 
@@ -225,7 +225,7 @@
 
   Expected: PASS.
 
-- [x] **Step 10: Commit the provider adapter**
+- [ ] **Step 10: Commit the provider adapter**
 
   ```bash
   git add src/pixgen/providers/openrouter.py tests/providers/test_openrouter.py tests/providers/test_registry.py
@@ -248,30 +248,30 @@
 - Produces: `OpenRouterCliFactory`, with `name = "openrouter"` and create/edit commands using OpenRouter's model parameter types.
 - Modifies: `normalize_model_id(value: str, *, prefix: str, error_message: str, allow_nested: bool = False) -> str`; keep current default behavior and enable nested provider-local slugs only for OpenRouter.
 
-- [x] **Step 1: Add failing credential and runtime tests**
+- [ ] **Step 1: Add failing credential and runtime tests**
 
   Test both environment aliases on `Settings`. Extend runtime tests to assert
   the provider and CLI factory are registered, the configured key makes
   OpenRouter available without constructing a client, and a missing key leaves
   model-list construction usable with the provider unavailable.
 
-- [x] **Step 2: Run the focused tests and verify they fail**
+- [ ] **Step 2: Run the focused tests and verify they fail**
 
   Run: `uv run pytest tests/config/test_models.py tests/test_runtime.py -k 'openrouter' -v`
 
   Expected: FAIL because the settings field, provider, and factory are absent.
 
-- [x] **Step 3: Add the OpenRouter settings field and runtime wiring**
+- [ ] **Step 3: Add the OpenRouter settings field and runtime wiring**
 
   Add `openrouter_api_key` using `AliasChoices("PIXGEN_OPENROUTER_API_KEY", "OPENROUTER_API_KEY")`. Build its lazy client factory with the Task 2 helper and base URL `https://openrouter.ai/api/v1`; register `OpenRouterProvider` and `OpenRouterCliFactory` alongside the current providers.
 
-- [x] **Step 4: Run the credential and runtime tests**
+- [ ] **Step 4: Run the credential and runtime tests**
 
   Run: `uv run pytest tests/config/test_models.py tests/test_runtime.py -k 'openrouter' -v`
 
   Expected: PASS; no client is created while constructing the runtime.
 
-- [x] **Step 5: Add failing nested native CLI normalization tests**
+- [ ] **Step 5: Add failing nested native CLI normalization tests**
 
   Add provider-command tests showing these model arguments normalise exactly
   as follows:
@@ -285,13 +285,13 @@
   Confirm current OpenAI and Gemini commands still reject nested local model
   names.
 
-- [x] **Step 6: Run the CLI tests and verify the OpenRouter cases fail**
+- [ ] **Step 6: Run the CLI tests and verify the OpenRouter cases fail**
 
   Run: `uv run pytest tests/cli/test_provider_commands.py -k 'openrouter or nested' -v`
 
   Expected: FAIL because OpenRouter CLI and nested normalization are absent.
 
-- [x] **Step 7: Implement the provider CLI and scoped nested normalization**
+- [ ] **Step 7: Implement the provider CLI and scoped nested normalization**
 
   Add create/edit commands following the OpenAI/Gemini factories. Update
   `normalize_model_id` with `allow_nested=False`; when enabled, validate the
@@ -300,14 +300,14 @@
   command-level prompt, parameter, output, variant, and timeout options
   consistent with existing providers.
 
-- [x] **Step 8: Run CLI, runtime, and provider integration tests**
+- [ ] **Step 8: Run CLI, runtime, and provider integration tests**
 
   Run: `uv run pytest tests/cli/test_provider_commands.py tests/cli/test_app.py tests/test_runtime.py tests/providers/test_openrouter.py -v`
 
   Expected: PASS; Muse edit is rejected during registry validation before
   `CommandInvoker.invoke` reaches generation.
 
-- [x] **Step 9: Commit runtime and CLI wiring**
+- [ ] **Step 9: Commit runtime and CLI wiring**
 
   ```bash
   git add src/pixgen/config/models.py src/pixgen/runtime.py src/pixgen/providers/shared.py src/pixgen/providers/openrouter_cli.py tests/config/test_models.py tests/test_runtime.py tests/cli/test_provider_commands.py
@@ -319,13 +319,11 @@
 **Files:**
 - Modify: `README.md`
 - Modify: `.env.example`
-- Modify: `docs/superpowers/specs/2026-10-01-openrouter-provider-design.md`
-- Add: `docs/superpowers/plans/2026-10-01-openrouter-provider.md`
 
 **Interfaces:**
 - Documents environment key aliases, nested model IDs, supported model operations, and provider-native commands. Does not change `pixgen.toml` defaults.
 
-- [x] **Step 1: Update user documentation**
+- [ ] **Step 1: Update user documentation**
 
   Add `OPENROUTER_API_KEY` and `PIXGEN_OPENROUTER_API_KEY` to the credential
   section, add the OpenRouter key to `.env.example`, document the three exact
@@ -333,14 +331,14 @@
   supported edit example. State that Muse edit is not currently available via
   the Images API. Leave default model configuration unchanged.
 
-- [x] **Step 2: Review documentation and patch formatting**
+- [ ] **Step 2: Review documentation and patch formatting**
 
   Run: `git diff --check`
 
   Expected: no whitespace errors and examples use the exact IDs registered in
   the catalogue.
 
-- [x] **Step 3: Run repository lint, type, and test checks**
+- [ ] **Step 3: Run repository lint, type, and test checks**
 
   Run these commands in order:
 
@@ -350,13 +348,11 @@
   just test
   ```
 
-  `just lint` and `just type-check` pass. `just test` reports 350 passed and
-  five failures in existing CLI rendering/parsing tests. All five failures
-  reproduce on base commit `3ab37b6`; they do not touch OpenRouter code.
+  Expected: all three commands pass. Fix any failures before proceeding.
 
-- [x] **Step 4: Commit the documentation**
+- [ ] **Step 4: Commit the documentation**
 
   ```bash
-  git add README.md .env.example docs/superpowers/specs/2026-10-01-openrouter-provider-design.md docs/superpowers/plans/2026-10-01-openrouter-provider.md
+  git add README.md .env.example
   git commit -m "docs: add OpenRouter usage"
   ```
