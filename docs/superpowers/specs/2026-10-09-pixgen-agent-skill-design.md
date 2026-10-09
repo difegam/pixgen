@@ -4,15 +4,22 @@
 
 Provide a portable, installable Agent Skill that teaches coding agents to use
 Pixgen's CLI reliably for image creation, editing, model discovery, model groups,
-and local image optimisation. The skill must work with Claude Code and clients
-that implement the open Agent Skills format, and it must stay out of the
-published Python package.
+and local image optimisation. When the active agent harness exposes native image
+generation, the skill should prefer it for ordinary image creation and editing
+to avoid an unnecessary separate provider API call. The skill must work with
+Claude Code and clients that implement the open Agent Skills format, and it must
+stay out of the published Python package.
 
 ## User and success criteria
 
-The user is a person or coding agent that has Pixgen installed and needs to
-complete an image task from a shell. The skill succeeds when an agent can:
+The user is a person or coding agent requesting an image task or Pixgen workflow.
+Pixgen may be installed, and the active harness may expose native image
+generation. The skill succeeds when an agent can:
 
+- prefer a native image-generation tool when the active harness exposes one for
+  ordinary create/edit requests;
+- use Pixgen when the user explicitly requests it or the task needs CLI-specific
+  features;
 - discover the installed CLI's command surface and supported models;
 - construct a valid command for the requested image operation;
 - use structured output where the command supports it;
@@ -40,7 +47,21 @@ distribution does not contain the skill.
 
 ### Agent workflow and CLI contract
 
-The skill treats the installed Pixgen CLI as the operative contract:
+For image creation and editing, first check whether the active harness exposes a
+native image-generation tool. Prefer that tool for ordinary create/edit requests
+when it is available. Make this decision from tool availability in the current
+harness, not assumptions about the selected model or about every model supported
+by a harness. Follow the harness's own output handling so project-bound assets
+end up at the requested or project-local path.
+
+Use Pixgen instead of the native tool when the user explicitly asks for Pixgen,
+a provider or model, multi-provider comparison, or a saved model group, or when
+the task is CLI-specific (such as model discovery or local optimisation). If a
+native tool is unavailable, use Pixgen only when the request calls for Pixgen or
+the user approves switching to a separately billed provider API. Otherwise,
+explain the available path before switching.
+
+When using Pixgen, treat the installed CLI as the operative contract:
 
 1. Check whether `pixgen` is available and consult `pixgen --help` if the
    installed command surface is unclear.
@@ -76,6 +97,7 @@ README and CLI help so they match Pixgen's actual syntax.
 
 The examples should cover:
 
+- native-tool preference and when to use Pixgen instead;
 - create and edit with explicit models and output paths;
 - edit reference images and common shared options;
 - multi-model generation and model groups;
@@ -112,6 +134,8 @@ installer discovery, and package contents.
 ## Non-goals
 
 - Do not add Pixgen skill files to the Python runtime package or package data.
+- Do not assume that every model or agent harness exposes native image
+  generation; check tool availability in the active harness.
 - Do not add CLI functionality, change JSON schemas, or add provider support.
 - Do not create separate skills for individual Pixgen commands.
 - Do not install the skill or Pixgen into the user's global environment as part
@@ -124,4 +148,6 @@ installer discovery, and package contents.
 - [Claude Skill authoring best practices](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices)
 - [`skills` CLI documentation](https://www.skills.sh/docs/cli)
 - [`skills` CLI source README](https://github.com/vercel-labs/skills#readme)
+- [Codex image-generation skill](https://github.com/openai/skills/blob/main/skills/.system/imagegen/SKILL.md)
+- [OpenAI Help Center: Images in ChatGPT and Codex](https://help.openai.com/en/articles/11084440-images-in-chatgpt)
 - [Pixgen README](https://github.com/difegam/pixgen#readme)
