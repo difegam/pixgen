@@ -23,6 +23,7 @@ available.
 pixgen create "A modern cabin beside a Norwegian fjord" \
   --model openai/gpt-image-2 \
   --output output/cabin.png \
+  --mkdir \
   --json
 ```
 
@@ -34,6 +35,7 @@ pixgen create "A modern cabin beside a Norwegian fjord" \
   --model openai/gpt-image-2 \
   --model gemini/gemini-3.1-flash-image \
   --output-dir output/cabin-comparisons \
+  --mkdir \
   --json
 ```
 
@@ -48,6 +50,7 @@ pixgen create "Combine the product and visual style" \
   --reference product.png \
   --reference style.png \
   --output output/campaign.png \
+  --mkdir \
   --json
 ```
 
@@ -63,6 +66,7 @@ pixgen edit "Remove the background" \
   --model openai/gpt-image-2 \
   --aspect-ratio 3:2 \
   --output output/product-edited.png \
+  --mkdir \
   --json
 ```
 
@@ -90,7 +94,7 @@ Only create or change a group when the user requests that configuration change.
 Optimisation is local; it uses Pillow and does not call an image provider:
 
 ```bash
-pixgen optimize photo.jpg --web --output-dir output/optimised --json
+pixgen optimize photo.jpg --web --output-dir output/optimised --mkdir --json
 ```
 
 Use `--dry-run --json` to inspect planned outputs without writing them. Do not
@@ -125,8 +129,8 @@ Use both the JSON and exit status:
 | `0` | Success | Report completed artifacts or data. |
 | `1` | CLI parse error | Read stderr/help, correct the command, and retry if appropriate. The output may not be JSON. |
 | `2` | Request rejected | Report the typed error; correct the request before retrying. |
-| `3` | All generation targets failed | Report each target error; do not claim an artifact was created. |
-| `4` | Partial failure | Report successful artifacts and failed targets separately. |
+| `3` | All generation targets failed, or optimisation had failures and no completed variants | Report each target or variant error; do not claim an artifact was created. |
+| `4` | Partial failure with at least one completed target or variant | Report successful artifacts and failed targets or variants separately. |
 
 The result schema is versioned. Read fields from the installed command's result
 instead of assuming a different version's shape.

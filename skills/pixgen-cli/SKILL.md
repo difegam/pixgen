@@ -11,10 +11,10 @@ calls provider APIs and may incur separate usage charges.
 ## Choose the image-generation path
 
 1. For ordinary image creation or editing, check whether the active harness
-   exposes a native image-generation tool. If it does, use that tool and follow
-   the harness's instructions for saving project-bound output. Check current
-   tool availability; do not infer it from the model name or assume every
-   harness or model has it.
+   exposes a native image-generation tool. If it does, use that tool and save
+   the selected asset to the requested or project-local path; do not leave it
+   only in harness-managed storage. Check current tool availability; do not
+   infer it from the model name or assume every harness or model has it.
 2. Use Pixgen when the user explicitly requests Pixgen, a provider or model,
    multi-provider comparison, a saved model group, or a CLI-specific operation
    such as model discovery or local optimisation.
@@ -34,8 +34,11 @@ calls provider APIs and may incur separate usage charges.
   supported aspect ratios. Do not rely on a hard-coded catalogue.
 - For generation, use `pixgen create`; for edits, use `pixgen edit` with the
   target image and any reference images. Use repeated `--model` flags for
-  explicit multi-model runs. Use `--group` for a group the user requested;
-  `--group` and `--model` are mutually exclusive.
+  explicit multi-model runs. `--group` applies to root `create` only; use it
+  instead of `--model` when the user requests a saved group. Edits take explicit
+  models.
+- If an explicit output path names a directory that may not exist, add
+  `--mkdir` so Pixgen can create it.
 - Use `pixgen optimize` for local image optimisation. It does not call a
   provider API.
 - Prefer `--json` whenever the selected command supports it. Check command help
