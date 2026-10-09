@@ -122,6 +122,17 @@ pixgen create "Combine the product and visual style" \
   <img alt="pixgen edit removes the background from cabin.png and writes cabin-cutout.png" src="docs/assets/demo/edit.gif" width="880">
 </p>
 
+### Local image optimisation
+
+Create common website-ready variants from a local image with Pillow:
+
+```bash
+pixgen optimize photo.jpg --web
+```
+
+See the [image optimisation guide](docs/image-optimization.md) for custom sizes,
+format and quality options, dry runs, and output handling.
+
 ### Provider-native commands
 
 Each provider command exposes that provider's native Pydantic parameters as
