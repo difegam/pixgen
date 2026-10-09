@@ -2,184 +2,149 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add a standalone `pixgen image optimize` command that creates website-ready image variants locally with Pillow or explicitly through Tinify using HTTPX2.
+> **Revision note (2026-09-30):** This plan was rewritten against the current `main` branch, which already ships a working CLI (`pixgen create`/`pixgen edit`/`pixgen model`), error contract, output rendering, and atomic artifact writer. The original 2026-09-19 draft assumed those did not exist yet and invented its own error schema, exit-code table, and Tinify credential store. This revision reuses the real modules instead of duplicating them. See "What changed since the original draft" below.
 
-**Architecture:** A pure planner inspects and validates the source, expands presets, applies no-upscale rules, and resolves destinations before credentials or network access. A private batch `Optimizer` boundary supports a sequential Pillow implementation and a bounded-concurrency Tinify implementation; a runner owns staged files, artifact validation, atomic promotion, ordered partial results, and exit classification. The feature introduces only the CLI, error, credential, output, and path foundations needed by optimization and does not implement generation or SQLite persistence.
+**Goal:** Add a standalone `pixgen optimize` command that creates website-ready image variants locally with Pillow, or explicitly through Tinify, from a local source image.
 
-**Tech Stack:** Python 3.14, Cyclopts 4, Pydantic 2, Pillow 12.3, HTTPX2 2.12, keyring, Rich, pytest, Ruff, Pyrefly, prek.
+**Architecture:** A pure planner inspects and validates the source, expands presets, applies no-upscale rules, and resolves destinations before any network access. A private batch `Optimizer` protocol supports a sequential Pillow implementation and a bounded-concurrency Tinify implementation; a runner owns staged files, artifact validation, and promotion through the existing `pixgen.artifacts.write_atomic`, plus ordered partial results. The feature adds only the `optimization/` subsystem and the CLI/result/error extensions it needs; it does not implement image generation (already shipped) or any database persistence.
 
-**Spec:** `docs/superpowers/specs/2026-09-19-image-optimization-design.md`
+**Tech Stack:** Python 3.14, Cyclopts 4, Pydantic 2, Pillow (already a dependency) plus `pillow-avif-plugin` for AVIF, HTTPX2 (already a dependency), Rich, pytest, Ruff, Pyrefly, prek.
+
+**Spec:** `docs/superpowers/specs/2026-09-19-image-optimization-design.md` — re-read it alongside this plan; several of its module names have also drifted (it predates `core/results.py`, `cli/outcome.py`, and the current `artifacts.py`). Treat this plan's module names as authoritative where they conflict.
+
+### What changed since the original draft
+
+- **CLI shape:** commands mount at CLI root (`pixgen create`, `pixgen edit`, `pixgen model`) — there is no `image` subgroup. `pixgen image optimize` becomes root-level **`pixgen optimize SOURCE ...`**.
+- **Error/result contract:** the app already has `pixgen.core.errors.ErrorCode` + `PixgenError`, `pixgen.core.results.PublicError`/`CommandResult`/`TargetResult`, and `pixgen.cli.outcome.CliOutcome`/`ExitStatus`/`render_outcome`. This plan extends those instead of inventing `ErrorDetail`/`ErrorEnvelope` and a bespoke 0–7 exit table.
+- **Exit codes:** reuse `ExitStatus` (`SUCCESS=0`, `REJECTED=2`, `ALL_FAILED=3`, `PARTIAL_FAILURE=4`; `1` is left to Cyclopts parse errors). There is no dedicated code for "some variants skipped by design" — a no-upscale skip is an expected planning outcome, not a failure, so a run with skips but no engine failures is `SUCCESS`. A run with at least one engine `FAILED` variant and at least one `COMPLETED` variant is `PARTIAL_FAILURE`; all variants `FAILED` is `ALL_FAILED`.
+- **Atomic writes:** reuse `pixgen.artifacts.write_atomic(path, data, overwrite=...)` for final promotion instead of a bespoke fsync/`os.replace` routine. Collision/force checks happen once, during planning (matching how `artifacts.plan_output` already works for `create`/`edit`).
+- **Dependencies:** `pillow>=12.3.0` and `httpx2>=2.12.0` are already in `pyproject.toml` — nothing to add there. AVIF is **not** bundled in Pillow's PyPI wheels (confirmed via research); it needs the separate `pillow-avif-plugin` package plus `import pillow_avif` before any AVIF read/write, or AVIF support silently fails.
+- **No SQLite, no `sqlmodel`, no `stamina`:** the original Task 1 added both as dependencies even though the plan's own constraints forbid persisting optimization runs. Dropped entirely — nothing in the repo uses them.
+- **No OS keyring:** `README.md` lists "OS-keyring credentials" as explicitly deferred, and `AGENTS.md` documents provider keys as env-var-only (`OPENAI_API_KEY`, `GEMINI_API_KEY`). Tinify credentials follow the same pattern: a `tinify_api_key: SecretStr | None` field on the existing `Settings` model, resolved from `TINIFY_API_KEY`/`PIXGEN_TINIFY_API_KEY`. No `CredentialResolver`, no keyring backend, no `credentials.py`.
+- **Coordination with `docs/superpowers/plans/2026-09-27-media-commands.md`:** that plan's architecture line says it will "reuse ... the planned local optimization engine for codec operations," but its own tasks build an independent `media/transform.py` with no import from `optimization/local.py`. This plan does not resolve that seam (out of scope — it belongs to whichever plan lands second), but Task 5 below flags the exact primitives (`_load_source`, `_encode_variant`) that a future refactor could lift into a shared `pixgen/images/` module so `media/transform.py` and `optimization/local.py` stop duplicating EXIF-normalize/encode logic.
 
 ## Global Constraints
 
-- Python remains `>=3.14`; add `pillow>=12.3,<13` and do not add the Tinify Python SDK or `requests`.
-- The only entry point is the standalone `pixgen image optimize` command; generated images are never optimized implicitly.
-- `local` is the default, offline engine. `tinify` is selected explicitly and is the only action that authorizes source upload and possible API charges.
+- Do not add `sqlmodel`, `stamina`, or `keyring` as dependencies. Add `pillow-avif-plugin` and register it (`import pillow_avif`) before any AVIF encode/decode.
+- The only entry point is the standalone `pixgen optimize` command; generated images are never optimized implicitly.
+- `local` is the default, offline engine. `tinify` is selected explicitly via `--engine tinify` and is the only action that authorizes source upload and possible API charges.
 - Support only static PNG, JPEG, WebP, and AVIF; reject animated images, SVG, video, and transparent-to-JPEG conversion.
 - Never upscale. Keep valid completed variants when another variant is skipped or fails.
 - Normalize EXIF orientation, strip EXIF/XMP/GPS, and retain ICC locally where the encoder supports it; Tinify output does not promise ICC retention.
-- Never overwrite without `--force`, never create missing parents without `--mkdir`, and promote only validated, fsynced sibling temporary files with `os.replace`.
+- Never overwrite without `--force`, never create missing parents without `--mkdir`. Collision/force/parent checks happen during planning, before any credential lookup or network access; final promotion reuses `pixgen.artifacts.write_atomic`.
 - `--dry-run` performs no credential lookup, network request, file write, or directory creation.
-- Do not persist optimization runs in SQLite and do not add a public optimizer plugin API.
+- Do not persist optimization runs anywhere; do not add a public optimizer plugin API.
 - Never retry `POST /shrink` or Tinify derivative `POST` requests. Retry only safe `GET` downloads, with a bound, jitter, and `Retry-After` support.
 - Validate Tinify output URLs as exact HTTPS `api.tinify.com/output/<token>` URLs before following them; never expose credentials, authorization headers, provider bodies, or output URLs.
-- JSON is schema version 1, variant order is plan order, and exit codes remain 0 success, 1 internal, 2 usage/validation/configuration, 3 credentials/authentication, 4 provider/network/rate limit, 5 timeout, 6 optimization failure or partial result, and 7 artifact/storage failure.
+- `OptimizeResult.schema_version` is the string `"1"` (matching `CommandResult`/`ModelListResult`), variant order is plan order, and exit codes reuse the existing `ExitStatus`: `0` success (including skip-only runs), `2` rejected (usage/validation/configuration/credential, mirroring `PixgenError` → `command_error`), `3` all variants failed, `4` some variants failed. Cyclopts owns `1` for its own parse errors.
 
 ## Review Focus
 
 - A JPEG whose EXIF orientation swaps width and height must be planned against normalized dimensions; Tinify must upload one normalized, metadata-free intermediate and clean it up.
 - A transparent source requested as JPEG must fail before credential lookup, directory creation, or network access.
 - A malicious Tinify `Location` such as another host, user-info URL, query-bearing URL, or deceptive `/output/../` path must be rejected without a follow-up request.
-- A failed replacement must leave the old destination byte-for-byte intact, remove temporary files, and preserve already promoted sibling variants.
-- Concurrent Tinify responses that complete out of order, including one derivative failure, must still return planned order, retain successes, sanitize the failure, and exit with the correct category precedence.
+- A failed promotion must leave the old destination byte-for-byte intact (verify `write_atomic`'s existing no-clobber/replace behaviour is exercised correctly, not reinvented), remove temporary stage files, and preserve already-promoted sibling variants.
+- Concurrent Tinify responses that complete out of order, including one derivative failure, must still return planned order, retain successes, sanitize the failure, and map to `ExitStatus.PARTIAL_FAILURE`.
 
 ---
 
 ## File Map
 
-### Project and shared foundations
+### Shared foundation (extend, do not recreate)
 
-- Modify `pyproject.toml` for Pillow, pytest markers, and the real console entry point.
-- Modify `uv.lock` through `uv lock` after dependency changes.
-- Modify `justfile` to run `pixgen`, Pyrefly, and the existing quality suite correctly.
-- Modify `.gitignore` to ignore `.superpowers/` visual-companion state.
-- Modify `src/pixgen/__init__.py` to expose only `__version__`.
-- Create `src/pixgen/__main__.py` as the module-entry delegate.
-- Create `src/pixgen/core/__init__.py` and `src/pixgen/core/errors.py` for stable safe errors and exit mapping.
-- Create `src/pixgen/output.py` for JSON/human stream policy.
-- Create `src/pixgen/cli/__init__.py`, `src/pixgen/cli/app.py`, `src/pixgen/cli/image.py`, and `src/pixgen/cli/system.py` for the real Cyclopts command tree.
-- Create `src/pixgen/config/paths.py` for the standard artifact directory.
-- Fix `src/pixgen/config/models.py` so Pydantic Settings imports and defaults are valid on Pydantic 2.
-- Create `src/pixgen/credentials.py` for keyring-first Tinify secret resolution.
+- Modify `pyproject.toml`: add `pillow-avif-plugin`, add the `live_tinify` pytest marker. Do **not** add `sqlmodel`, `stamina`, or `keyring`.
+- Modify `uv.lock` via `uv lock`.
+- Modify `.gitignore` to ignore `.superpowers/` visual-companion state, if not already present.
+- Modify `src/pixgen/core/errors.py` to add `ErrorCode.OPTIMIZATION_FAILED`.
+- Modify `src/pixgen/core/results.py` to add `VariantStatus`, `OptimizeVariantResult`, `OptimizeResult`.
+- Modify `src/pixgen/cli/outcome.py` to extend the `PublicResult` union, `exit_status`, and `render_outcome` for `OptimizeResult`.
+- Modify `src/pixgen/cli/render.py` to add `render_optimize_result`.
+- Modify `src/pixgen/images/mime.py` to add `"image/avif": "avif"`.
+- Modify `src/pixgen/config/models.py` to add `Settings.tinify_api_key: SecretStr | None`, matching the existing `openai_api_key`/`gemini_api_key` fields.
 
-### Optimization subsystem
+### Optimization subsystem (new)
 
 - Create `src/pixgen/optimization/__init__.py` for the private package surface.
-- Create `src/pixgen/optimization/models.py` for requests, source facts, plans, engine outputs, and versioned results.
+- Create `src/pixgen/optimization/models.py` for the request, source-facts, plan, and engine-output types that are internal to planning/execution (not part of the public result contract, which lives in `core/results.py`).
 - Create `src/pixgen/optimization/planner.py` for variant parsing, `--web` merging, source inspection, capability checks, cost bounds, and destinations.
-- Create `src/pixgen/optimization/base.py` for the private batch protocol.
+- Create `src/pixgen/optimization/base.py` for the private batch `Optimizer` protocol.
 - Create `src/pixgen/optimization/local.py` for one-decode Pillow transformations.
 - Create `src/pixgen/optimization/tinify.py` for direct HTTPX2 upload, transformations, safe reads, and error translation.
-- Create `src/pixgen/optimization/runner.py` for staging, validation, promotion, cleanup, partial aggregation, and exit precedence.
+- Create `src/pixgen/optimization/runner.py` for staging, validation, promotion (via `artifacts.write_atomic`), cleanup, and partial aggregation.
+- Create `src/pixgen/cli/optimize.py` for the `pixgen optimize` command, following the pattern in `src/pixgen/cli/image.py`.
+- Modify `src/pixgen/cli/app.py` to register the optimize command alongside `create`/`edit`/`model`.
+
+### Diagnostics (new)
+
+- Create `src/pixgen/cli/system.py` for `pixgen info` and `pixgen doctor`.
 
 ### Tests, docs, and agent guidance
 
-- Create focused tests under `tests/unit/{core,credentials,optimization,output}/`, `tests/providers/`, `tests/cli/`, `tests/integration/`, and `tests/live/`.
-- Create `tests/conftest.py` for deterministic static, animated, transparent, and oriented image fixtures plus subprocess CLI invocation.
+- Create focused tests under `tests/optimization/`, `tests/providers/`, `tests/cli/`, `tests/integration/`, and `tests/live/`, mirroring the existing `tests/` layout (`tests/application/`, `tests/cli/`, `tests/providers/`, `tests/images/`).
+- Extend `tests/conftest.py`/`tests/factories.py` with deterministic static, animated, transparent, and oriented image fixtures.
 - Create `docs/image-optimization.md` and update `README.md`.
-- Create `skills/pixgen/SKILL.md` and `skills/pixgen/references/image-optimization.md`.
+- Create `skills/pixgen/SKILL.md` and `skills/pixgen/references/image-optimization.md` if a Pixgen agent skill does not already exist; otherwise extend it.
 
 ---
 
-### Task 1: Runnable CLI and Stable Error Foundation
+### Task 1: Wire the Optimize Result, Error, and Exit Contracts
 
 **Files:**
-- Modify: `pyproject.toml:1-36`
+- Modify: `pyproject.toml`
 - Modify: `uv.lock`
-- Modify: `justfile:1-51`
-- Modify: `.gitignore`
-- Modify: `src/pixgen/__init__.py:1-2`
-- Modify: `src/pixgen/config/models.py:1-25`
-- Create: `src/pixgen/__main__.py`
-- Create: `src/pixgen/cli/__init__.py`
-- Create: `src/pixgen/cli/app.py`
-- Create: `src/pixgen/core/__init__.py`
-- Create: `src/pixgen/core/errors.py`
-- Create: `src/pixgen/output.py`
-- Test: `tests/unit/core/test_errors.py`
-- Test: `tests/unit/output/test_output.py`
-- Test: `tests/cli/test_entrypoint.py`
+- Modify: `src/pixgen/core/errors.py`
+- Modify: `src/pixgen/core/results.py`
+- Modify: `src/pixgen/cli/outcome.py`
+- Modify: `src/pixgen/cli/render.py`
+- Modify: `src/pixgen/images/mime.py`
+- Test: `tests/core/test_errors.py`
+- Test: `tests/core/test_results.py`
+- Test: `tests/cli/test_outcome.py`
 
 **Interfaces:**
-- Consumes: Cyclopts `App`; Pydantic `BaseModel`; Rich `Console`.
-- Produces: `ErrorCode`, `ErrorDetail`, `ErrorEnvelope`, `PixgenError`, `exit_code_for_error(ErrorCode) -> int`, `write_json(BaseModel, TextIO) -> None`, `write_error(PixgenError, TextIO) -> int`, root `app`, and `main() -> None`.
+- Consumes: existing `ErrorCode`, `PixgenError`, `PublicError`, `CliOutcome`, `ExitStatus`, `render_outcome`.
+- Produces: `ErrorCode.OPTIMIZATION_FAILED`, `VariantStatus`, `OptimizeVariantResult`, `OptimizeResult`, extended `PublicResult` union, extended `exit_status`, `render_optimize_result`, `MIME_TO_EXTENSION["image/avif"]`.
 
-- [ ] **Step 1: Write failing stable-error tests**
-
-```python
-from pixgen.core.errors import ErrorCode, PixgenError, exit_code_for_error
-
-
-def test_optimization_failure_has_stable_exit_six() -> None:
-    error = PixgenError(ErrorCode.OPTIMIZATION_FAILED, "Could not encode card.")
-    assert error.detail.model_dump(mode="json") == {
-        "code": "optimization_failed",
-        "message": "Could not encode card.",
-        "retryable": False,
-        "provider": None,
-        "fields": {},
-    }
-    assert exit_code_for_error(error.detail.code) == 6
-
-
-def test_error_text_never_includes_cause_repr() -> None:
-    error = PixgenError(
-        ErrorCode.PROVIDER_UNAVAILABLE,
-        "Tinify is unavailable.",
-        retryable=True,
-    )
-    assert "secret-canary" not in str(error)
-```
-
-- [ ] **Step 2: Write failing output and entry-point tests**
+- [ ] **Step 1: Write failing tests for the extended contracts**
 
 ```python
-import json
-import subprocess
-import sys
-from io import StringIO
-
-from pixgen.core.errors import ErrorCode, PixgenError
-from pixgen.output import write_error
+from pixgen.core.errors import ErrorCode
+from pixgen.core.results import OptimizeResult, OptimizeVariantResult, VariantStatus
 
 
-def test_json_error_is_one_document_on_stderr() -> None:
-    stream = StringIO()
-    exit_code = write_error(PixgenError(ErrorCode.INVALID_REQUEST, "Bad variant."), stream)
-    assert exit_code == 2
-    assert json.loads(stream.getvalue())["error"]["code"] == "invalid_request"
-    assert stream.getvalue().count("\n") == 1
+def test_optimization_failed_error_code_exists() -> None:
+    assert ErrorCode.OPTIMIZATION_FAILED == "optimization_failed"
 
 
-def test_module_entrypoint_exposes_image_namespace() -> None:
-    completed = subprocess.run(
-        [sys.executable, "-m", "pixgen", "--help"],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    assert completed.returncode == 0
-    assert "image" in completed.stdout
+def test_optimize_result_requires_variants_or_error() -> None:
+    import pytest
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        OptimizeResult(
+            run_id=__import__("uuid").uuid4(),
+            engine="local",
+            source=__import__("pathlib").Path("a.jpg"),
+            source_bytes=1,
+        )
 ```
 
-- [ ] **Step 3: Run the focused tests and verify the missing-module failures**
+Add a `cli/test_outcome.py` case asserting `exit_status` returns `ExitStatus.SUCCESS` for an `OptimizeResult` whose variants are all `COMPLETED` or `SKIPPED`, `PARTIAL_FAILURE` when at least one is `FAILED` alongside a `COMPLETED` one, and `ALL_FAILED` when every variant is `FAILED`.
 
-Run: `uv run pytest tests/unit/core/test_errors.py tests/unit/output/test_output.py tests/cli/test_entrypoint.py -v`
+- [ ] **Step 2: Run the focused tests and verify they fail**
 
-Expected: FAIL because `pixgen.core.errors`, `pixgen.output`, and the CLI package do not exist.
+Run: `uv run pytest tests/core/test_errors.py tests/core/test_results.py tests/cli/test_outcome.py -v`
 
-- [ ] **Step 4: Add dependencies, entry points, and development commands**
+Expected: FAIL because the new members/types do not exist.
 
-Set these exact project values and regenerate the lock:
+- [ ] **Step 3: Add the dependency and marker**
 
 ```toml
 [project]
-requires-python = ">=3.14"
 dependencies = [
-    "cyclopts>=4.25.2,<5",
-    "httpx2>=2.12.0,<3",
-    "keyring>=25.7.0",
-    "pillow>=12.3,<13",
-    "platformdirs>=4.0",
-    "pydantic>=2.13.5",
-    "pydantic-settings>=2.15.0",
-    "rich>=15.0.0",
-    "sqlmodel>=0.0.42",
-    "stamina>=26.1.0",
+    # ...existing entries unchanged...
+    "pillow-avif-plugin>=1.5,<2",
 ]
-
-[project.scripts]
-pixgen = "pixgen.cli.app:main"
 
 [tool.pytest.ini_options]
 markers = ["live_tinify: uses a real Tinify key and consumes quota"]
@@ -187,61 +152,82 @@ markers = ["live_tinify: uses a real Tinify key and consumes quota"]
 
 Run: `uv lock`
 
-Change `just run` to `uv run pixgen`, replace the stale `type-check-ty` recipe with `type-check: uv run pyrefly check`, and add `.superpowers/` to `.gitignore`.
+- [ ] **Step 4: Extend `ErrorCode` and MIME map**
 
-- [ ] **Step 5: Implement the safe error contract**
+Add `OPTIMIZATION_FAILED = "optimization_failed"` to `ErrorCode`. Add `"image/avif": "avif"` to `MIME_TO_EXTENSION` in `src/pixgen/images/mime.py`.
 
-```python
-class ErrorCode(StrEnum):
-    INVALID_REQUEST = "invalid_request"
-    INVALID_CONFIGURATION = "invalid_configuration"
-    CREDENTIAL_UNAVAILABLE = "credential_unavailable"
-    AUTHENTICATION_FAILED = "authentication_failed"
-    RATE_LIMITED = "rate_limited"
-    MODEL_NOT_FOUND = "model_not_found"
-    PROVIDER_UNAVAILABLE = "provider_unavailable"
-    GENERATION_FAILED = "generation_failed"
-    GENERATION_CANCELLED = "generation_cancelled"
-    OPTIMIZATION_FAILED = "optimization_failed"
-    TIMEOUT = "timeout"
-    ARTIFACT_ERROR = "artifact_error"
-    STORAGE_ERROR = "storage_error"
-    INTERNAL_ERROR = "internal_error"
-
-
-class ErrorDetail(BaseModel):
-    model_config = ConfigDict(frozen=True)
-    code: ErrorCode
-    message: str
-    retryable: bool = False
-    provider: str | None = None
-    fields: dict[str, str | int | float | bool | None] = Field(default_factory=dict)
-
-
-class ErrorEnvelope(BaseModel):
-    schema_version: Literal[1] = 1
-    error: ErrorDetail
-```
-
-`PixgenError` accepts only the safe fields above; store an exception cause with `raise ... from cause`, never in `message` or `fields`. Map codes to the exact global exit table and default unknown failures to exit 1.
-
-- [ ] **Step 6: Implement JSON output and the CLI shell**
+- [ ] **Step 5: Add the public result contract**
 
 ```python
-def write_json(model: BaseModel, stream: TextIO) -> None:
-    stream.write(model.model_dump_json(exclude_none=False) + "\n")
+class VariantStatus(StrEnum):
+    """Outcome of one planned optimization variant."""
+
+    COMPLETED = "completed"
+    SKIPPED = "skipped"
+    FAILED = "failed"
 
 
-def write_error(error: PixgenError, stream: TextIO = sys.stderr) -> int:
-    write_json(ErrorEnvelope(error=error.detail), stream)
-    return exit_code_for_error(error.detail.code)
+class OptimizeVariantResult(BaseModel):
+    """Result for a single named optimization variant."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    name: str = Field(description="Variant name")
+    status: VariantStatus
+    artifact_path: Path | None = Field(default=None)
+    media_type: str | None = Field(default=None)
+    width: int | None = Field(default=None)
+    height: int | None = Field(default=None)
+    output_bytes: int | None = Field(default=None)
+    error: PublicError | None = Field(default=None)
+
+
+class OptimizeResult(BaseModel):
+    """Public result envelope for `pixgen optimize`."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    schema_version: Literal["1"] = "1"
+    run_id: uuid.UUID
+    engine: OptimizeEngine  # imported from pixgen.optimization.models
+    source: Path
+    source_bytes: int
+    total_output_bytes: int = 0
+    compression_count_this_month: int | None = None
+    variants: tuple[OptimizeVariantResult, ...] = Field(default=())
+    error: PublicError | None = Field(default=None)
+
+    @model_validator(mode="after")
+    def _validate_outcome(self) -> Self:
+        if bool(self.variants) == (self.error is not None):
+            raise ValueError("an optimize result requires variant results or one command error")
+        return self
 ```
 
-Create a root Cyclopts `App(name="pixgen", version=__version__)`, attach an empty `image_app = App(name="image")`, and make both `pixgen` and `python -m pixgen` call the same `main()`. Correct `config/models.py` to import `BaseSettings` and `SettingsConfigDict` from `pydantic_settings`, use `Field(default_factory=...)`, and avoid `Path.cwd()` as a class-level default.
+`core/results.py` importing `OptimizeEngine` from `pixgen.optimization.models` is the one place this plan lets `core/` depend on a feature package; if that inversion bothers a reviewer, move `OptimizeEngine` itself into `core/models.py` instead — either is acceptable, but pick one and keep it consistent with how `ImageOperation` already lives in `core/models.py`.
+
+- [ ] **Step 6: Extend `CliOutcome`'s union, `exit_status`, and rendering**
+
+In `cli/outcome.py`, add `OptimizeResult` to `type PublicResult = CommandResult | ModelGetResult | ModelListResult | OptimizeResult` and extend `exit_status`:
+
+```python
+if isinstance(result, OptimizeResult):
+    if result.error is not None:
+        return ExitStatus.REJECTED
+    completed = sum(v.status is VariantStatus.COMPLETED for v in result.variants)
+    failed = sum(v.status is VariantStatus.FAILED for v in result.variants)
+    if failed and not completed:
+        return ExitStatus.ALL_FAILED
+    if failed:
+        return ExitStatus.PARTIAL_FAILURE
+    return ExitStatus.SUCCESS
+```
+
+In `cli/render.py`, add `render_optimize_result(result: OptimizeResult, *, as_json: bool) -> None`, following `render_command_result`'s JSON/interactive/non-interactive split (columns: Variant, Status, Dimensions, Format, Bytes, Path). Wire it into `render_outcome`'s `match` in `cli/outcome.py`.
 
 - [ ] **Step 7: Run the focused tests and quality checks**
 
-Run: `uv run pytest tests/unit/core/test_errors.py tests/unit/output/test_output.py tests/cli/test_entrypoint.py -v`
+Run: `uv run pytest tests/core/test_errors.py tests/core/test_results.py tests/cli/test_outcome.py -v`
 
 Expected: PASS.
 
@@ -249,11 +235,11 @@ Run: `uv run ruff check src tests && uv run ruff format --check src tests && uv 
 
 Expected: PASS.
 
-- [ ] **Step 8: Commit the foundation**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add .gitignore pyproject.toml uv.lock justfile src/pixgen tests/unit/core tests/unit/output tests/cli/test_entrypoint.py
-git commit -m "Build image optimization CLI foundation"
+git add pyproject.toml uv.lock src/pixgen/core/errors.py src/pixgen/core/results.py src/pixgen/cli/outcome.py src/pixgen/cli/render.py src/pixgen/images/mime.py tests/core/test_errors.py tests/core/test_results.py tests/cli/test_outcome.py
+git commit -m "Extend result, error, and exit contracts for image optimization"
 ```
 
 ### Task 2: Optimization Domain Models and Variant Grammar
@@ -262,12 +248,12 @@ git commit -m "Build image optimization CLI foundation"
 - Create: `src/pixgen/optimization/__init__.py`
 - Create: `src/pixgen/optimization/models.py`
 - Create: `src/pixgen/optimization/planner.py`
-- Test: `tests/unit/optimization/test_variant_parser.py`
-- Test: `tests/unit/optimization/test_models.py`
+- Test: `tests/optimization/test_variant_parser.py`
+- Test: `tests/optimization/test_models.py`
 
 **Interfaces:**
-- Consumes: `ErrorDetail` and `PixgenError` from Task 1.
-- Produces: `OptimizeEngine`, `FormatChoice`, `ImageFormat`, `ResizeMode`, `VariantStatus`, `OptimizeStatus`, `VariantSpec`, `OptimizeRequest`, `SourceInfo`, `PlannedVariant`, `SkippedVariant`, `OptimizationPlan`, `EngineVariantResult`, `EngineBatchResult`, `VariantResult`, `OptimizeResult`, and `parse_variant(str) -> VariantSpec`.
+- Consumes: `ErrorCode`, `PixgenError` from `pixgen.core.errors`.
+- Produces: `OptimizeEngine`, `FormatChoice`, `ImageFormat`, `ResizeMode`, `VariantSpec`, `OptimizeRequest`, `SourceInfo`, `PlannedVariant`, `SkippedVariant`, `OptimizationPlan`, `EngineVariantResult`, `EngineBatchResult`, and `parse_variant(str) -> VariantSpec`.
 
 - [ ] **Step 1: Write failing grammar and model tests**
 
@@ -311,18 +297,18 @@ def test_parse_variant_contract(expression, name, width, height, mode) -> None:
 def test_invalid_variant_is_stable_invalid_request(expression: str) -> None:
     with pytest.raises(PixgenError) as caught:
         parse_variant(expression)
-    assert caught.value.detail.code is ErrorCode.INVALID_REQUEST
+    assert caught.value.code is ErrorCode.INVALID_REQUEST
 ```
 
 - [ ] **Step 2: Run the parser tests and verify they fail**
 
-Run: `uv run pytest tests/unit/optimization/test_variant_parser.py tests/unit/optimization/test_models.py -v`
+Run: `uv run pytest tests/optimization/test_variant_parser.py tests/optimization/test_models.py -v`
 
-Expected: FAIL because the optimization package does not exist.
+Expected: FAIL because the `optimization` package does not exist.
 
 - [ ] **Step 3: Define the immutable domain models**
 
-Use `ConfigDict(frozen=True)` for every request/plan/result model whose lifecycle is immutable. Define the exact core shapes:
+Use `ConfigDict(frozen=True, extra="forbid")`, matching the rest of the codebase's Pydantic style. Define:
 
 ```python
 class OptimizeEngine(StrEnum):
@@ -353,20 +339,8 @@ class ResizeMode(StrEnum):
     THUMB = "thumb"
 
 
-class VariantStatus(StrEnum):
-    COMPLETED = "completed"
-    SKIPPED = "skipped"
-    FAILED = "failed"
-
-
-class OptimizeStatus(StrEnum):
-    SUCCESS = "success"
-    PARTIAL = "partial"
-    FAILED = "failed"
-
-
 class VariantSpec(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
     name: str
     width: int | None
     height: int | None
@@ -374,7 +348,7 @@ class VariantSpec(BaseModel):
 
 
 class OptimizeRequest(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
     source: Path
     engine: OptimizeEngine = OptimizeEngine.LOCAL
     variant_expressions: tuple[str, ...] = ()
@@ -389,7 +363,7 @@ class OptimizeRequest(BaseModel):
 
 
 class SourceInfo(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
     path: Path
     format: ImageFormat
     width: int
@@ -401,7 +375,7 @@ class SourceInfo(BaseModel):
 
 
 class PlannedVariant(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
     index: int
     name: str
     mode: ResizeMode
@@ -414,96 +388,66 @@ class PlannedVariant(BaseModel):
 
 
 class SkippedVariant(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
     index: int
     name: str
-    error: ErrorDetail
+    error: PublicError  # from pixgen.core.results
 
 
 class OptimizationPlan(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
     request: OptimizeRequest
     source: SourceInfo
     quality: int | None
+    force: bool
     runnable: tuple[PlannedVariant, ...]
     skipped: tuple[SkippedVariant, ...]
     estimated_compressions_max: int | None = None
 
 
-class VariantResult(BaseModel):
-    model_config = ConfigDict(frozen=True)
-    name: str
-    status: VariantStatus
-    path: Path | None = None
-    width: int | None = None
-    height: int | None = None
-    mime_type: str | None = None
-    output_bytes: int | None = None
-    error: ErrorDetail | None = None
-
-
-class OptimizeResult(BaseModel):
-    model_config = ConfigDict(frozen=True)
-    schema_version: Literal[1] = 1
-    operation: Literal["image.optimize"] = "image.optimize"
-    engine: OptimizeEngine
-    source: Path
-    source_bytes: int
-    status: OptimizeStatus
-    requested: int
-    completed: int
-    skipped: int
-    failed: int
-    total_output_bytes: int
-    estimated_compressions_max: int | None = None
-    compression_count_this_month: int | None = None
-    variants: tuple[VariantResult, ...]
-
-
 class EngineVariantResult(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
     name: str
     completed: bool
-    error: ErrorDetail | None = None
+    error: PublicError | None = None
 
 
 class EngineBatchResult(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
     variants: tuple[EngineVariantResult, ...]
     compression_count_this_month: int | None = None
 ```
 
-`ResizeMode.NONE` is internal for same-dimension optimization and is rejected by `parse_variant`. `FormatChoice.KEEP` is request-only; `PlannedVariant.output_format` is always a concrete `ImageFormat`. Results carry safe `ErrorDetail` objects, never exceptions or provider responses.
+`ResizeMode.NONE` is internal, used for same-dimension optimization, and is rejected by `parse_variant`. `FormatChoice.KEEP` is request-only; `PlannedVariant.output_format` is always a concrete `ImageFormat`. `OptimizationPlan.force` carries the request's `--force` through to the runner so it can pass it to `write_atomic(..., overwrite=plan.force)`.
 
 - [ ] **Step 4: Implement the strict parser**
 
-Compile three anchored regular expressions for `WIDTHxHEIGHT`, `WIDTHw`, and `HEIGHTh`. Accept `scale` only with one dimension and `fit`, `cover`, or `thumb` only with both. Reject names outside `[a-z][a-z0-9-]*` and convert every parse failure to `PixgenError(ErrorCode.INVALID_REQUEST, "Invalid variant definition.", fields={"variant": expression})`.
+Compile three anchored regular expressions for `WIDTHxHEIGHT`, `WIDTHw`, and `HEIGHTh`. Accept `scale` only with one dimension and `fit`, `cover`, or `thumb` only with both. Reject names outside `[a-z][a-z0-9-]*` and convert every parse failure to `PixgenError(ErrorCode.INVALID_REQUEST, "Invalid variant definition: {expression!r}")` (the current `PixgenError` takes `code, message` only — there is no `fields=` kwarg like the original draft assumed; put the offending expression in the message text).
 
 - [ ] **Step 5: Run model and parser tests**
 
-Run: `uv run pytest tests/unit/optimization/test_variant_parser.py tests/unit/optimization/test_models.py -v`
+Run: `uv run pytest tests/optimization/test_variant_parser.py tests/optimization/test_models.py -v`
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit the domain contract**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add src/pixgen/optimization tests/unit/optimization/test_variant_parser.py tests/unit/optimization/test_models.py
+git add src/pixgen/optimization tests/optimization/test_variant_parser.py tests/optimization/test_models.py
 git commit -m "Define image optimization domain models"
 ```
 
 ### Task 3: Pure Planning, Source Inspection, and `--web`
 
 **Files:**
-- Create: `src/pixgen/config/paths.py`
 - Modify: `src/pixgen/optimization/planner.py`
-- Create: `tests/conftest.py`
-- Test: `tests/unit/optimization/test_planner.py`
-- Test: `tests/unit/optimization/test_source_inspection.py`
+- Test: `tests/optimization/test_planner.py`
+- Test: `tests/optimization/test_source_inspection.py`
+- Modify: `tests/factories.py` (or a new `tests/optimization/conftest.py`) for image fixtures
 
 **Interfaces:**
-- Consumes: models and `parse_variant` from Task 2; Pillow `Image` and `ImageOps`; PlatformDirs.
-- Produces: `inspect_source(Path) -> SourceInfo`, `build_plan(OptimizeRequest, *, default_output_dir: Path | None = None) -> OptimizationPlan`, `default_artifact_dir() -> Path`, and constant `WEB_VARIANTS`.
+- Consumes: models from Task 2; Pillow `Image` and `ImageOps`.
+- Produces: `inspect_source(Path) -> SourceInfo`, `build_plan(OptimizeRequest) -> OptimizationPlan`, constant `WEB_VARIANTS`.
 
 - [ ] **Step 1: Write failing preset, no-upscale, and validation tests**
 
@@ -554,25 +498,25 @@ def test_transparent_to_jpeg_fails_before_output_directory_creation(
     )
     with pytest.raises(PixgenError) as caught:
         build_plan(request)
-    assert caught.value.detail.code is ErrorCode.INVALID_REQUEST
+    assert caught.value.code is ErrorCode.INVALID_REQUEST
     assert not missing.exists()
 ```
 
 - [ ] **Step 2: Add rotated, animated, decoded-format, and collision tests**
 
-Create fixtures for an EXIF-orientation-6 JPEG, a two-frame GIF, an alpha PNG, and a JPEG renamed `.png`. Assert normalized dimensions, `has_alpha`, decoded format, static-image rejection, duplicate explicit-name rejection, local `thumb` rejection, Tinify explicit-quality rejection, `--output` multi-result rejection, output/output-dir mutual exclusion, canonical `.jpg` naming, all-skipped exit 2, missing-parent behavior, and no filesystem mutation under dry-run.
+Create fixtures for an EXIF-orientation-6 JPEG, a two-frame GIF, an alpha PNG, and a JPEG renamed `.png`. Assert normalized dimensions, `has_alpha`, decoded format, static-image rejection, duplicate explicit-name rejection, local `thumb` rejection, Tinify explicit-quality rejection, `--output` multi-result rejection, output/output-dir mutual exclusion, canonical `.jpg` naming, an all-skipped plan (`plan.runnable == ()`), missing-parent behaviour without `--mkdir`, and no filesystem mutation under `--dry-run`.
 
-In `tests/conftest.py`, make `large_jpeg` a deterministic 2400x1600 RGB image and provide `small_jpeg`, `transparent_png`, `oriented_jpeg`, and `animated_gif`. Add a `run_pixgen` fixture that calls `[sys.executable, "-m", "pixgen", *args]` with captured text streams and an isolated environment. These fixtures are reused by later tasks.
+Add `large_jpeg`, `small_jpeg`, `transparent_png`, `oriented_jpeg`, and `animated_gif` fixtures near the existing `tests/factories.py` conventions; these are reused by later tasks.
 
 - [ ] **Step 3: Run the planner tests and verify they fail**
 
-Run: `uv run pytest tests/unit/optimization/test_planner.py tests/unit/optimization/test_source_inspection.py -v`
+Run: `uv run pytest tests/optimization/test_planner.py tests/optimization/test_source_inspection.py -v`
 
 Expected: FAIL because `build_plan` and `inspect_source` do not exist.
 
 - [ ] **Step 4: Implement safe source inspection**
 
-`inspect_source` must resolve the path, require a regular file, open with Pillow, call `verify()`, reopen for metadata, reject `n_frames != 1`, map the decoded `Image.format` to the four supported formats, read EXIF orientation tag 274, compute dimensions after orientation, detect alpha from bands or transparency info, record byte length and ICC presence, and translate Pillow/decompression-bomb failures into safe `invalid_request` errors.
+`inspect_source` resolves the path, requires a regular file, opens with Pillow, calls `verify()`, reopens for metadata, rejects `n_frames != 1`, maps the decoded `Image.format` to the four supported formats, reads EXIF orientation tag `274`, computes dimensions after orientation, detects alpha from bands/transparency info, records byte length and ICC presence, and translates Pillow/decompression-bomb failures into `PixgenError(ErrorCode.INVALID_REQUEST, ...)`.
 
 - [ ] **Step 5: Implement deterministic preset merging and dimensions**
 
@@ -587,36 +531,36 @@ WEB_VARIANTS = (
 )
 ```
 
-Merge explicit variants by replacing a preset name in place or appending a new name. Reject repeated explicit names. Compute output dimensions with `round()` and a lower bound of one pixel. `scale` skips when its requested axis exceeds the normalized source; `cover` and `thumb` skip when `max(target_width/source_width, target_height/source_height) > 1`; `fit` uses `min(1, width/source_width, height/source_height)` and therefore may produce an unchanged source-sized image.
+Merge explicit variants by replacing a preset name in place or appending a new name. Reject repeated explicit names. Compute output dimensions with `round()` and a lower bound of one pixel. `scale` skips when its requested axis exceeds the normalized source; `cover` and `thumb` skip when `max(target_width/source_width, target_height/source_height) > 1`; `fit` uses `min(1, width/source_width, height/source_height)` and may therefore produce an unchanged source-sized image.
 
 - [ ] **Step 6: Implement formats, paths, and Tinify cost bounds**
 
-Outside `--web`, default to `keep`; within `--web`, default to WebP and local quality 82. Reject explicit quality for Tinify and for PNG output. Resolve each destination to an absolute path, use `<source-stem>-<variant>.<extension>` with `.jpg`, `.png`, `.webp`, or `.avif`, and default to `default_artifact_dir()` when neither output option is present. Preflight every collision and parent before credentials; with `--mkdir`, validate the nearest existing ancestor without creating anything. For Tinify, calculate the conservative bound as one upload plus one unit per resize and one unit per conversion among runnable variants; set it to `None` for local plans.
+Outside `--web`, default to `keep`; within `--web`, default to WebP and local quality 82. Reject explicit quality for Tinify and for PNG output. Resolve each destination to an absolute path, use `<source-stem>-<variant>.<extension>` with `.jpg`, `.png`, `.webp`, or `.avif`. Default the output directory to `Path.cwd() / "pixgen"` when neither `--output` nor `--output-dir` is given — this matches the fallback `artifacts.plan_output` already uses for `create`/`edit`; do not introduce a separate PlatformDirs-based artifact directory for optimize. Preflight every collision and parent before any credential lookup; with `--mkdir`, validate the nearest existing ancestor without creating anything (directories are created lazily, only for a plan that will actually run). For Tinify, calculate the conservative bound as one upload plus one unit per resize and one unit per conversion among runnable variants; set it to `None` for local plans.
 
 - [ ] **Step 7: Run the planner suite**
 
-Run: `uv run pytest tests/unit/optimization/test_planner.py tests/unit/optimization/test_source_inspection.py -v`
+Run: `uv run pytest tests/optimization/test_planner.py tests/optimization/test_source_inspection.py -v`
 
 Expected: PASS, including the Review Focus alpha and rotated-dimension cases.
 
-- [ ] **Step 8: Commit the planner**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add src/pixgen/config/paths.py src/pixgen/optimization/planner.py tests/unit/optimization
+git add src/pixgen/optimization/planner.py tests/optimization/test_planner.py tests/optimization/test_source_inspection.py tests/factories.py
 git commit -m "Plan website image variants"
 ```
 
-### Task 4: Batch Protocol and Atomic Runner
+### Task 4: Batch Protocol and Runner
 
 **Files:**
 - Create: `src/pixgen/optimization/base.py`
 - Create: `src/pixgen/optimization/runner.py`
-- Test: `tests/unit/optimization/test_runner.py`
+- Test: `tests/optimization/test_runner.py`
 - Test: `tests/integration/test_atomic_optimization.py`
 
 **Interfaces:**
-- Consumes: `OptimizationPlan`, `EngineBatchResult`, `EngineVariantResult`, and Pillow.
-- Produces: private `Optimizer` protocol and `execute_plan(plan: OptimizationPlan, optimizer: Optimizer) -> tuple[OptimizeResult, int]`.
+- Consumes: `OptimizationPlan`, `EngineBatchResult`, `EngineVariantResult` from Task 2; `pixgen.artifacts.write_atomic` for final promotion.
+- Produces: private `Optimizer` protocol and `execute_plan(plan: OptimizationPlan, optimizer: Optimizer) -> OptimizeResult` (the caller derives the process exit status from `OptimizeResult` via the `exit_status` extension from Task 1 — the runner itself returns only the result, not an exit code, matching how `CliOutcome.__cyclopts_returncode__` already owns that decision for every other command).
 
 - [ ] **Step 1: Write a fake optimizer and failing ordered-result test**
 
@@ -642,23 +586,23 @@ class FakeOptimizer:
 
 
 async def test_runner_returns_plan_order(web_plan) -> None:
-    result, exit_code = await execute_plan(web_plan, FakeOptimizer())
+    result = await execute_plan(web_plan, FakeOptimizer())
     assert [item.name for item in result.variants] == [
         "thumbnail",
         "card",
         "content",
         "hero",
     ]
-    assert exit_code == 0
+    assert all(item.status.value == "completed" for item in result.variants)
 ```
 
 - [ ] **Step 2: Write failing atomicity, metadata, and partial tests**
 
-Test these concrete cases: a fake engine writes invalid dimensions; a fake engine writes an animated artifact; a fake engine writes EXIF/GPS; `os.replace` fails after an existing destination is present; one variant reports `optimization_failed`; and one planned variant is skipped. Assert no invalid artifact is promoted, the old destination bytes remain unchanged, temporary siblings are removed, successful siblings remain, plan order is stable, and error-code precedence produces 7 for artifact errors and 6 for ordinary skipped/optimization failures.
+Cover: a fake engine writes invalid dimensions; a fake engine writes an animated artifact; a fake engine writes EXIF/GPS; the destination already exists and `plan.force` is `False`; one variant reports `optimization_failed`; and one planned variant is a planner-level skip. Assert no invalid artifact is promoted, the old destination's bytes remain unchanged, temporary stage files are removed, successful siblings remain, plan order is stable, and `exit_status(result)` (Task 1) yields `PARTIAL_FAILURE` for a mixed completed/failed batch and `SUCCESS` for a completed/skipped-only batch.
 
 - [ ] **Step 3: Run the runner tests and verify they fail**
 
-Run: `uv run pytest tests/unit/optimization/test_runner.py tests/integration/test_atomic_optimization.py -v`
+Run: `uv run pytest tests/optimization/test_runner.py tests/integration/test_atomic_optimization.py -v`
 
 Expected: FAIL because the protocol and runner do not exist.
 
@@ -673,26 +617,26 @@ class Optimizer(Protocol):
     ) -> EngineBatchResult: ...
 ```
 
-`EngineVariantResult` contains only `name`, `completed: bool`, and an optional safe `ErrorDetail`. `EngineBatchResult` contains those ordered-or-unordered engine facts plus optional `compression_count_this_month`; file locations remain runner-owned.
+`EngineVariantResult` carries only `name`, `completed: bool`, and an optional `PublicError`. `EngineBatchResult` adds optional `compression_count_this_month`; final file locations remain runner-owned.
 
 - [ ] **Step 5: Implement staging and validation**
 
-For each runnable destination, create a unique sibling name `.<filename>.pixgen-<uuid>.tmp`. Create allowed parents only after planning and only when `create_dirs` is true. Reopen every completed stage with Pillow; require one frame, the planned decoded format, exact expected dimensions, empty EXIF, no XMP keys, and no GPS. Flush and `os.fsync()` each complete staged file before `os.replace()`.
+For each runnable destination, create a unique sibling stage name `.<filename>.pixgen-<uuid>.tmp` in the destination's own parent directory (the parent is created only when `create_dirs` is true, and only for a plan with at least one runnable variant). Reopen every completed stage with Pillow; require one frame, the planned decoded format, exact expected dimensions, empty EXIF, no XMP keys, and no GPS.
 
-- [ ] **Step 6: Implement cleanup, aggregation, and exit precedence**
+- [ ] **Step 6: Promote via `write_atomic`, then clean up and aggregate**
 
-Always unlink remaining temporary files in `finally`. Merge engine results by variant name into plan order, insert planner skips at their original logical positions, sum only completed output bytes, and calculate top-level `success`, `partial`, or `failed`. Use error exit precedence `artifact/storage=7`, `timeout=5`, `credential/authentication=3`, `provider/network/rate-limit=4`, then partial/optimization/skipped=6; a fully completed batch is 0.
+Read each validated stage file's bytes and call `pixgen.artifacts.write_atomic(plan.destination, data, overwrite=plan.force)` — do not reimplement fsync/`os.replace` here; `write_atomic` already owns that guarantee for every other command. Always unlink remaining stage files in `finally`, whether or not promotion succeeded. Merge engine results by variant name into plan order, insert planner skips at their original logical positions, sum only completed output bytes, and build the final `OptimizeResult`. A `write_atomic` failure (e.g. a race on a non-force destination) maps to `PixgenError(ErrorCode.ARTIFACT_FAILURE, ...)` for that one variant, recorded as `VariantStatus.FAILED`, without aborting sibling variants.
 
 - [ ] **Step 7: Run the atomic runner tests**
 
-Run: `uv run pytest tests/unit/optimization/test_runner.py tests/integration/test_atomic_optimization.py -v`
+Run: `uv run pytest tests/optimization/test_runner.py tests/integration/test_atomic_optimization.py -v`
 
 Expected: PASS, including preservation of the pre-existing destination and sibling successes.
 
-- [ ] **Step 8: Commit the runner**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add src/pixgen/optimization/base.py src/pixgen/optimization/runner.py tests/unit/optimization/test_runner.py tests/integration/test_atomic_optimization.py
+git add src/pixgen/optimization/base.py src/pixgen/optimization/runner.py tests/optimization/test_runner.py tests/integration/test_atomic_optimization.py
 git commit -m "Add atomic optimization runner"
 ```
 
@@ -700,14 +644,20 @@ git commit -m "Add atomic optimization runner"
 
 **Files:**
 - Create: `src/pixgen/optimization/local.py`
-- Test: `tests/unit/optimization/test_local.py`
+- Test: `tests/optimization/test_local.py`
 - Test: `tests/integration/test_local_optimization.py`
 
 **Interfaces:**
-- Consumes: private `Optimizer`, `OptimizationPlan`, and runner-owned staged paths.
+- Consumes: private `Optimizer`, `OptimizationPlan`, runner-owned staged paths, `pillow_avif` plugin registration.
 - Produces: `LocalOptimizer.optimize(...) -> EngineBatchResult`.
 
-- [ ] **Step 1: Write failing resize and one-decode tests**
+- [ ] **Step 1: Register the AVIF plugin and write failing resize/one-decode tests**
+
+At module import time in `local.py`:
+
+```python
+import pillow_avif  # noqa: F401  # registers AVIF with Pillow's plugin registry
+```
 
 ```python
 from pixgen.optimization import local as local_module
@@ -723,8 +673,7 @@ async def test_local_web_batch_decodes_once(web_plan, monkeypatch) -> None:
         return original(*args, **kwargs)
 
     monkeypatch.setattr(local_module, "_load_source", counted_load)
-    result, exit_code = await execute_plan(web_plan, LocalOptimizer())
-    assert exit_code == 0
+    result = await execute_plan(web_plan, LocalOptimizer())
     assert opens == 1
     assert [(item.width, item.height) for item in result.variants] == [
         (400, 400),
@@ -734,15 +683,15 @@ async def test_local_web_batch_decodes_once(web_plan, monkeypatch) -> None:
     ]
 ```
 
-Use a fixture whose proportions make the expected `round()` result unambiguous. Add tests for proportional width/height scale, contain-style `fit`, centered exact `cover`, and same-dimension `optimized` output.
+Use a fixture whose proportions make the expected `round()` result unambiguous. Add tests for proportional width/height scale, contain-style `fit`, centered exact `cover`, same-dimension output, and one AVIF round-trip (encode then decode with `pillow_avif` registered).
 
 - [ ] **Step 2: Write failing metadata and format tests**
 
-For JPEG, PNG, WebP, and AVIF fixtures, assert output decodability and decoded format. Use an orientation-6 JPEG with EXIF/GPS/XMP and an ICC profile; assert pixels are upright, EXIF/GPS/XMP are absent, and the ICC profile survives where Pillow's encoder supports it. Assert `--web` uses quality 82 by spying on save keyword arguments and an explicit quality replaces it.
+For JPEG, PNG, WebP, and AVIF fixtures, assert output decodability and decoded format. Use an orientation-6 JPEG with EXIF/GPS/XMP and an ICC profile; assert pixels are upright, EXIF/GPS/XMP are absent, and the ICC profile survives where Pillow's encoder supports it. Assert `--web` uses quality 82 by spying on save keyword arguments, and that an explicit `--quality` replaces it.
 
 - [ ] **Step 3: Run the local tests and verify they fail**
 
-Run: `uv run pytest tests/unit/optimization/test_local.py tests/integration/test_local_optimization.py -v`
+Run: `uv run pytest tests/optimization/test_local.py tests/integration/test_local_optimization.py -v`
 
 Expected: FAIL because `LocalOptimizer` does not exist.
 
@@ -750,55 +699,54 @@ Expected: FAIL because `LocalOptimizer` does not exist.
 
 Implement private `_load_source(path: Path) -> Image.Image`; it opens once, calls `load()`, applies `ImageOps.exif_transpose()`, copies the normalized image, closes the file handle, and returns the in-memory copy with source ICC bytes retained. Process variants sequentially. Use `Image.Resampling.LANCZOS`; use `resize()` for scale, `ImageOps.contain()` for fit, `ImageOps.fit(..., centering=(0.5, 0.5))` for cover, and `copy()` for internal `NONE`.
 
+> **Coordination note:** `_load_source` and the encode step below (`_encode_variant`, added in Step 5) do exactly what `docs/superpowers/plans/2026-09-27-media-commands.md`'s Task 3 (`media/transform.py`, `sanitize_image`) also needs — decode once, apply EXIF orientation, strip metadata, re-encode. If that plan lands after this one, its author should import these two functions from `pixgen.optimization.local` instead of duplicating them; if it lands first, this task should import its equivalents instead. Whoever implements second should flag the duplication in that PR rather than silently keeping two copies.
+
 - [ ] **Step 5: Implement metadata-safe encoding**
 
-Construct save keyword arguments from scratch so EXIF and XMP are never copied. Pass `icc_profile` only when present and supported. Convert non-alpha JPEG output to `RGB`; use `quality=plan.quality` and `optimize=True` for JPEG/WebP/AVIF when quality is set, and `optimize=True` for PNG. Catch each variant's decode/resize/encode exception, delete its stage, and return a safe `optimization_failed` for that variant while continuing the batch.
+Construct save keyword arguments from scratch so EXIF and XMP are never copied. Pass `icc_profile` only when present and supported. Convert non-alpha JPEG output to `RGB`; use `quality=plan.quality` and `optimize=True` for JPEG/WebP/AVIF when quality is set, and `optimize=True` for PNG. Catch each variant's decode/resize/encode exception, delete its stage file, and return `EngineVariantResult(name=..., completed=False, error=PublicError(code=ErrorCode.OPTIMIZATION_FAILED, message=...))` for that variant while continuing the batch.
 
 - [ ] **Step 6: Run the local engine and runner suites**
 
-Run: `uv run pytest tests/unit/optimization/test_local.py tests/integration/test_local_optimization.py tests/unit/optimization/test_runner.py -v`
+Run: `uv run pytest tests/optimization/test_local.py tests/integration/test_local_optimization.py tests/optimization/test_runner.py -v`
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit the local engine**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add src/pixgen/optimization/local.py tests/unit/optimization/test_local.py tests/integration/test_local_optimization.py
+git add src/pixgen/optimization/local.py tests/optimization/test_local.py tests/integration/test_local_optimization.py
 git commit -m "Optimize image variants locally"
 ```
 
-### Task 6: Tinify Credentials and Single-Output HTTP Contract
+### Task 6: Tinify Configuration and Single-Output HTTP Contract
 
 **Files:**
-- Create: `src/pixgen/credentials.py`
+- Modify: `src/pixgen/config/models.py`
 - Create: `src/pixgen/optimization/tinify.py`
-- Test: `tests/unit/credentials/test_credentials.py`
+- Test: `tests/config/test_models.py`
 - Test: `tests/providers/test_tinify.py`
 
 **Interfaces:**
-- Consumes: `OptimizationPlan`, HTTPX2 `AsyncClient`, `MockTransport`, and Pydantic `SecretStr`.
-- Produces: `CredentialSource`, `ResolvedCredential`, `CredentialResolver.get("tinify")`, `CredentialResolver.source("tinify")`, `TinifyOptimizer`, and `_validate_output_url(str) -> httpx2.URL`.
+- Consumes: `Settings.tinify_api_key`, HTTPX2 `AsyncClient`, `MockTransport`, Pydantic `SecretStr`.
+- Produces: `TinifyOptimizer`, `_validate_output_url(str) -> httpx2.URL`.
 
-- [ ] **Step 1: Write failing credential tests**
+- [ ] **Step 1: Write failing settings tests**
 
 ```python
-def test_tinify_credential_prefers_keyring(monkeypatch, fake_keyring) -> None:
-    fake_keyring.value = "keyring-secret"
+def test_tinify_key_reads_from_env(monkeypatch) -> None:
     monkeypatch.setenv("TINIFY_API_KEY", "environment-secret")
-    resolved = CredentialResolver(backend=fake_keyring).get("tinify")
-    assert resolved.value.get_secret_value() == "keyring-secret"
-    assert resolved.source is CredentialSource.KEYRING
+    settings = Settings()
+    assert settings.tinify_api_key is not None
+    assert settings.tinify_api_key.get_secret_value() == "environment-secret"
 
 
-def test_environment_fallback_survives_unavailable_keyring(
-    monkeypatch, unavailable_keyring
-) -> None:
-    monkeypatch.setenv("TINIFY_API_KEY", "environment-secret")
-    resolved = CredentialResolver(backend=unavailable_keyring).get("tinify")
-    assert resolved.source is CredentialSource.ENVIRONMENT
+def test_tinify_key_defaults_to_none(monkeypatch) -> None:
+    monkeypatch.delenv("TINIFY_API_KEY", raising=False)
+    monkeypatch.delenv("PIXGEN_TINIFY_API_KEY", raising=False)
+    assert Settings().tinify_api_key is None
 ```
 
-Also assert missing credentials produce `credential_unavailable` exit 3 and neither secret appears in exception strings or serialized errors.
+Also assert `PixgenError(ErrorCode.CREDENTIAL_UNAVAILABLE, ...)` is what `TinifyOptimizer`'s construction path raises when `settings.tinify_api_key` is `None`, and that the secret never appears in that exception's string form.
 
 - [ ] **Step 2: Write failing HTTP upload, URL, and auth tests**
 
@@ -828,15 +776,23 @@ async def test_same_size_tinify_uploads_once_and_downloads_once(tinify_plan, tmp
 
 Define `image_response(data: bytes, *, count: int) -> httpx2.Response` and deterministic `TEST_JPEG_BYTES` at the top of `tests/providers/test_tinify.py`; the bytes must decode to the dimensions expected by `tinify_plan`. Parameterize malicious `Location` values for HTTP scheme, another host, user info, non-default port, query, fragment, `/other/token`, and encoded traversal. Assert only the upload request occurs. Add 401, 429, 5xx, timeout, and transport-failure mapping tests with secret-canary assertions.
 
-- [ ] **Step 3: Run credentials and Tinify tests and verify they fail**
+- [ ] **Step 3: Run settings and Tinify tests and verify they fail**
 
-Run: `uv run pytest tests/unit/credentials/test_credentials.py tests/providers/test_tinify.py -v`
+Run: `uv run pytest tests/config/test_models.py tests/providers/test_tinify.py -v`
 
-Expected: FAIL because credentials and `TinifyOptimizer` do not exist.
+Expected: FAIL because `Settings.tinify_api_key` and `TinifyOptimizer` do not exist.
 
-- [ ] **Step 4: Implement Tinify credential resolution**
+- [ ] **Step 4: Add the settings field**
 
-Use keyring service `pixgen`, account `tinify`, and fallback `TINIFY_API_KEY`. Inject a backend protocol exposing `get_password`, `set_password`, and `delete_password` so tests never touch the developer keychain. Catch `keyring.errors.KeyringError` only to permit environment fallback; never silently select an alternate backend.
+```python
+tinify_api_key: SecretStr | None = Field(
+    default=None,
+    validation_alias=AliasChoices("PIXGEN_TINIFY_API_KEY", "TINIFY_API_KEY"),
+    description="Tinify API key",
+)
+```
+
+Place it next to `openai_api_key`/`gemini_api_key` in `Settings`. No new module, no backend abstraction — this is the entire credential story.
 
 - [ ] **Step 5: Implement upload and strict output URL validation**
 
@@ -844,18 +800,18 @@ Create an HTTPX2 `BasicAuth("api", secret)` and explicit `Timeout(connect=10, re
 
 - [ ] **Step 6: Implement same-size safe download and error translation**
 
-For `ResizeMode.NONE` with unchanged format, stream one authenticated GET into the runner stage. Translate 401/403 to `authentication_failed`, 429 to `rate_limited`, 5xx/transport errors to `provider_unavailable`, and HTTPX2 timeouts to `timeout`. Use fixed safe messages and fields such as `{"operation": "upload"}`; discard response bodies and URLs. Do not retry any request in this task.
+For `ResizeMode.NONE` with unchanged format, stream one authenticated GET into the runner stage. Translate 401/403 to `ErrorCode.AUTHENTICATION_FAILED`, 429 to `ErrorCode.RATE_LIMITED`, 5xx/transport errors to `ErrorCode.PROVIDER_UNAVAILABLE`, and HTTPX2 timeouts to `ErrorCode.TIMEOUT`. Use fixed safe messages; discard response bodies and URLs. Do not retry any request in this task.
 
 - [ ] **Step 7: Run the contract tests**
 
-Run: `uv run pytest tests/unit/credentials/test_credentials.py tests/providers/test_tinify.py -v`
+Run: `uv run pytest tests/config/test_models.py tests/providers/test_tinify.py -v`
 
 Expected: PASS, including the SSRF and secret-canary cases.
 
-- [ ] **Step 8: Commit credentials and the base Tinify contract**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add src/pixgen/credentials.py src/pixgen/optimization/tinify.py tests/unit/credentials tests/providers/test_tinify.py
+git add src/pixgen/config/models.py src/pixgen/optimization/tinify.py tests/config/test_models.py tests/providers/test_tinify.py
 git commit -m "Integrate Tinify upload contract"
 ```
 
@@ -869,7 +825,7 @@ git commit -m "Integrate Tinify upload contract"
 
 **Interfaces:**
 - Consumes: `TinifyOptimizer` from Task 6 and all planned resize modes.
-- Produces: complete batch behavior with maximum concurrency four, ordered engine results, safe-GET retry, normalized oriented uploads, and conservative count capture.
+- Produces: complete batch behaviour with maximum concurrency four, ordered engine results, safe-GET retry, normalized oriented uploads, and conservative count capture.
 
 - [ ] **Step 1: Write failing derivative payload and ordering tests**
 
@@ -887,7 +843,7 @@ Assert `thumb` maps directly to Tinify `thumb`, `fit` includes both bounds, and 
 
 - [ ] **Step 2: Write failing retry and partial-failure tests**
 
-Assert upload and derivative POST connection failures produce one attempt only. For the same-size GET, return 503 with `Retry-After: 1`, then a transport error, then success; inject a fake sleeper and zero jitter and assert three attempts and recorded delays. Make one derivative return 500 containing `secret-canary`; assert other files complete, the failed result is sanitized, plan order is retained, and runner exit is 4 because provider failure outranks generic partial exit 6.
+Assert upload and derivative POST connection failures produce one attempt only. For the same-size GET, return 503 with `Retry-After: 1`, then a transport error, then success; inject a fake sleeper and zero jitter and assert three attempts and recorded delays. Make one derivative return 500 containing `secret-canary`; assert other files complete, the failed result is sanitized, plan order is retained, and `exit_status(result)` (Task 1) is `PARTIAL_FAILURE`.
 
 - [ ] **Step 3: Write the rotated-upload test**
 
@@ -921,32 +877,32 @@ Run: `uv run pytest tests/providers/test_tinify.py tests/integration/test_tinify
 
 Expected: PASS with no external network access.
 
-- [ ] **Step 10: Commit the complete Tinify engine**
+- [ ] **Step 10: Commit**
 
 ```bash
 git add src/pixgen/optimization/tinify.py tests/providers/test_tinify.py tests/integration/test_tinify_batch.py tests/live/test_tinify_live.py
 git commit -m "Add Tinify image variants"
 ```
 
-### Task 8: `pixgen image optimize` CLI and Machine Contract
+### Task 8: `pixgen optimize` CLI and Machine Contract
 
 **Files:**
+- Create: `src/pixgen/cli/optimize.py`
 - Modify: `src/pixgen/cli/app.py`
-- Create: `src/pixgen/cli/image.py`
-- Modify: `src/pixgen/output.py`
-- Test: `tests/cli/test_image_optimize.py`
-- Test: `tests/cli/test_machine_output.py`
+- Test: `tests/cli/test_optimize.py`
 - Test: `tests/integration/test_optimize_subprocess.py`
 
 **Interfaces:**
-- Consumes: planner, `LocalOptimizer`, `TinifyOptimizer`, `CredentialResolver`, runner, and output helpers.
-- Produces: `pixgen image optimize SOURCE` with the complete approved option contract and exact human/JSON stream behavior.
+- Consumes: `build_plan`, `LocalOptimizer`, `TinifyOptimizer`, `execute_plan`, `render_optimize_result` (Task 1), `CliOutcome`/`cli_command` (existing `cli/outcome.py`).
+- Produces: root-level `pixgen optimize SOURCE` with the complete approved option contract, following the same registration shape as `create`/`edit` in `cli/image.py`.
 
 - [ ] **Step 1: Write failing help and local subprocess tests**
 
+Follow the existing subprocess-invocation pattern already used for `create`/`edit` CLI tests (check `tests/cli/` for the current fixture name and helper rather than assuming `run_pixgen` exists — add it only if no equivalent helper is already there).
+
 ```python
 def test_optimize_help_exposes_approved_options(run_pixgen) -> None:
-    completed = run_pixgen("image", "optimize", "--help")
+    completed = run_pixgen("optimize", "--help")
     assert completed.returncode == 0
     for option in (
         "--engine",
@@ -960,15 +916,12 @@ def test_optimize_help_exposes_approved_options(run_pixgen) -> None:
         "--force",
         "--mkdir",
         "--json",
-        "--quiet",
-        "--no-color",
     ):
         assert option in completed.stdout
 
 
 def test_web_local_subprocess_writes_four_variants(run_pixgen, large_jpeg, tmp_path):
     completed = run_pixgen(
-        "image",
         "optimize",
         str(large_jpeg),
         "--web",
@@ -978,7 +931,6 @@ def test_web_local_subprocess_writes_four_variants(run_pixgen, large_jpeg, tmp_p
     )
     payload = json.loads(completed.stdout)
     assert completed.returncode == 0
-    assert payload["operation"] == "image.optimize"
     assert [item["name"] for item in payload["variants"]] == [
         "thumbnail",
         "card",
@@ -988,43 +940,43 @@ def test_web_local_subprocess_writes_four_variants(run_pixgen, large_jpeg, tmp_p
     assert completed.stderr == ""
 ```
 
-- [ ] **Step 2: Write failing dry-run, partial, and stream tests**
+- [ ] **Step 2: Write failing dry-run and partial tests**
 
-Inject credential and client factories that fail if touched; run `--engine tinify --web --dry-run --mkdir` and assert one JSON plan, no keyring call, no network call, no directory. Assert skipped variants return exit 6 with completed files preserved, fatal validation emits one error envelope to stderr and nothing to stdout, `--quiet` suppresses successful human output, and `NO_COLOR` or `--no-color` removes ANSI sequences.
+Inject a client factory that fails if touched; run `--engine tinify --web --dry-run --mkdir` with `TINIFY_API_KEY` unset and assert one JSON plan-preview payload, no HTTP call, and no directory created. Assert a batch with one engine failure returns `ExitStatus.PARTIAL_FAILURE` (4) with completed files preserved, and a fatal validation error (e.g. malformed `--variant`) emits one `OptimizeResult`-shaped error envelope with nothing partial written.
 
 - [ ] **Step 3: Run CLI tests and verify failures**
 
-Run: `uv run pytest tests/cli/test_image_optimize.py tests/cli/test_machine_output.py tests/integration/test_optimize_subprocess.py -v`
+Run: `uv run pytest tests/cli/test_optimize.py tests/integration/test_optimize_subprocess.py -v`
 
 Expected: FAIL because the command is not registered.
 
-- [ ] **Step 4: Declare the Cyclopts command exactly**
+- [ ] **Step 4: Declare the Cyclopts command**
 
-Create an async `optimize` command with positional `source: Path`, enum `--engine`, repeatable `--variant`, `--web`, `--format`, bounded `--quality`, `--output`, `--output-dir`, and booleans `--dry-run`, `--force`, `--mkdir`, `--json`, `--quiet`, and `--no-color`. Preserve `None` for omitted format and quality so the planner can distinguish explicit values from preset defaults.
+In `src/pixgen/cli/optimize.py`, mirror `build_operation_app` from `cli/image.py`: an `App(name="optimize", group="Operations")` with `@app.default @cli_command() async def optimize(source: Path, *, engine: OptimizeEngine = OptimizeEngine.LOCAL, variant: list[str] | None = None, web: bool = False, format: FormatChoice | None = None, quality: int | None = None, output: Path | None = None, output_dir: Path | None = None, dry_run: bool = False, force: bool = False, mkdir: bool = False, json: bool = False) -> CliOutcome`. Preserve `None` for omitted `format`/`quality` so the planner can distinguish explicit values from preset defaults. `cli_command()` already turns `PixgenError`/`ValidationError` into a rejected `CliOutcome` — reuse it exactly as `create`/`edit` do rather than adding a second error-catching layer.
 
 - [ ] **Step 5: Compose only the selected engine after planning**
 
-Call `build_plan` first. For dry-run, render the plan and return 0 when all planned outputs are runnable or 6 when it contains skips; do not construct a resolver or client. For local, construct only `LocalOptimizer`. For Tinify, resolve `tinify` only after planning, then create an HTTPX2 client with redirects disabled, pass it to `TinifyOptimizer`, and close it after `execute_plan`.
+Call `build_plan` first. For `--dry-run`, render the plan (as a preview, not an `OptimizeResult`) and return without constructing an optimizer or client. For `local`, construct only `LocalOptimizer` (with `pillow_avif` already registered by `optimization/local.py`'s import). For `tinify`, read `settings.tinify_api_key` only after planning succeeds, raise `PixgenError(ErrorCode.CREDENTIAL_UNAVAILABLE, ...)` if it is `None`, then build an HTTPX2 client with redirects disabled, pass it to `TinifyOptimizer`, and close it after `execute_plan`.
 
-- [ ] **Step 6: Implement versioned JSON and human tables**
+- [ ] **Step 6: Return the outcome**
 
-JSON success and partial results go to stdout as exactly one compact document. Fatal errors go to stderr as exactly one `ErrorEnvelope`. Human mode renders variant, status, dimensions, format, bytes, and absolute path, followed by source bytes, total output bytes, overall status, and Tinify monthly count when present. Report per-output byte savings, but never label source-to-total-output ratio as a compression percentage.
+Wrap the `OptimizeResult` from `execute_plan` in `CliOutcome(result, as_json=json)`, matching `create`/`edit`. `render_outcome`/`exit_status` (Task 1) already own JSON vs. human rendering and the process exit code — the command function does not compute either itself.
 
-- [ ] **Step 7: Catch only safe boundaries**
+- [ ] **Step 7: Register the command**
 
-Catch `PixgenError` and render its stable envelope. Convert any unexpected exception to `internal_error` without its `repr`, headers, URL, provider body, or secrets. Let Cyclopts usage failures use exit 2. Ensure partial results use the runner's category-aware exit code.
+In `cli/app.py`'s `build_app`, add `app.command(build_optimize_app(runtime_dependency))` alongside the existing `app.command(...)` calls for `create`/`edit`/`model`.
 
 - [ ] **Step 8: Run CLI and subprocess tests**
 
-Run: `uv run pytest tests/cli/test_image_optimize.py tests/cli/test_machine_output.py tests/integration/test_optimize_subprocess.py -v`
+Run: `uv run pytest tests/cli/test_optimize.py tests/integration/test_optimize_subprocess.py -v`
 
 Expected: PASS.
 
-- [ ] **Step 9: Commit the command**
+- [ ] **Step 9: Commit**
 
 ```bash
-git add src/pixgen/cli src/pixgen/output.py tests/cli tests/integration/test_optimize_subprocess.py
-git commit -m "Add image optimize command"
+git add src/pixgen/cli/optimize.py src/pixgen/cli/app.py tests/cli/test_optimize.py tests/integration/test_optimize_subprocess.py
+git commit -m "Add pixgen optimize command"
 ```
 
 ### Task 9: Passive Info and Optional Tinify Doctor Check
@@ -1037,16 +989,16 @@ git commit -m "Add image optimize command"
 - Test: `tests/cli/test_doctor.py`
 
 **Interfaces:**
-- Consumes: Pillow feature registry, `CredentialResolver`, and injected HTTPX2 client.
-- Produces: `collect_info(...) -> InfoResult`, `check_tinify_auth(...) -> DiagnosticCheck`, `pixgen info`, and `pixgen doctor [--tinify]`.
+- Consumes: Pillow's feature registry (with `pillow_avif` registered), `Settings.tinify_api_key`, injected HTTPX2 client.
+- Produces: `collect_info(...) -> InfoResult`, `check_tinify_auth(...) -> DiagnosticCheck`, `pixgen info`, `pixgen doctor [--tinify]`.
 
 - [ ] **Step 1: Write failing passive-info tests**
 
-Assert `info --json` reports Pixgen/Python/Pillow versions, actual local read/write capability for PNG/JPEG/WebP/AVIF, `tinify_included: true`, and Tinify credential presence/source without the value. Inject a network client that raises if called and assert no request or filesystem write occurs.
+Assert `info --json` reports Pixgen/Python/Pillow versions, actual local read/write capability for PNG/JPEG/WebP/AVIF (post `pillow_avif` registration), and whether `Settings.tinify_api_key` is configured (a bare boolean — there is only one credential source now, so no `CredentialSource` enum is needed). Inject a network client that raises if called and assert no request or filesystem write occurs.
 
 - [ ] **Step 2: Write failing doctor tests**
 
-Cover these exact cases: no key and no `--tinify` yields a stable skipped check with no network; explicit `--tinify` with no key yields failed `credential_unavailable`; a configured key sends one empty `POST /shrink`; expected 400 client-data response is `ok`; 429 proves authentication but returns `warning`; 401/403 is failed authentication; transport and timeout failures use safe failed checks. Assert the secret and response body never appear.
+Cover: no key and no `--tinify` yields a stable skipped check with no network; explicit `--tinify` with no key yields a failed check with `ErrorCode.CREDENTIAL_UNAVAILABLE`; a configured key sends one empty `POST /shrink`; an expected 400 client-data response is `ok`; 429 proves authentication but returns `warning`; 401/403 is a failed authentication check; transport and timeout failures use safe failed checks. Assert the secret and response body never appear.
 
 - [ ] **Step 3: Run diagnostics tests and verify failures**
 
@@ -1056,49 +1008,46 @@ Expected: FAIL because diagnostics are not registered.
 
 - [ ] **Step 4: Implement passive capability reporting**
 
-Initialize Pillow's plugin registry, derive supported read/write formats from Pillow rather than hard-coding availability, and expose only presence and `keyring`/`environment` source for Tinify. Do not resolve the secret through the public info model.
+Initialize Pillow's plugin registry (importing `pixgen.optimization.local` is enough to register AVIF), derive supported read/write formats from Pillow rather than hard-coding availability, and expose only a boolean for Tinify credential presence. Do not resolve or expose the secret value.
 
 - [ ] **Step 5: Implement the explicit Tinify auth probe**
 
-Send exactly one authenticated empty-body `POST https://api.tinify.com/shrink`. Treat 400-class client-data errors other than 401/403 as proof the credential was accepted; make 429 a warning because it proves auth while reporting an account/rate condition. Never retry and never upload image bytes. Return stable IDs and `ok`, `warning`, `failed`, or `skipped` status.
+Send exactly one authenticated empty-body `POST https://api.tinify.com/shrink`. Treat 400-class client-data errors other than 401/403 as proof the credential was accepted; make 429 a warning because it proves auth while reporting an account/rate condition. Never retry and never upload image bytes.
 
 - [ ] **Step 6: Register and render diagnostics**
 
-Support human and schema-version-1 JSON for both commands. `doctor` runs Tinify only when a credential is configured or `--tinify` is explicit. Return 0 when checks are only ok/warning/skipped, 3 for missing/invalid credentials, 4 for provider/network failures, and 5 for timeout.
+Support human and `schema_version: Literal["1"]` JSON for both commands, following the same `render_*` split as Task 1's `render_optimize_result`. `doctor` runs the Tinify check only when a credential is configured or `--tinify` is explicit. Map to `ExitStatus`: `SUCCESS` when checks are only ok/warning/skipped, `REJECTED` for missing/invalid credentials or provider/network/timeout failures (these are command-level diagnostic failures, not partial batches — there is nothing to partially complete).
 
 - [ ] **Step 7: Run diagnostics tests**
 
 Run: `uv run pytest tests/cli/test_info.py tests/cli/test_doctor.py -v`
 
-Expected: PASS with all network behavior supplied by `MockTransport`.
+Expected: PASS with all network behaviour supplied by `MockTransport`.
 
-- [ ] **Step 8: Commit diagnostics**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add src/pixgen/cli/system.py src/pixgen/cli/app.py src/pixgen/optimization/tinify.py tests/cli/test_info.py tests/cli/test_doctor.py
 git commit -m "Diagnose image optimization engines"
 ```
 
-### Task 10: Documentation, Agent Skill, Packaging, and Release Verification
+### Task 10: Documentation, Agent Skill, and Release Verification
 
 **Files:**
 - Modify: `README.md`
 - Create: `docs/image-optimization.md`
-- Create: `skills/pixgen/SKILL.md`
-- Create: `skills/pixgen/references/image-optimization.md`
+- Create or modify: `skills/pixgen/SKILL.md` and `skills/pixgen/references/image-optimization.md`
 - Test: `tests/test_documented_commands.py`
-- Test: `tests/test_package.py`
 
 **Interfaces:**
 - Consumes: the final CLI and schema contracts.
-- Produces: user documentation, provider-neutral agent instructions, command-smoke coverage, and a verified wheel.
+- Produces: user documentation, provider-neutral agent instructions, command-smoke coverage.
 
-- [ ] **Step 1: Write failing documentation and package tests**
+- [ ] **Step 1: Write failing documentation tests**
 
 ```python
 def test_documented_web_command_runs(run_pixgen, large_jpeg, tmp_path) -> None:
     completed = run_pixgen(
-        "image",
         "optimize",
         str(large_jpeg),
         "--web",
@@ -1112,26 +1061,24 @@ def test_documented_web_command_runs(run_pixgen, large_jpeg, tmp_path) -> None:
 def test_agent_skill_references_stable_json_contract() -> None:
     skill = Path("skills/pixgen/SKILL.md").read_text()
     reference = Path("skills/pixgen/references/image-optimization.md").read_text()
-    assert "pixgen image optimize" in skill
+    assert "pixgen optimize" in skill
     assert "optimization_failed" in reference
     assert "TINIFY_API_KEY" in reference
 ```
 
-Add a package test that builds a wheel, creates an isolated environment, invokes `pixgen image optimize --help`, and imports Pillow, HTTPX2, and `pixgen.optimization` from the installed wheel rather than the source checkout.
+- [ ] **Step 2: Run the documentation tests and verify failures**
 
-- [ ] **Step 2: Run the documentation/package tests and verify failures**
+Run: `uv run pytest tests/test_documented_commands.py -v`
 
-Run: `uv run pytest tests/test_documented_commands.py tests/test_package.py -v`
-
-Expected: FAIL because the docs and skill do not exist yet.
+Expected: FAIL because the docs and skill content do not exist yet.
 
 - [ ] **Step 3: Write user documentation**
 
-Document local same-size optimization, custom scale/fit/cover variants, the four exact `--web` outputs, explicit Tinify `thumb`, format/quality rules, no-upscale skips, partial exit 6, force/create-dir behavior, dry-run cost bounds, keyring plus `TINIFY_API_KEY`, metadata removal, Tinify upload privacy, and current billing links. State that prices can change and the returned compression count is authoritative.
+Document local same-size optimization, custom scale/fit/cover variants, the four exact `--web` outputs, explicit Tinify `thumb`, format/quality rules, no-upscale skips, the `ExitStatus.PARTIAL_FAILURE` case, force/create-dir behaviour, dry-run cost bounds, `TINIFY_API_KEY`, metadata removal, Tinify upload privacy, and current billing links. State that prices can change and the returned compression count is authoritative. Note that `--web` output defaults to WebP and needs no AVIF plugin, but AVIF *input* or `--format avif` does.
 
-- [ ] **Step 4: Write the provider-neutral Agent Skill**
+- [ ] **Step 4: Write or extend the provider-neutral Agent Skill**
 
-Teach agents to prefer local mode, use `--json`, inspect dry-run output, select Tinify only when remote upload and billing are acceptable, retain successful paths on partial exit 6, branch on stable error codes, and run `pixgen doctor --tinify --json` for Tinify setup failures. Keep raw HTTP payloads, provider URLs, and direct SDK instructions out of the skill.
+Teach agents to prefer local mode, use `--json`, inspect dry-run output, select Tinify only when remote upload and billing are acceptable, retain successful paths on a partial-failure exit, branch on stable `ErrorCode` values, and run `pixgen doctor --tinify --json` for Tinify setup failures. Keep raw HTTP payloads, provider URLs, and direct SDK instructions out of the skill.
 
 - [ ] **Step 5: Run the complete non-live test suite**
 
@@ -1155,31 +1102,21 @@ Expected: PASS with live Tinify skipped.
 
 Run: `just check`
 
-Expected: PASS, including dependency security and Bandit.
+Expected: PASS.
 
-- [ ] **Step 7: Build and smoke-test the installed wheel**
-
-Run: `uv build`
-
-Expected: source distribution and wheel created successfully.
-
-Run: `uv run --isolated --with ./dist/pixgen-0.1.0-py3-none-any.whl pixgen image optimize --help`
-
-Expected: exit 0 and the complete optimization option list.
-
-- [ ] **Step 8: Optionally run the billable live smoke test only with explicit approval**
+- [ ] **Step 7: Optionally run the billable live smoke test only with explicit approval**
 
 Run: `PIXGEN_RUN_LIVE_TINIFY=1 uv run pytest -m live_tinify tests/live/test_tinify_live.py -v`
 
 Expected: PASS and consume Tinify quota. Do not run this step without a configured test key and explicit confirmation for that billable request.
 
-- [ ] **Step 9: Commit documentation and release verification**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add README.md docs/image-optimization.md skills/pixgen tests/test_documented_commands.py tests/test_package.py
+git add README.md docs/image-optimization.md skills/pixgen tests/test_documented_commands.py
 git commit -m "Document image optimization workflows"
 ```
 
-- [ ] **Step 10: Request final code review**
+- [ ] **Step 9: Request final code review**
 
-Use `superpowers:requesting-code-review` to review the complete branch against `docs/superpowers/specs/2026-09-19-image-optimization-design.md`, this implementation plan, the stable machine schema, paid-request retry policy, secret handling, and atomic artifact guarantees. Resolve findings, rerun Steps 5-7, and then use `superpowers:finishing-a-development-branch` for the integration decision.
+Use `superpowers:requesting-code-review` to review the complete branch against `docs/superpowers/specs/2026-09-19-image-optimization-design.md`, this implementation plan, the stable machine schema, paid-request retry policy, secret handling, and atomic artifact guarantees. Resolve findings, rerun Steps 5-6, and then use `superpowers:finishing-a-development-branch` for the integration decision.
