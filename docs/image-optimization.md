@@ -10,12 +10,18 @@ generated images or provider uploads automatically, and Tinify is not included.
 With no resize options, Pixgen creates one re-encoded copy in the source format.
 By default it is named `<source>-optimized.<extension>` in the configured
 generation output directory, or `./pixgen` when no output directory is
-configured. An explicit output file can be selected with `--output`:
+configured. An explicit output name can be selected with `--output`:
 
 ```bash
 pixgen optimize photo.png
 pixgen optimize photo.png --output exports/photo-copy.png
 ```
+
+`--output` supplies the destination name; Pixgen sets its extension from the
+output format. For example, `--format webp --output exports/photo-copy.png`
+writes `exports/photo-copy.webp`. If the name has no extension, Pixgen adds
+the format's extension. With `--format keep` (the default outside `--web`), the
+extension follows the source format.
 
 Use one or more resize operations. `--fit` preserves the aspect ratio inside a
 `WIDTHxHEIGHT` bound, `--cover` crops to those exact dimensions, `--width`

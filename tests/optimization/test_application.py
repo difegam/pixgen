@@ -208,7 +208,8 @@ class TestExecution:
         with Image.new("RGB", (80, 40), "red") as image:
             image.save(path, format=output_format.upper(), exif=exif, icc_profile=profile)
         original = path.read_bytes()
-        destination = tmp_path / f"clean.{output_format}"
+        extension = "jpg" if output_format == "jpeg" else output_format
+        destination = tmp_path / f"clean.{extension}"
 
         result = app.run(OptimizeRequest(source=path, width=(20,), output=destination))
 

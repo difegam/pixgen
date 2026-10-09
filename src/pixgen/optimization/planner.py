@@ -227,6 +227,10 @@ def build_plan(request: OptimizeRequest, *, default_output_dir: Path | None = No
         for spec in specs:
             named_output = directory / f"{source.source_path.stem}-{spec.name}.{extension}"
             candidate = request.output or named_output
+            if request.output is not None:
+                if candidate.is_dir():
+                    raise _invalid(f"output destination is a directory: {candidate}")
+                candidate = candidate.with_suffix(f".{extension}")
             if candidate.is_symlink():
                 raise _invalid(f"output destination is a symbolic link: {candidate}")
             destination = candidate.resolve()

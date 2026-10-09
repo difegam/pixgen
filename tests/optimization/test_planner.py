@@ -153,6 +153,37 @@ class TestPlanning:
         plan = build_plan(OptimizeRequest(source=source, output=tmp_path / "result.png"))
         assert plan.variants[0].output_path == tmp_path / "result.png"
 
+    @pytest.mark.parametrize(
+        ("output", "output_format", "expected"),
+        [
+            ("result.png", "webp", "result.webp"),
+            ("result", "webp", "result.webp"),
+            ("result.png", "jpeg", "result.jpg"),
+            ("result.webp", "keep", "result.png"),
+        ],
+        ids=["replace-suffix", "add-suffix", "canonical-jpeg-suffix", "keep-source-format"],
+    )
+    def test_explicit_output_extension_matches_encoded_format(
+        self, source, tmp_path, output, output_format, expected
+    ) -> None:
+        plan = build_plan(
+            OptimizeRequest(source=source, output=tmp_path / output, format=output_format)
+        )
+
+        assert plan.variants[0].output_path == tmp_path / expected
+
+    def test_explicit_output_collision_uses_normalized_extension(self, source, tmp_path) -> None:
+        normalized = tmp_path / "result.webp"
+        normalized.write_bytes(b"keep")
+
+        with pytest.raises(PixgenError, match="exist") as exc_info:
+            build_plan(
+                OptimizeRequest(source=source, output=tmp_path / "result.png", format="webp")
+            )
+
+        assert exc_info.value.code is ErrorCode.INVALID_REQUEST
+        assert normalized.read_bytes() == b"keep"
+
 
 class TestRejections:
     @pytest.mark.parametrize("web", [False, True], ids=["default", "web"])
