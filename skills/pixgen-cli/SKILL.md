@@ -23,6 +23,27 @@ calls provider APIs and may incur separate usage charges.
    and get the user's approval before switching. An explicit request to use
    Pixgen or a provider API is sufficient direction to use it.
 
+## Motion graphics and video
+
+Pixgen creates still images. It does not render motion graphics or video.
+
+- For a motion or video request, check whether the active harness exposes a
+  native video-generation tool. Do not infer video support from image-generation
+  support or from the selected model.
+- For editable, code-driven motion graphics, use Remotion. Its
+  [Agent Skills catalog](https://www.remotion.dev/docs/ai/skills) includes
+  `remotion-best-practices`, `remotion-create`, `remotion-markup`,
+  `remotion-studio`, and `remotion-render`. Use the relevant installed skills
+  for composition, animation, preview, and rendering.
+- If the Remotion skills are unavailable, tell the user they can install them
+  with `npx skills add remotion-dev/skills`. Do not install them automatically.
+- A model such as Opus 5.5 can author composition code, but a configured
+  renderer must create the video. Follow the
+  [Remotion render instructions](https://convert.remotion.dev/docs/cli/render)
+  and verify the output file before reporting completion.
+- Use Pixgen only for still-image assets when its image workflow is appropriate.
+  Do not present a sequence of stills as a rendered video.
+
 ## Use Pixgen
 
 - Check `pixgen --help` if the installed CLI's command shape is unclear. Do not
