@@ -1,4 +1,4 @@
-"""Tests for provider-owned Cyclopts commands."""
+"""Tests for provider-native Cyclopts commands."""
 
 from typing import TYPE_CHECKING
 
@@ -16,10 +16,10 @@ from pixgen.core.models import ImageOperation
 
 if TYPE_CHECKING:
     from pixgen.core.parameters import ProviderParams
-from pixgen.providers.gemini_cli import build_gemini_app
-from pixgen.providers.openai_cli import build_openai_app
+from pixgen.cli.providers.gemini import build_gemini_app
+from pixgen.cli.providers.openai import build_openai_app
+from pixgen.cli.providers.openrouter import build_openrouter_app
 from pixgen.providers.openrouter import OpenRouterGPTImageParams, OpenRouterProvider
-from pixgen.providers.openrouter_cli import build_openrouter_app
 from pixgen.providers.registry import ProviderRegistry
 
 

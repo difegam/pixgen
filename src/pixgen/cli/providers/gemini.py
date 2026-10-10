@@ -1,4 +1,4 @@
-"""Build OpenAI-owned Cyclopts image commands."""
+"""Build Gemini native Cyclopts image commands."""
 
 from functools import partial
 from pathlib import Path  # noqa: TC003
@@ -10,26 +10,26 @@ from pixgen.cli.options import ExecutionOptions
 from pixgen.cli.outcome import CliOutcome, cli_command
 from pixgen.core.models import ImageOperation
 from pixgen.core.requests import ImageCreateIntent, ImageEditIntent, NativeSelection
-from pixgen.providers.openai import OpenAIParams
+from pixgen.providers.gemini import GeminiParams
 from pixgen.providers.shared import normalize_model_id
 
 if TYPE_CHECKING:
     from pixgen.cli.invoke import CommandInvoker
 
-__all__: list[str] = ["OpenAICliFactory", "build_openai_app"]
+__all__: list[str] = ["GeminiCliFactory", "build_gemini_app"]
 
-_DEFAULT_OPENAI_PARAMS = OpenAIParams()
+_DEFAULT_GEMINI_PARAMS = GeminiParams()
 
 _model_id = partial(
     normalize_model_id,
-    prefix="openai",
-    error_message="OpenAI native commands require an OpenAI model name",
+    prefix="gemini",
+    error_message="Gemini native commands require a Gemini model name",
 )
 
 
-def build_openai_app(operation: ImageOperation, invoker: CommandInvoker) -> App:
-    """Build one OpenAI provider sub-app."""
-    app = App(name="openai", help="OpenAI image generation options")
+def build_gemini_app(operation: ImageOperation, invoker: CommandInvoker) -> App:
+    """Build one Gemini provider sub-app."""
+    app = App(name="gemini", help="Gemini image generation options")
 
     if operation is ImageOperation.IMAGE_CREATE:
 
@@ -39,7 +39,7 @@ def build_openai_app(operation: ImageOperation, invoker: CommandInvoker) -> App:
             prompt: str,
             *,
             model: str,
-            params: Annotated[OpenAIParams, Parameter(name="*")] = _DEFAULT_OPENAI_PARAMS,
+            params: Annotated[GeminiParams, Parameter(name="*")] = _DEFAULT_GEMINI_PARAMS,
             variants: int = 1,
             output: Path | None = None,
             output_dir: Path | None = None,
@@ -48,7 +48,7 @@ def build_openai_app(operation: ImageOperation, invoker: CommandInvoker) -> App:
             timeout_seconds: int | None = None,
             json: bool = False,
         ) -> CliOutcome:
-            """Create an image with OpenAI native parameters."""
+            """Create an image with Gemini native parameters."""
             intent = ImageCreateIntent(prompt=prompt)
             selection = NativeSelection(model=_model_id(model), parameters=params)
             options = ExecutionOptions(
@@ -71,7 +71,7 @@ def build_openai_app(operation: ImageOperation, invoker: CommandInvoker) -> App:
             *,
             image: list[Path],
             model: str,
-            params: Annotated[OpenAIParams, Parameter(name="*")] = _DEFAULT_OPENAI_PARAMS,
+            params: Annotated[GeminiParams, Parameter(name="*")] = _DEFAULT_GEMINI_PARAMS,
             variants: int = 1,
             output: Path | None = None,
             output_dir: Path | None = None,
@@ -80,7 +80,7 @@ def build_openai_app(operation: ImageOperation, invoker: CommandInvoker) -> App:
             timeout_seconds: int | None = None,
             json: bool = False,
         ) -> CliOutcome:
-            """Edit images with OpenAI native parameters."""
+            """Edit images with Gemini native parameters."""
             intent = ImageEditIntent(prompt=prompt, images=tuple(image))
             selection = NativeSelection(model=_model_id(model), parameters=params)
             options = ExecutionOptions(
@@ -97,12 +97,12 @@ def build_openai_app(operation: ImageOperation, invoker: CommandInvoker) -> App:
     return app
 
 
-class OpenAICliFactory:
-    """Build OpenAI provider commands."""
+class GeminiCliFactory:
+    """Build Gemini provider commands."""
 
-    name = "openai"
+    name = "gemini"
     operations = frozenset({ImageOperation.IMAGE_CREATE, ImageOperation.IMAGE_EDIT})
 
     def build(self, operation: ImageOperation, invoker: CommandInvoker) -> App:
-        """Return an OpenAI app for one operation."""
-        return build_openai_app(operation, invoker)
+        """Return a Gemini app for one operation."""
+        return build_gemini_app(operation, invoker)

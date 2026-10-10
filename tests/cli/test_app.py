@@ -13,15 +13,15 @@ from pydantic import SecretStr
 from pixgen.application import ImageApplication
 from pixgen.cli.app import build_app
 from pixgen.cli.model import build_model_app
+from pixgen.cli.providers.gemini import GeminiCliFactory
+from pixgen.cli.providers.openai import OpenAICliFactory
 from pixgen.config.models import Settings
 from pixgen.config.writer import ConfigRepository
 from pixgen.core.errors import ErrorCode, PixgenError
 from pixgen.core.models import ImageOperation, ModelSpec
 from pixgen.optimization.application import OptimizeApplication
 from pixgen.providers.gemini import GeminiProvider
-from pixgen.providers.gemini_cli import GeminiCliFactory
 from pixgen.providers.openai import OpenAIProvider
-from pixgen.providers.openai_cli import OpenAICliFactory
 from pixgen.providers.registry import ProviderRegistry
 from tests.factories import make_model_definition, make_model_spec
 

@@ -14,10 +14,10 @@ Run `just lint && just type-check && just test` before claiming done. Single tes
 
 ## Layout
 
-- `src/pixgen/cli/` — cyclopts commands, rendering, exit codes. Never imports providers.
+- `src/pixgen/cli/` — cyclopts commands, rendering, exit codes. May import provider params and catalogues (`cli/providers/` builds provider-native commands from them); never provider adapters or clients.
 - `src/pixgen/core/` — provider-neutral types, intents, results, errors. No I/O.
 - `src/pixgen/images/` — reads local inputs, returns bytes + metadata; decodes, resizes, and encodes pixels with Pillow.
-- `src/pixgen/providers/` — OpenAI, Gemini, and OpenRouter adapters behind `ImageProvider` protocol.
+- `src/pixgen/providers/` — OpenAI, Gemini, and OpenRouter adapters behind `ImageProvider` protocol. Never imports `cli` or cyclopts.
 - `src/pixgen/application.py` — orchestration: preflight, variants, concurrency, results.
 - `src/pixgen/optimization/` — local `pixgen optimize`: request models, planning, and execution. Never imports providers.
 - `src/pixgen/artifacts.py` — atomic file writes via temp-file + rename.

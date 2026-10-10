@@ -29,7 +29,7 @@ def test_build_runtime_does_not_construct_clients_for_catalogue_commands() -> No
     assert all(
         runtime.registry.provider_for(model.id).available for model in runtime.registry.models()
     )
-    assert tuple(factory.name for factory in runtime.cli_factories) == (
+    assert tuple(provider.name for provider in runtime.registry.providers()) == (
         "openai",
         "gemini",
         "openrouter",
