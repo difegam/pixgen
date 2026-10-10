@@ -26,7 +26,6 @@ from pixgen.core.results import (
     ModelListResult,
     OptimizeResult,
     PublicError,
-    VariantStatus,
 )
 
 if TYPE_CHECKING:
@@ -67,17 +66,11 @@ def exit_status(result: PublicResult) -> ExitStatus:
     """Return the exit status a public result warrants."""
     if result.error is not None:
         return ExitStatus.REJECTED
-    if isinstance(result, OptimizeResult):
-        failures = sum(variant.status is VariantStatus.FAILED for variant in result.variants)
-        completed = sum(variant.status is VariantStatus.COMPLETED for variant in result.variants)
-        if failures:
-            return ExitStatus.PARTIAL_FAILURE if completed else ExitStatus.ALL_FAILED
-    if isinstance(result, CommandResult):
-        failures = sum(target.error is not None for target in result.results)
-        if failures == len(result.results):
-            return ExitStatus.ALL_FAILED
-        if failures:
-            return ExitStatus.PARTIAL_FAILURE
+    counts = result.outcome_counts()
+    if counts.failed and counts.failed == counts.attempted:
+        return ExitStatus.ALL_FAILED
+    if counts.failed:
+        return ExitStatus.PARTIAL_FAILURE
     return ExitStatus.SUCCESS
 
 

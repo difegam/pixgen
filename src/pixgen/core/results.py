@@ -19,6 +19,7 @@ __all__: list[str] = [
     "ModelListResult",
     "OptimizeResult",
     "OptimizeVariantResult",
+    "OutcomeCounts",
     "PublicError",
     "TargetResult",
     "VariantStatus",
@@ -32,6 +33,15 @@ class PublicError(BaseModel):
 
     code: ErrorCode = Field(description="Machine-readable error code")
     message: str = Field(min_length=1, description="Human-readable error description")
+
+
+class OutcomeCounts(BaseModel):
+    """Count the outputs a command attempted and how many of them failed."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    failed: int = Field(default=0, ge=0, description="Outputs that failed")
+    attempted: int = Field(default=0, ge=0, description="Outputs the command tried to produce")
 
 
 class VariantStatus(StrEnum):
@@ -109,6 +119,12 @@ class OptimizeResult(BaseModel):
             raise ValueError("variant status is incompatible with dry_run")
         return self
 
+    def outcome_counts(self) -> OutcomeCounts:
+        """Count executed variants; planned and skipped variants were not attempted."""
+        failed = sum(variant.status is VariantStatus.FAILED for variant in self.variants)
+        completed = sum(variant.status is VariantStatus.COMPLETED for variant in self.variants)
+        return OutcomeCounts(failed=failed, attempted=failed + completed)
+
 
 class TargetResult(BaseModel):
     """Result for a single (model, variant) target."""
@@ -151,6 +167,11 @@ class CommandResult(BaseModel):
             raise ValueError("a command result requires target results or one command error")
         return self
 
+    def outcome_counts(self) -> OutcomeCounts:
+        """Count targets and the targets that failed."""
+        failed = sum(target.error is not None for target in self.results)
+        return OutcomeCounts(failed=failed, attempted=len(self.results))
+
 
 class GroupCreateResult(BaseModel):
     """Public result envelope for model-group creation."""
@@ -168,6 +189,10 @@ class GroupCreateResult(BaseModel):
         if has_success == (self.error is not None):
             raise ValueError("a group result requires success details or one command error")
         return self
+
+    def outcome_counts(self) -> OutcomeCounts:
+        """Report no per-output attempts; the command succeeds or is rejected whole."""
+        return OutcomeCounts()
 
 
 class GroupSummary(BaseModel):
@@ -190,6 +215,10 @@ class GroupListResult(BaseModel):
     groups: tuple[GroupSummary, ...] = Field(default=(), description="Configured model groups")
     error: PublicError | None = Field(default=None, description="Command-level error if any")
 
+    def outcome_counts(self) -> OutcomeCounts:
+        """Report no per-output attempts; the command succeeds or is rejected whole."""
+        return OutcomeCounts()
+
 
 class ModelListResult(BaseModel):
     """Public result envelope for model list."""
@@ -199,6 +228,10 @@ class ModelListResult(BaseModel):
     schema_version: Literal["1"] = "1"
     models: tuple[ModelSpec, ...] = Field(default=(), description="Available curated models")
     error: PublicError | None = Field(default=None, description="Command-level error if any")
+
+    def outcome_counts(self) -> OutcomeCounts:
+        """Report no per-output attempts; the command succeeds or is rejected whole."""
+        return OutcomeCounts()
 
 
 class ModelGetResult(BaseModel):
@@ -223,3 +256,7 @@ class ModelGetResult(BaseModel):
         if (self.model is None) == (self.error is None):
             raise ValueError("a model result requires one model or one error")
         return self
+
+    def outcome_counts(self) -> OutcomeCounts:
+        """Report no per-output attempts; the command succeeds or is rejected whole."""
+        return OutcomeCounts()
