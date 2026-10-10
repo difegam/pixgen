@@ -7,6 +7,7 @@ from PIL import Image, ImageFile
 from pydantic import ValidationError
 
 from pixgen.core.errors import ErrorCode, PixgenError
+from pixgen.images.models import ImageFormat
 from pixgen.images.transform import ResizeOperation
 from pixgen.optimization.models import OptimizeRequest, ResizeSpec
 from pixgen.optimization.planner import build_plan
@@ -22,31 +23,36 @@ def source(tmp_path) -> Path:
     return path
 
 
+def _size(variant) -> tuple[int, int]:
+    return variant.target.width, variant.target.height
+
+
 class TestPlanning:
     def test_header_inspection_does_not_decode_pixels(self, source, monkeypatch) -> None:
         def reject_load(_image, *args, **kwargs) -> None:
             raise AssertionError("planning decoded source pixels")
 
+        def reject_verify(_image) -> None:
+            raise AssertionError("planning verified the whole source stream")
+
         monkeypatch.setattr(ImageFile.ImageFile, "load", reject_load)
+        monkeypatch.setattr(Image.Image, "verify", reject_verify)
         build_plan(OptimizeRequest(source=source, dry_run=True))
 
     def test_default_same_dimensions(self, source, tmp_path) -> None:
-        plan = build_plan(OptimizeRequest(source=source), default_output_dir=tmp_path / "out")
-        assert (plan.source_width, plan.source_height, plan.format, plan.quality) == (
-            2400,
-            1600,
-            "PNG",
-            None,
+        plan = build_plan(
+            OptimizeRequest(source=source, mkdir=True), default_output_dir=tmp_path / "out"
         )
+        assert (plan.format, plan.quality) == (ImageFormat.PNG, None)
         assert plan.source.content == source.read_bytes()
-        assert [(v.spec.name, v.width, v.height, v.output_path) for v in plan.variants] == [
+        assert [(v.spec.name, *_size(v), v.output_path) for v in plan.variants] == [
             ("optimized", 2400, 1600, tmp_path / "out/photo-optimized.png")
         ]
 
     def test_web_preset(self, source) -> None:
         plan = build_plan(OptimizeRequest(source=source, web=True))
-        assert (plan.format, plan.quality) == ("WEBP", 82)
-        assert [(v.spec.name, v.spec.operation, v.width, v.height) for v in plan.variants] == [
+        assert (plan.format, plan.quality) == (ImageFormat.WEBP, 82)
+        assert [(v.spec.name, v.spec.operation, *_size(v)) for v in plan.variants] == [
             ("thumbnail", ResizeOperation.COVER, 400, 400),
             ("card", ResizeOperation.COVER, 1200, 630),
             ("content", ResizeOperation.WIDTH, 1280, 853),
@@ -80,7 +86,7 @@ class TestPlanning:
 
     def test_overrides(self, source) -> None:
         plan = build_plan(OptimizeRequest(source=source, web=True, format="jpeg", quality=90))
-        assert (plan.format, plan.quality) == ("JPEG", 90)
+        assert (plan.format, plan.quality) == (ImageFormat.JPEG, 90)
         assert all(v.output_path.suffix == ".jpg" for v in plan.variants)
 
     def test_exif_orientation(self, tmp_path) -> None:
@@ -89,7 +95,7 @@ class TestPlanning:
         exif[274] = 6
         Image.new("RGB", (100, 200)).save(path, exif=exif)
         plan = build_plan(OptimizeRequest(source=path))
-        assert (plan.source_width, plan.source_height) == (200, 100)
+        assert _size(plan.variants[0]) == (200, 100)
 
     def test_png_orientation_after_pixel_chunks(self, tmp_path, monkeypatch) -> None:
         path = tmp_path / "rotated.png"
@@ -113,11 +119,11 @@ class TestPlanning:
 
         monkeypatch.setattr(ImageFile.ImageFile, "load", reject_load)
         plan = build_plan(OptimizeRequest(source=path, dry_run=True))
-        assert (plan.source_width, plan.source_height) == (200, 100)
+        assert _size(plan.variants[0]) == (200, 100)
 
     def test_fit_clamps_without_upscale(self, source) -> None:
         plan = build_plan(OptimizeRequest(source=source, fit=("9000x9000", "1000x1000")))
-        assert [(v.width, v.height, v.reason) for v in plan.variants] == [
+        assert [(*_size(v), v.reason) for v in plan.variants] == [
             (2400, 1600, None),
             (1000, 667, None),
         ]
@@ -130,12 +136,20 @@ class TestPlanning:
     def test_skip_only_is_valid(self, source, sizes) -> None:
         plan = build_plan(OptimizeRequest(source=source, **sizes))
         assert not plan.runnable
-        assert len(plan.skipped) == 1
-        assert plan.skipped[0].reason == "would upscale"
+        assert [v.reason for v in plan.variants] == ["would upscale"]
 
     def test_large_positive_width_skips_without_numeric_overflow(self, source) -> None:
         plan = build_plan(OptimizeRequest(source=source, width=(str(10**400),)))
-        assert plan.skipped[0].width == 10**400
+        assert plan.variants[0].spec.width == 10**400
+        assert plan.variants[0].reason == "would upscale"
+
+    def test_skipped_variant_ignores_existing_destination(self, source, tmp_path) -> None:
+        (tmp_path / "photo-width-3000.png").write_bytes(b"keep")
+        plan = build_plan(
+            OptimizeRequest(source=source, width=("3000", "100"), output_dir=tmp_path)
+        )
+        assert [v.reason for v in plan.variants] == ["would upscale", None]
+        assert (tmp_path / "photo-width-3000.png").read_bytes() == b"keep"
 
     def test_dry_run_has_no_writes(self, source, tmp_path) -> None:
         output_dir = tmp_path / "missing/nested"
@@ -145,6 +159,15 @@ class TestPlanning:
         assert plan.variants[0].output_path.is_absolute()
         assert not output_dir.exists()
         assert list(tmp_path.iterdir()) == [source]
+
+    def test_dry_run_rejects_missing_explicit_directory_without_mkdir(
+        self, source, tmp_path
+    ) -> None:
+        directory = tmp_path / "missing"
+        with pytest.raises(PixgenError, match="--mkdir") as exc_info:
+            build_plan(OptimizeRequest(source=source, output_dir=directory, dry_run=True))
+        assert exc_info.value.code is ErrorCode.INVALID_REQUEST
+        assert not directory.exists()
 
     def test_default_and_explicit_paths(self, source, tmp_path, monkeypatch) -> None:
         monkeypatch.chdir(tmp_path)
@@ -156,14 +179,15 @@ class TestPlanning:
     @pytest.mark.parametrize(
         ("output", "output_format", "expected"),
         [
-            ("result.png", "webp", "result.webp"),
             ("result", "webp", "result.webp"),
-            ("result.png", "jpeg", "result.jpg"),
-            ("result.webp", "keep", "result.png"),
+            ("result.webp", "webp", "result.webp"),
+            ("result.jpeg", "jpeg", "result.jpeg"),
+            ("result.JPG", "jpeg", "result.JPG"),
+            ("result.png", "keep", "result.png"),
         ],
-        ids=["replace-suffix", "add-suffix", "canonical-jpeg-suffix", "keep-source-format"],
+        ids=["add-suffix", "matching", "jpeg-alias", "case-insensitive", "keep-source-format"],
     )
-    def test_explicit_output_extension_matches_encoded_format(
+    def test_explicit_output_extension_is_kept_or_added(
         self, source, tmp_path, output, output_format, expected
     ) -> None:
         plan = build_plan(
@@ -172,27 +196,27 @@ class TestPlanning:
 
         assert plan.variants[0].output_path == tmp_path / expected
 
-    def test_explicit_output_collision_uses_normalized_extension(self, source, tmp_path) -> None:
-        normalized = tmp_path / "result.webp"
-        normalized.write_bytes(b"keep")
-
-        with pytest.raises(PixgenError, match="exist") as exc_info:
+    @pytest.mark.parametrize(
+        ("output", "output_format"),
+        [("result.png", "webp"), ("result.png", "jpeg"), ("result.webp", "keep")],
+        ids=["webp", "jpeg", "keep"],
+    )
+    def test_explicit_output_extension_conflict_is_rejected(
+        self, source, tmp_path, output, output_format
+    ) -> None:
+        with pytest.raises(PixgenError, match="conflicts") as exc_info:
             build_plan(
-                OptimizeRequest(source=source, output=tmp_path / "result.png", format="webp")
+                OptimizeRequest(source=source, output=tmp_path / output, format=output_format)
             )
 
         assert exc_info.value.code is ErrorCode.INVALID_REQUEST
-        assert normalized.read_bytes() == b"keep"
 
 
 class TestRejections:
-    @pytest.mark.parametrize("web", [False, True], ids=["default", "web"])
-    def test_explicit_empty_format_is_invalid(self, source, tmp_path, web) -> None:
-        directory = tmp_path / "missing"
-        with pytest.raises(PixgenError, match="invalid output format") as exc_info:
-            build_plan(OptimizeRequest(source=source, format="", web=web, output_dir=directory))
-        assert exc_info.value.code is ErrorCode.INVALID_REQUEST
-        assert not directory.exists()
+    @pytest.mark.parametrize("output_format", ["", "gif"], ids=["empty", "gif"])
+    def test_unknown_format_is_rejected_by_the_request(self, source, output_format) -> None:
+        with pytest.raises(ValidationError):
+            OptimizeRequest(source=source, format=output_format)
 
     @pytest.mark.parametrize("target_exists", [False, True], ids=["dangling", "existing"])
     @pytest.mark.parametrize("force", [False, True], ids=["no-force", "force"])
@@ -234,7 +258,6 @@ class TestRejections:
             {"fit": ("a=1x2:fit",)},
             {"width": ("-1",)},
             {"height": ("1.5",)},
-            {"format": "gif"},
             {"quality": 0},
             {"quality": 101},
             {"quality": 82},
@@ -248,7 +271,6 @@ class TestRejections:
             "packed",
             "negative",
             "fraction",
-            "format",
             "quality-zero",
             "quality-high",
             "png-quality",
@@ -263,11 +285,14 @@ class TestRejections:
         assert exc_info.value.code is ErrorCode.INVALID_REQUEST
 
     def test_runtime_capability(self, source, monkeypatch) -> None:
-        monkeypatch.setattr("pixgen.optimization.planner.can_encode_format", lambda _: False)
+        monkeypatch.setattr(
+            "pixgen.optimization.planner.has_codec", lambda _format, *, encode: not encode
+        )
         with pytest.raises(PixgenError, match="encoder"):
             build_plan(OptimizeRequest(source=source))
-        monkeypatch.setattr("pixgen.optimization.planner.can_encode_format", lambda _: True)
-        monkeypatch.setattr("pixgen.optimization.planner.can_read_format", lambda _: False)
+        monkeypatch.setattr(
+            "pixgen.optimization.planner.has_codec", lambda _format, *, encode: encode
+        )
         with pytest.raises(PixgenError, match="decoder"):
             build_plan(OptimizeRequest(source=source))
 

@@ -5,185 +5,228 @@ from io import BytesIO
 import pytest
 from PIL import Image, ImageCms
 
-from pixgen.images.inspect import can_encode_format
+from pixgen.images.inspect import has_codec
+from pixgen.images.models import ImageFacts, ImageFormat
 from pixgen.images.transform import (
-    ColourProfilePolicy,
-    DecodedImage,
     ImageTransformError,
-    ResizeOperation,
+    ResizeTarget,
+    check_colour_profile,
     encode_clean,
     load_normalized,
     resize_pixels,
 )
-from tests.factories import make_cmyk_profile
+from tests.factories import make_cmyk_output_profile, make_cmyk_profile, make_grey_profile
+
+
+def _encode(image: Image.Image, fmt: str, **options) -> bytes:
+    with BytesIO() as buffer:
+        image.save(buffer, format=fmt, **options)
+        return buffer.getvalue()
+
+
+def _profile_space(profile: bytes) -> str:
+    with BytesIO(profile) as buffer:
+        return ImageCms.ImageCmsProfile(buffer).profile.xcolor_space.strip()
+
+
+def _facts(mode: str, profile: bytes | None) -> ImageFacts:
+    return ImageFacts(
+        format=ImageFormat.JPEG, width=2, height=2, mode=mode, has_alpha=False, icc_profile=profile
+    )
+
+
+_SRGB = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes()
+_ENCODABLE = [f for f in ImageFormat if has_codec(f, encode=True)]
 
 
 @pytest.fixture
-def source() -> DecodedImage:
-    with BytesIO() as buffer:
-        Image.new("RGB", (80, 40), "red").save(buffer, format="PNG")
-        return load_normalized(buffer.getvalue(), policy=ColourProfilePolicy.PRESERVE)
+def pixels() -> Image.Image:
+    return load_normalized(
+        _encode(Image.new("RGB", (80, 40), "red"), "PNG"), output_format=ImageFormat.PNG
+    ).pixels
 
 
 class TestLoadNormalized:
-    @pytest.mark.parametrize("policy", list(ColourProfilePolicy), ids=lambda p: p.value)
-    def test_retains_transparency_from_png_colour_key(self, policy) -> None:
-        with BytesIO() as buffer:
-            Image.new("RGB", (2, 2), "red").save(
-                buffer,
-                format="PNG",
-                transparency=(255, 0, 0),
-            )
-            result = load_normalized(buffer.getvalue(), policy=policy)
+    def test_retains_transparency_from_png_colour_key(self) -> None:
+        content = _encode(Image.new("RGB", (2, 2), "red"), "PNG", transparency=(255, 0, 0))
+        result = load_normalized(content, output_format=ImageFormat.PNG)
         assert result.pixels.mode == "RGBA"
         assert result.pixels.getpixel((0, 0)) == (255, 0, 0, 0)
 
-    def test_applies_orientation_before_dimensions(self) -> None:
-        image = Image.new("RGB", (30, 20), "red")
+    @pytest.mark.parametrize("transparent", [False, True], ids=["opaque", "colour-key"])
+    def test_palette_becomes_rgb_or_rgba(self, transparent) -> None:
+        options = {"transparency": 0} if transparent else {}
+        content = _encode(Image.new("P", (2, 2)), "PNG", **options)
+        result = load_normalized(content, output_format=ImageFormat.WEBP)
+        assert result.pixels.mode == ("RGBA" if transparent else "RGB")
+
+    def test_applies_orientation_and_clears_metadata(self) -> None:
         exif = Image.Exif()
         exif[274] = 6
-        with BytesIO() as buffer:
-            image.save(buffer, format="JPEG", exif=exif)
-            result = load_normalized(buffer.getvalue(), policy=ColourProfilePolicy.PRESERVE)
+        content = _encode(Image.new("RGB", (30, 20), "red"), "JPEG", exif=exif)
+        result = load_normalized(content, output_format=ImageFormat.JPEG)
         assert result.pixels.size == (20, 30)
-        assert (result.original_width, result.original_height) == (20, 30)
-        assert result.source_format == "JPEG"
         assert result.pixels.getexif().get(274) is None
-
-    def test_rejects_animation(self) -> None:
-        with BytesIO() as buffer:
-            Image.new("RGB", (2, 2), "red").save(
-                buffer,
-                format="PNG",
-                save_all=True,
-                append_images=[Image.new("RGB", (2, 2), "blue")],
-                duration=100,
-            )
-            with pytest.raises(ImageTransformError, match="animated") as exc_info:
-                load_normalized(buffer.getvalue(), policy=ColourProfilePolicy.PRESERVE)
-        assert "animated" in exc_info.value.reason
+        assert not result.pixels.info
 
     @pytest.mark.parametrize("content", [b"", b"not an image"], ids=["empty", "corrupt"])
     def test_wraps_corruption(self, content) -> None:
         with pytest.raises(ImageTransformError, match="corrupt") as exc_info:
-            load_normalized(content, policy=ColourProfilePolicy.PRESERVE)
+            load_normalized(content, output_format=ImageFormat.PNG)
         assert exc_info.value.reason
 
-    @pytest.mark.parametrize("policy", list(ColourProfilePolicy), ids=lambda p: p.value)
-    def test_icc_policy_and_alpha(self, policy) -> None:
-        profile = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes()
-        with BytesIO() as buffer:
-            Image.new("RGBA", (2, 2), (20, 40, 60, 77)).save(
-                buffer,
-                format="PNG",
-                icc_profile=profile,
-            )
-            result = load_normalized(buffer.getvalue(), policy=policy)
+    @pytest.mark.parametrize(
+        "output_format", [f for f in _ENCODABLE if f is not ImageFormat.JPEG], ids=str
+    )
+    def test_keeps_matching_rgb_profile_and_alpha(self, output_format) -> None:
+        content = _encode(Image.new("RGBA", (2, 2), (20, 40, 60, 77)), "PNG", icc_profile=_SRGB)
+        result = load_normalized(content, output_format=output_format)
         assert result.pixels.getpixel((0, 0)) == (20, 40, 60, 77)
-        assert result.icc_profile == (profile if policy is ColourProfilePolicy.PRESERVE else None)
+        assert result.icc_profile == _SRGB
 
-    def test_converts_profile_pixels(self) -> None:
-        profile = ImageCms.ImageCmsProfile(ImageCms.createProfile("LAB")).tobytes()
-        image = Image.new("LAB", (2, 2), (128, 128, 128))
-        with BytesIO() as buffer:
-            image.save(buffer, format="TIFF", icc_profile=profile)
-            result = load_normalized(
-                buffer.getvalue(),
-                policy=ColourProfilePolicy.CONVERT_SRGB_AND_STRIP,
-            )
+    def test_drops_mismatched_profile(self) -> None:
+        content = _encode(Image.new("RGB", (2, 2)), "PNG", icc_profile=make_cmyk_profile())
+        assert load_normalized(content, output_format=ImageFormat.PNG).icc_profile is None
+
+    @pytest.mark.parametrize(
+        ("output_format", "kept"),
+        [(ImageFormat.PNG, True), (ImageFormat.JPEG, True), (ImageFormat.WEBP, False)],
+        ids=["png", "jpeg", "webp-stores-rgb"],
+    )
+    def test_grey_profile_kept_only_where_encoder_stores_grey(self, output_format, kept) -> None:
+        profile = make_grey_profile()
+        content = _encode(Image.new("L", (2, 2), 128), "PNG", icc_profile=profile)
+        result = load_normalized(content, output_format=output_format)
+        assert result.pixels.mode == "L"
+        assert result.icc_profile == (profile if kept else None)
+
+
+class TestModeConversion:
+    @pytest.mark.parametrize(
+        "output_format",
+        [f for f in _ENCODABLE if f is not ImageFormat.JPEG],
+        ids=str,
+    )
+    def test_cmyk_with_profile_is_colour_managed_to_srgb(self, output_format) -> None:
+        cyan = (255, 0, 0, 0)
+        content = _encode(
+            Image.new("CMYK", (2, 2), cyan), "JPEG", icc_profile=make_cmyk_output_profile()
+        )
+        result = load_normalized(content, output_format=output_format)
+        red, green, blue = result.pixels.getpixel((0, 0))
         assert result.pixels.mode == "RGB"
-        assert result.pixels.getpixel((0, 0)) != (128, 128, 128)
-        assert result.icc_profile is None
+        assert max(red, green, blue) - min(red, green, blue) <= 2
+        assert 100 < red < 230
+        assert result.icc_profile is not None
+        assert _profile_space(result.icc_profile) == "RGB"
 
-    def test_invalid_profile_is_not_silently_stripped(self) -> None:
-        with BytesIO() as buffer:
-            Image.new("RGB", (2, 2)).save(buffer, format="PNG", icc_profile=b"invalid")
-            with pytest.raises(ImageTransformError, match="colour"):
-                load_normalized(
-                    buffer.getvalue(),
-                    policy=ColourProfilePolicy.CONVERT_SRGB_AND_STRIP,
-                )
+    def test_cmyk_without_profile_is_converted_plainly(self) -> None:
+        content = _encode(Image.new("CMYK", (2, 2)), "JPEG")
+        result = load_normalized(content, output_format=ImageFormat.PNG)
+        assert (result.pixels.mode, result.icc_profile) == ("RGB", None)
+
+    def test_cmyk_stays_cmyk_for_jpeg(self) -> None:
+        profile = make_cmyk_profile()
+        content = _encode(Image.new("CMYK", (2, 2)), "JPEG", icc_profile=profile)
+        result = load_normalized(content, output_format=ImageFormat.JPEG)
+        assert (result.pixels.mode, result.icc_profile) == ("CMYK", profile)
+
+    def test_unconvertible_cmyk_profile_fails(self) -> None:
+        content = _encode(Image.new("CMYK", (2, 2)), "JPEG", icc_profile=make_cmyk_profile())
+        with pytest.raises(ImageTransformError, match="sRGB"):
+            load_normalized(content, output_format=ImageFormat.PNG)
+
+    def test_sixteen_bit_grey_is_kept_for_png(self) -> None:
+        image = Image.new("I;16", (1, 1), 1000)
+        result = load_normalized(_encode(image, "PNG"), output_format=ImageFormat.PNG)
+        assert result.pixels.mode == "I;16"
+        assert result.pixels.getpixel((0, 0)) == 1000
+
+    @pytest.mark.parametrize(
+        "output_format",
+        [f for f in _ENCODABLE if f is not ImageFormat.PNG],
+        ids=str,
+    )
+    def test_sixteen_bit_grey_is_scaled_not_clipped(self, output_format) -> None:
+        image = Image.new("I;16", (3, 1))
+        for x, value in enumerate((1000, 65535, 0)):
+            image.putpixel((x, 0), value)
+        result = load_normalized(_encode(image, "PNG"), output_format=output_format)
+        assert result.pixels.mode == "L"
+        assert [result.pixels.getpixel((x, 0)) for x in range(3)] == [3, 255, 0]
+
+    def test_bilevel_becomes_grey(self) -> None:
+        result = load_normalized(
+            _encode(Image.new("1", (2, 2)), "PNG"), output_format=ImageFormat.PNG
+        )
+        assert result.pixels.mode == "L"
+
+
+class TestCheckColourProfile:
+    def test_accepts_missing_and_readable_profiles(self) -> None:
+        check_colour_profile(_facts("RGB", None), output_format=ImageFormat.WEBP)
+        check_colour_profile(_facts("RGB", _SRGB), output_format=ImageFormat.WEBP)
+        check_colour_profile(
+            _facts("CMYK", make_cmyk_output_profile()), output_format=ImageFormat.WEBP
+        )
+
+    def test_rejects_unreadable_profile(self) -> None:
+        with pytest.raises(ImageTransformError, match="colour profile"):
+            check_colour_profile(_facts("RGB", b"invalid"), output_format=ImageFormat.PNG)
+
+    def test_rejects_cmyk_profile_that_cannot_reach_srgb(self) -> None:
+        with pytest.raises(ImageTransformError, match="sRGB"):
+            check_colour_profile(_facts("CMYK", make_cmyk_profile()), output_format=ImageFormat.PNG)
+
+    def test_cmyk_profile_for_jpeg_needs_no_conversion(self) -> None:
+        check_colour_profile(_facts("CMYK", make_cmyk_profile()), output_format=ImageFormat.JPEG)
 
 
 class TestResizePixels:
-    @pytest.mark.parametrize("size", [(1000, 1), (1, 1000)], ids=["wide", "tall"])
-    def test_fit_retains_at_least_one_pixel(self, size) -> None:
-        source = DecodedImage(
-            pixels=Image.new("RGB", size),
-            source_format="PNG",
-            original_width=size[0],
-            original_height=size[1],
-            icc_profile=None,
-        )
-        assert resize_pixels(source, operation=ResizeOperation.FIT, width=1, height=1).size == (
-            1,
-            1,
-        )
-
     @pytest.mark.parametrize(
-        ("operation", "width", "height", "expected"),
+        ("target", "expected"),
         [
-            (ResizeOperation.FIT, 30, 30, (30, 15)),
-            (ResizeOperation.COVER, 30, 30, (30, 30)),
-            (ResizeOperation.WIDTH, 20, None, (20, 10)),
-            (ResizeOperation.HEIGHT, None, 10, (20, 10)),
+            (ResizeTarget(width=30, height=15, crop=False), (30, 15)),
+            (ResizeTarget(width=30, height=30, crop=True), (30, 30)),
         ],
-        ids=["fit", "cover", "width", "height"],
+        ids=["scale", "crop"],
     )
-    def test_dimensions(self, source, operation, width, height, expected) -> None:
-        result = resize_pixels(source, operation=operation, width=width, height=height)
-        assert result.size == expected
-        assert source.pixels.size == (80, 40)
+    def test_dimensions(self, pixels, target, expected) -> None:
+        assert resize_pixels(pixels, target).size == expected
+        assert pixels.size == (80, 40)
 
-    def test_centered_cover(self, source) -> None:
-        source.pixels.paste("blue", (20, 0, 60, 40))
-        result = resize_pixels(source, operation=ResizeOperation.COVER, width=40, height=40)
+    def test_centered_cover(self, pixels) -> None:
+        pixels.paste("blue", (20, 0, 60, 40))
+        result = resize_pixels(pixels, ResizeTarget(width=40, height=40, crop=True))
         assert result.tobytes() == Image.new("RGB", (40, 40), "blue").tobytes()
-
-    @pytest.mark.parametrize("width", [None, 0, -1], ids=["missing", "zero", "negative"])
-    def test_rejects_invalid_dimension(self, source, width) -> None:
-        with pytest.raises(ImageTransformError, match="dimension"):
-            resize_pixels(source, operation=ResizeOperation.WIDTH, width=width)
 
 
 class TestEncodeClean:
-    def test_rejects_implicit_cmyk_conversion_with_preserved_profile(self) -> None:
-        with (
-            Image.new("CMYK", (2, 2)) as image,
-            pytest.raises(ImageTransformError, match="CMYK"),
-        ):
-            encode_clean(image, output_format="WEBP", quality=None, icc_profile=make_cmyk_profile())
-
-    @pytest.mark.parametrize(
-        "fmt",
-        [f for f in ("PNG", "JPEG", "WEBP", "AVIF") if can_encode_format(f)],
-        ids=str.lower,
-    )
-    def test_round_trip_and_metadata(self, source, fmt) -> None:
-        source.pixels.getexif()[315] = "private author"
-        source.pixels.info.update(
-            exif=source.pixels.getexif().tobytes(),
+    @pytest.mark.parametrize("fmt", _ENCODABLE, ids=str)
+    def test_round_trip_and_metadata(self, pixels, fmt) -> None:
+        pixels.getexif()[315] = "private author"
+        pixels.info.update(
+            exif=pixels.getexif().tobytes(),
             xmp=b"private",
             icc_profile=b"private",
         )
-        content = encode_clean(source.pixels, output_format=fmt, quality=80, icc_profile=None)
+        content = encode_clean(pixels, output_format=fmt, quality=80, icc_profile=None)
         with Image.open(BytesIO(content)) as result:
             result.load()
             assert result.size == (80, 40)
-            assert result.format == fmt
+            assert result.format == fmt.pillow_name
             assert not result.getexif()
             assert "xmp" not in result.info
             assert "icc_profile" not in result.info
-        assert source.pixels.info["xmp"] == b"private"
+        assert pixels.info["xmp"] == b"private"
 
-    def test_explicit_icc_is_preserved(self, source) -> None:
-        profile = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes()
+    def test_explicit_icc_is_preserved(self, pixels) -> None:
         content = encode_clean(
-            source.pixels, output_format="PNG", quality=None, icc_profile=profile
+            pixels, output_format=ImageFormat.PNG, quality=None, icc_profile=_SRGB
         )
         with Image.open(BytesIO(content)) as image:
-            assert image.info["icc_profile"] == profile
+            assert image.info["icc_profile"] == _SRGB
 
-    def test_rejects_unknown_encoder(self, source) -> None:
-        with pytest.raises(ImageTransformError, match="encoder"):
-            encode_clean(source.pixels, output_format="UNKNOWN", quality=None, icc_profile=None)
+    def test_rejects_out_of_range_quality(self, pixels) -> None:
+        with pytest.raises(ImageTransformError, match="quality"):
+            encode_clean(pixels, output_format=ImageFormat.WEBP, quality=101, icc_profile=None)

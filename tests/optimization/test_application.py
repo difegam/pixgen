@@ -2,6 +2,7 @@
 
 import zlib
 from io import BytesIO
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -15,11 +16,9 @@ from pixgen.images.transform import ImageTransformError
 from pixgen.optimization import application
 from pixgen.optimization.application import OptimizeApplication
 from pixgen.optimization.models import OptimizeRequest
-from tests.factories import make_cmyk_profile
+from tests.factories import make_cmyk_output_profile, make_cmyk_profile
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from pixgen.images.transform import DecodedImage
 
 
@@ -37,27 +36,14 @@ def app() -> OptimizeApplication:
 
 
 class TestExecution:
-    @pytest.mark.parametrize(
-        ("mode", "source_format", "output_format", "with_profile"),
-        [
-            ("CMYK", "JPEG", "webp", True),
-            ("CMYK", "JPEG", "avif", True),
-            ("CMYK", "JPEG", "png", False),
-            ("I;16", "PNG", "jpeg", False),
-        ],
-        ids=["cmyk-icc-webp", "cmyk-icc-avif", "cmyk-png", "16-bit-jpeg"],
-    )
+    @pytest.mark.parametrize("output_format", ["webp", "png"], ids=str)
     @pytest.mark.parametrize("dry_run", [False, True], ids=["execute", "plan"])
-    def test_incompatible_mode_rejected_before_side_effects(
-        self, tmp_path, app, mode, source_format, output_format, with_profile, dry_run
+    def test_unconvertible_cmyk_profile_rejected_before_side_effects(
+        self, tmp_path, app, output_format, dry_run
     ) -> None:
-        source = tmp_path / "source"
-        with Image.new(mode, (10, 10)) as image:
-            image.save(
-                source,
-                format=source_format,
-                icc_profile=make_cmyk_profile() if with_profile else None,
-            )
+        source = tmp_path / "source.jpg"
+        with Image.new("CMYK", (10, 10)) as image:
+            image.save(source, icc_profile=make_cmyk_profile())
         directory = tmp_path / "missing"
         result = app.run(
             OptimizeRequest(
@@ -70,9 +56,36 @@ class TestExecution:
         )
         assert result.error is not None
         assert result.error.code is ErrorCode.INVALID_REQUEST
-        assert mode in result.error.message
+        assert "sRGB" in result.error.message
         assert not directory.exists()
         assert list(tmp_path.iterdir()) == [source]
+
+    @pytest.mark.parametrize(
+        ("mode", "source_format", "output_format", "profile", "expected_mode"),
+        [
+            ("CMYK", "JPEG", "webp", make_cmyk_output_profile(), "RGB"),
+            ("CMYK", "JPEG", "png", None, "RGB"),
+            ("I;16", "PNG", "jpeg", None, "L"),
+            ("I;16", "PNG", "png", None, "I;16"),
+            ("P", "PNG", "jpeg", None, "RGB"),
+        ],
+        ids=["cmyk-icc-webp", "cmyk-png", "16-bit-jpeg", "16-bit-png", "palette-jpeg"],
+    )
+    def test_unsupported_modes_are_converted(
+        self, tmp_path, app, mode, source_format, output_format, profile, expected_mode
+    ) -> None:
+        source = tmp_path / "source"
+        with Image.new(mode, (10, 10)) as image:
+            image.save(source, format=source_format, icc_profile=profile)
+        result = app.run(
+            OptimizeRequest(
+                source=source, format=output_format, output_dir=tmp_path / "out", mkdir=True
+            )
+        )
+        assert result.error is None
+        assert result.variants[0].status is VariantStatus.COMPLETED
+        with Image.open(result.variants[0].output_path) as output:
+            assert output.mode == expected_mode
 
     def test_cmyk_jpeg_preserves_matching_profile(self, tmp_path, app) -> None:
         source = tmp_path / "source.jpg"
@@ -88,20 +101,26 @@ class TestExecution:
             assert output.mode == "CMYK"
             assert output.info["icc_profile"] == profile
 
-    @pytest.mark.parametrize("profile_kind", ["mismatched", "invalid"], ids=str)
-    def test_incompatible_profile_rejected_during_planning(
-        self, tmp_path, app, profile_kind
-    ) -> None:
+    def test_unreadable_profile_rejected_during_planning(self, tmp_path, app) -> None:
         source = tmp_path / "source.png"
-        profile = make_cmyk_profile() if profile_kind == "mismatched" else b"invalid ICC"
         with Image.new("RGB", (10, 10)) as image:
-            image.save(source, icc_profile=profile)
+            image.save(source, icc_profile=b"invalid ICC")
         directory = tmp_path / "missing"
         result = app.run(OptimizeRequest(source=source, output_dir=directory, mkdir=True))
         assert result.error is not None
         assert result.error.code is ErrorCode.INVALID_REQUEST
         assert "profile" in result.error.message
         assert not directory.exists()
+
+    def test_mismatched_profile_is_dropped(self, tmp_path, app) -> None:
+        source = tmp_path / "source.png"
+        with Image.new("RGB", (10, 10)) as image:
+            image.save(source, icc_profile=make_cmyk_profile())
+        destination = tmp_path / "out.png"
+        result = app.run(OptimizeRequest(source=source, output=destination))
+        assert result.variants[0].status is VariantStatus.COMPLETED
+        with Image.open(destination) as output:
+            assert "icc_profile" not in output.info
 
     @pytest.mark.parametrize(
         ("output_format", "encoder", "source_format"),
@@ -184,7 +203,7 @@ class TestExecution:
         assert destination.read_bytes() == b"original output"
         assert not list(tmp_path.glob("*.tmp"))
 
-    def test_source_decode_failure_is_command_level(
+    def test_source_decode_failure_fails_runnable_variants(
         self, source, tmp_path, app, monkeypatch
     ) -> None:
         def fail_decode(*_args, **_kwargs) -> None:
@@ -192,10 +211,25 @@ class TestExecution:
 
         monkeypatch.setattr(application, "load_normalized", fail_decode)
         directory = tmp_path / "new"
-        result = app.run(OptimizeRequest(source=source, output_dir=directory, mkdir=True))
-        assert result.error.code is ErrorCode.INVALID_REQUEST
-        assert not result.variants
+        result = app.run(
+            OptimizeRequest(source=source, width=(20, 100), output_dir=directory, mkdir=True)
+        )
+        assert result.error is None
+        assert [v.status for v in result.variants] == [VariantStatus.FAILED, VariantStatus.SKIPPED]
+        assert result.variants[0].error.code is ErrorCode.OPTIMIZATION_FAILED
+        assert exit_status(result) == 3
         assert not directory.exists()
+
+    def test_directory_creation_failure_is_artifact_failure(
+        self, source, tmp_path, app, monkeypatch
+    ) -> None:
+        def fail_mkdir(*_args, **_kwargs) -> None:
+            raise PermissionError("denied")
+
+        monkeypatch.setattr(Path, "mkdir", fail_mkdir)
+        result = app.run(OptimizeRequest(source=source, output_dir=tmp_path / "new", mkdir=True))
+        assert result.error.code is ErrorCode.ARTIFACT_FAILURE
+        assert exit_status(result) == 2
 
     @pytest.mark.parametrize("output_format", ["png", "jpeg", "webp"], ids=str)
     def test_dimensions_format_and_metadata(self, tmp_path, app, output_format) -> None:
@@ -235,7 +269,9 @@ class TestExecution:
         monkeypatch.setattr(application, "load_normalized", reject_decode)
         directory = tmp_path / "new"
         result = app.run(
-            OptimizeRequest(source=source, width=(20, 100), output_dir=directory, dry_run=True)
+            OptimizeRequest(
+                source=source, width=(20, 100), output_dir=directory, dry_run=True, mkdir=True
+            )
         )
         assert result.dry_run
         assert [v.status for v in result.variants] == [VariantStatus.PLANNED, VariantStatus.SKIPPED]
@@ -371,7 +407,7 @@ class TestExecution:
         assert result.variants[0].error.code is ErrorCode.OPTIMIZATION_FAILED
         assert not (tmp_path / "out.png").exists()
 
-    def test_corrupt_pixel_payload_rejected_before_directory_creation(self, tmp_path, app) -> None:
+    def test_corrupt_pixel_payload_fails_before_directory_creation(self, tmp_path, app) -> None:
         path = tmp_path / "corrupt.png"
         with Image.new("RGB", (80, 40)) as image:
             image.save(path)
@@ -386,8 +422,14 @@ class TestExecution:
             + content[offset + length + 12 :]
         )
         directory = tmp_path / "new"
+        planned = app.run(
+            OptimizeRequest(source=path, output_dir=directory, mkdir=True, dry_run=True)
+        )
+        assert planned.variants[0].status is VariantStatus.PLANNED
         result = app.run(OptimizeRequest(source=path, output_dir=directory, mkdir=True))
-        assert result.error.code is ErrorCode.INVALID_REQUEST
+        assert result.variants[0].status is VariantStatus.FAILED
+        assert result.variants[0].error.code is ErrorCode.OPTIMIZATION_FAILED
+        assert exit_status(result) == 3
         assert not directory.exists()
 
     def test_unexpected_programming_error_propagates(

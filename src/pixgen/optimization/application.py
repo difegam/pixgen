@@ -7,11 +7,10 @@ from typing import TYPE_CHECKING
 
 from PIL import Image, UnidentifiedImageError
 
-from pixgen.artifacts import write_atomic
+from pixgen.artifacts import create_directory, write_atomic
 from pixgen.core.errors import ErrorCode, PixgenError
-from pixgen.core.results import OptimizeResult, OptimizeVariantResult, PublicError, VariantStatus
+from pixgen.core.results import OptimizeResult, OptimizeVariantResult, PublicError
 from pixgen.images.transform import (
-    ColourProfilePolicy,
     ImageTransformError,
     encode_clean,
     load_normalized,
@@ -21,53 +20,28 @@ from pixgen.optimization.planner import build_plan
 
 if TYPE_CHECKING:
     from pixgen.config.models import Settings
-    from pixgen.images.transform import DecodedImage
+    from pixgen.images.transform import DecodedImage, ResizeTarget
     from pixgen.optimization.models import OptimizePlan, OptimizeRequest, PlannedVariant
 
 __all__: list[str] = ["OptimizeApplication"]
 
 
-def _planned_result(plan: OptimizePlan, variant: PlannedVariant) -> OptimizeVariantResult:
-    """Expose a runnable planned variant or a no-upscale skip."""
-    if variant.reason is not None:
-        return OptimizeVariantResult(
-            name=variant.spec.name, status=VariantStatus.SKIPPED, reason=variant.reason
-        )
-    return OptimizeVariantResult(
-        name=variant.spec.name,
-        status=VariantStatus.PLANNED,
-        output_path=variant.output_path,
-        format=plan.format,
-        width=variant.width,
-        height=variant.height,
-    )
+def _public_error(code: ErrorCode, exc: Exception) -> PublicError:
+    """Expose a per-variant failure with its exception message."""
+    return PublicError(code=code, message=f"{exc}")
 
 
-def _prepare_directories(plan: OptimizePlan, *, configured: bool) -> None:
-    """Create runnable output parents only when execution policy permits."""
-    explicit = plan.request.output is not None or plan.request.output_dir is not None or configured
-    for directory in dict.fromkeys(variant.output_path.parent for variant in plan.runnable):
-        if not directory.exists() and explicit and not plan.request.mkdir:
-            raise PixgenError(
-                ErrorCode.INVALID_REQUEST,
-                f"output directory does not exist: {directory} (use --mkdir to create)",
-            )
-        try:
-            directory.mkdir(parents=True, exist_ok=True)
-        except OSError as exc:
-            raise PixgenError(
-                ErrorCode.INVALID_REQUEST, f"cannot create output directory: {directory}"
-            ) from exc
-
-
-def _verify_output(data: bytes, plan: OptimizePlan, variant: PlannedVariant) -> None:
+def _verify_output(data: bytes, plan: OptimizePlan, target: ResizeTarget) -> None:
     """Check encoded structure and decode pixels before allowing publication."""
     try:
         with BytesIO(data) as buffer, Image.open(buffer) as image:
             image.verify()
         with BytesIO(data) as buffer, Image.open(buffer) as image:
             image.load()
-            if image.format != plan.format or image.size != (variant.width, variant.height):
+            if image.format != plan.format.pillow_name or image.size != (
+                target.width,
+                target.height,
+            ):
                 raise ImageTransformError("encoded output format or dimensions differ from plan")
     except (UnidentifiedImageError, OSError, SyntaxError, ValueError) as exc:
         if isinstance(exc, ImageTransformError):
@@ -79,45 +53,42 @@ def _execute_variant(
     plan: OptimizePlan, variant: PlannedVariant, source: DecodedImage
 ) -> OptimizeVariantResult:
     """Transform and verify one variant before its atomic publication."""
+    if variant.target is None:
+        return variant.planned_result(plan.format)
     try:
-        with closing(
-            resize_pixels(
-                source,
-                operation=variant.spec.operation,
-                width=variant.spec.width,
-                height=variant.spec.height,
-            )
-        ) as pixels:
+        with closing(resize_pixels(source.pixels, variant.target)) as pixels:
             data = encode_clean(
                 pixels,
                 output_format=plan.format,
                 quality=plan.quality,
                 icc_profile=source.icc_profile,
             )
-        _verify_output(data, plan, variant)
+        _verify_output(data, plan, variant.target)
     except (ImageTransformError, OSError, ValueError) as exc:
-        return OptimizeVariantResult(
-            name=variant.spec.name,
-            status=VariantStatus.FAILED,
-            error=PublicError(code=ErrorCode.OPTIMIZATION_FAILED, message=f"{exc}"),
-        )
+        return variant.failed_result(_public_error(ErrorCode.OPTIMIZATION_FAILED, exc))
     try:
         write_atomic(variant.output_path, data, overwrite=plan.request.force)
     except OSError as exc:
-        return OptimizeVariantResult(
-            name=variant.spec.name,
-            status=VariantStatus.FAILED,
-            error=PublicError(code=ErrorCode.ARTIFACT_FAILURE, message=f"{exc}"),
+        return variant.failed_result(_public_error(ErrorCode.ARTIFACT_FAILURE, exc))
+    return variant.completed_result(plan.format, output_bytes=len(data))
+
+
+def _execute(plan: OptimizePlan) -> tuple[OptimizeVariantResult, ...]:
+    """Decode the source once, then write each runnable variant independently."""
+    try:
+        source = load_normalized(plan.source.content, output_format=plan.format)
+    except ImageTransformError as exc:
+        error = PublicError(code=ErrorCode.OPTIMIZATION_FAILED, message=exc.reason)
+        return tuple(
+            variant.failed_result(error)
+            if variant.target is not None
+            else variant.planned_result(plan.format)
+            for variant in plan.variants
         )
-    return OptimizeVariantResult(
-        name=variant.spec.name,
-        status=VariantStatus.COMPLETED,
-        output_path=variant.output_path,
-        format=plan.format,
-        width=variant.width,
-        height=variant.height,
-        output_bytes=len(data),
-    )
+    with closing(source.pixels):
+        for directory in dict.fromkeys(variant.output_path.parent for variant in plan.runnable):
+            create_directory(directory, label="output directory")
+        return tuple(_execute_variant(plan, variant, source) for variant in plan.variants)
 
 
 class OptimizeApplication:
@@ -132,24 +103,9 @@ class OptimizeApplication:
         try:
             plan = build_plan(request, default_output_dir=self._settings.generation.output_dir)
             if request.dry_run or not plan.runnable:
-                variants = tuple(_planned_result(plan, variant) for variant in plan.variants)
+                variants = plan.planned_results()
             else:
-                try:
-                    source = load_normalized(
-                        plan.source.content, policy=ColourProfilePolicy.PRESERVE
-                    )
-                except ImageTransformError as exc:
-                    raise PixgenError(ErrorCode.INVALID_REQUEST, exc.reason) from exc
-                with closing(source.pixels):
-                    _prepare_directories(
-                        plan, configured=self._settings.generation.output_dir is not None
-                    )
-                    variants = tuple(
-                        _planned_result(plan, variant)
-                        if variant.reason is not None
-                        else _execute_variant(plan, variant, source)
-                        for variant in plan.variants
-                    )
+                variants = _execute(plan)
             return OptimizeResult(
                 run_id=run_id,
                 source_path=plan.source.source_path,

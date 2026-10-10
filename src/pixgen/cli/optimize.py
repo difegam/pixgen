@@ -50,7 +50,7 @@ def build_optimize_app(application: OptimizeApplication) -> App:
             height: Resize to a height. Repeat for additional variants.
             format: Keep the source format or select an output encoding.
             quality: Override lossy encoder quality.
-            output: Set the name for one output; its extension follows the output format.
+            output: Set the path for one output; a bare name gets the format's extension.
             output_dir: Place named variants in this directory.
             dry_run: Report planned outputs without writing files.
             mkdir: Permit creating an explicit output directory.

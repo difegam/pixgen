@@ -4,11 +4,10 @@ from io import BytesIO
 from typing import TYPE_CHECKING
 
 import pytest
-from PIL import Image, features
+from PIL import Image, ImageFile, features
 
-from pixgen.images.inspect import can_encode_format, can_read_format, load_image
-from pixgen.images.mime import MIME_TO_EXTENSION
-from pixgen.images.models import ImageInputError, LocalImage
+from pixgen.images.inspect import has_codec, inspect_header, load_image
+from pixgen.images.models import ImageFormat, ImageInputError, LocalImage
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -66,12 +65,12 @@ class TestLoadImage:
         assert result.media_type == "image/webp"
 
     def test_load_avif_when_available(self, tmp_path: Path) -> None:
-        if not can_encode_format("AVIF"):
+        if not has_codec(ImageFormat.AVIF, encode=True):
             return
         path = tmp_path / "photo.avif"
         path.write_bytes(_encode("AVIF"))
         assert load_image(path).media_type == "image/avif"
-        assert MIME_TO_EXTENSION["image/avif"] == "avif"
+        assert ImageFormat.AVIF.extension == "avif"
 
     def test_nonexistent_file_raises(self, tmp_path: Path) -> None:
         path = tmp_path / "missing.png"
@@ -106,6 +105,16 @@ class TestLoadImage:
         with pytest.raises(ImageInputError, match="corrupt"):
             load_image(path)
 
+    def test_header_only_load_skips_stream_verification(self, tmp_path: Path, monkeypatch) -> None:
+        path = tmp_path / "photo.png"
+        path.write_bytes(_encode("PNG"))
+
+        def reject_verify(_image) -> None:
+            raise AssertionError("verified the encoded stream")
+
+        monkeypatch.setattr(Image.Image, "verify", reject_verify)
+        assert load_image(path, verify=False).media_type == "image/png"
+
     def test_preserves_original_bytes(self, tmp_path: Path, png_bytes: bytes) -> None:
         path = tmp_path / "test.png"
         path.write_bytes(png_bytes)
@@ -116,27 +125,70 @@ class TestLoadImage:
 
 class TestFormatCapabilities:
     @pytest.mark.parametrize(
-        ("source_format", "feature"),
-        [("AVIF", "avif"), ("WEBP", "webp"), ("JPEG", "jpg"), ("PNG", "zlib")],
-        ids=["avif", "webp", "jpeg", "png"],
+        ("image_format", "feature"),
+        [
+            (ImageFormat.AVIF, "avif"),
+            (ImageFormat.WEBP, "webp"),
+            (ImageFormat.JPEG, "jpg"),
+            (ImageFormat.PNG, "zlib"),
+        ],
+        ids=str,
     )
-    def test_registered_reader_requires_available_codec(
-        self, monkeypatch, source_format, feature
+    @pytest.mark.parametrize("encode", [False, True], ids=["read", "write"])
+    def test_registered_codec_requires_available_feature(
+        self, monkeypatch, image_format, feature, encode
     ) -> None:
         Image.init()
-        monkeypatch.setitem(Image.OPEN, source_format, Image.OPEN["PNG"])
+        registry = Image.SAVE if encode else Image.OPEN
+        monkeypatch.setitem(registry, image_format.pillow_name, registry["PNG"])
         monkeypatch.setattr(features, "check", lambda name: name != feature)
-        assert source_format in Image.OPEN
-        assert not can_read_format(source_format)
-        assert not can_read_format(source_format.lower())
+        assert not has_codec(image_format, encode=encode)
 
-    def test_unknown_format_is_unavailable(self) -> None:
-        assert not can_read_format("UNKNOWN")
-        assert not can_encode_format("UNKNOWN")
-
-    def test_missing_registration_is_unavailable(self, monkeypatch) -> None:
+    @pytest.mark.parametrize("encode", [False, True], ids=["read", "write"])
+    def test_missing_registration_is_unavailable(self, monkeypatch, encode) -> None:
         Image.init()
-        monkeypatch.delitem(Image.OPEN, "AVIF", raising=False)
-        monkeypatch.delitem(Image.SAVE, "AVIF", raising=False)
-        assert not can_read_format("AVIF")
-        assert not can_encode_format("AVIF")
+        monkeypatch.delitem(Image.SAVE if encode else Image.OPEN, "AVIF", raising=False)
+        assert not has_codec(ImageFormat.AVIF, encode=encode)
+
+
+def _local(path: Path) -> LocalImage:
+    return load_image(path, verify=False)
+
+
+class TestInspectHeader:
+    def test_reads_facts_without_decoding_pixels(self, tmp_path: Path, monkeypatch) -> None:
+        path = tmp_path / "photo.png"
+        Image.new("RGBA", (30, 20)).save(path, icc_profile=b"profile")
+        image = _local(path)
+
+        def reject_load(_image, *args, **kwargs) -> None:
+            raise AssertionError("decoded source pixels")
+
+        monkeypatch.setattr(ImageFile.ImageFile, "load", reject_load)
+        facts = inspect_header(image)
+        assert (facts.format, facts.width, facts.height) == (ImageFormat.PNG, 30, 20)
+        assert (facts.mode, facts.has_alpha, facts.icc_profile) == ("RGBA", True, b"profile")
+
+    @pytest.mark.parametrize("fmt", ["JPEG", "PNG"], ids=str.lower)
+    def test_swaps_dimensions_for_rotated_orientation(self, tmp_path: Path, fmt) -> None:
+        path = tmp_path / "rotated"
+        exif = Image.Exif()
+        exif[274] = 6
+        Image.new("RGB", (100, 200)).save(path, format=fmt, exif=exif)
+        facts = inspect_header(_local(path))
+        assert (facts.width, facts.height) == (200, 100)
+
+    def test_palette_colour_key_counts_as_alpha(self, tmp_path: Path) -> None:
+        path = tmp_path / "palette.png"
+        Image.new("P", (2, 2)).save(path, transparency=0)
+        facts = inspect_header(_local(path))
+        assert (facts.mode, facts.has_alpha) == ("P", True)
+
+    def test_rejects_animation(self, tmp_path: Path) -> None:
+        path = tmp_path / "animated.png"
+        Image.new("RGB", (2, 2), "red").save(
+            path, save_all=True, append_images=[Image.new("RGB", (2, 2), "blue")]
+        )
+        with pytest.raises(ImageInputError, match="animated") as exc_info:
+            inspect_header(_local(path))
+        assert exc_info.value.path == path
