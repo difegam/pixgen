@@ -17,11 +17,12 @@ pixgen optimize photo.png
 pixgen optimize photo.png --output exports/photo-copy.png
 ```
 
-`--output` supplies the destination name; Pixgen sets its extension from the
-output format. For example, `--format webp --output exports/photo-copy.png`
-writes `exports/photo-copy.webp`. If the name has no extension, Pixgen adds
-the format's extension. With `--format keep` (the default outside `--web`), the
-extension follows the source format.
+If the `--output` name has no extension, Pixgen adds the output format's
+extension. An extension that names a different format is rejected rather than
+rewritten: `--format webp --output exports/photo-copy.png` is an invalid request,
+while `--format webp --output exports/photo-copy` writes
+`exports/photo-copy.webp`. JPEG accepts `.jpg` or `.jpeg`. With `--format keep`
+(the default outside `--web`), the output format is the source format.
 
 Use one or more resize operations. `--fit` preserves the aspect ratio inside a
 `WIDTHxHEIGHT` bound, `--cover` crops to those exact dimensions, `--width`
@@ -56,12 +57,20 @@ Without `--web`, the source encoding is kept by default. `--format` accepts
 `keep`, `jpeg`, `png`, `webp`, or `avif`; `--quality` accepts 1 through 100 for
 lossy output formats. PNG does not accept a quality override. Pixgen rejects a
 JPEG conversion when the source has transparency. Encoder availability depends
-on the installed Pillow build. Output carries the source ICC colour profile
-when it matches the output pixel colour space; other source metadata is not
-retained. Unsupported mode/format combinations and unreadable or incompatible
-ICC profiles are rejected during planning. For example, CMYK-to-WebP and
-16-bit PNG-to-JPEG conversions are rejected. Keep JPEG for CMYK pixels and
-PNG for 16-bit greyscale pixels. Pixgen does not silently discard their profiles.
+on the installed Pillow build. Other source metadata is not retained.
+
+Pixels the selected encoder cannot store are converted first:
+
+- CMYK becomes RGB for PNG, WebP, and AVIF. With an embedded profile, the
+  conversion is colour-managed into sRGB and the output carries the sRGB
+  profile. JPEG output keeps CMYK and its profile.
+- 16-bit greyscale stays 16-bit in PNG and is scaled to 8 bits for other formats.
+- Palette images become RGB, or RGBA when they have a transparent colour.
+
+The source ICC profile is kept when it matches the colour space the encoder
+stores and dropped otherwise; for example, WebP stores greyscale as RGB, so a
+greyscale profile is dropped. An unreadable profile, or a CMYK profile that
+cannot be converted to sRGB, is rejected during planning.
 
 Variants that would enlarge the source are skipped rather than upscaled. A
 `--cover` target is skipped if either target dimension exceeds its corresponding
@@ -71,19 +80,19 @@ upscale`; other variants can still complete.
 ## Planning and safe writes
 
 `--dry-run` checks source headers, resize and encoding options, output paths,
-and existing collisions, then reports the planned outputs without creating
-directories or writing files:
+output directories, and existing collisions, then reports the planned outputs
+without creating directories or writing files:
 
 ```bash
 pixgen optimize photo.png --web --dry-run
 ```
 
-It does not fully decode source pixels or require missing explicit output
-directories to exist. Those checks happen during execution, so a successful
-dry run does not guarantee that execution will succeed.
+It does not decode source pixels, so corrupt pixel data is only found during
+execution, where it fails each variant that would have been written.
 
-An explicit output directory must already exist. Pass `--mkdir` to let execution
-create an explicit output directory and its parents. Existing output files are
+An explicit output directory must already exist, in a dry run as well as a real
+one. Pass `--mkdir` to let execution create an explicit output directory and its
+parents. Existing output files are
 left alone and reported as an error unless `--force` is supplied:
 
 ```bash
@@ -92,14 +101,16 @@ pixgen optimize photo.png --output-dir exports --mkdir --force
 
 `--force` allows replacement of existing regular output files. Pixgen rejects
 an output that resolves to the input file and rejects symbolic-link output
-destinations. Writes use a temporary file and atomic replacement.
+destinations. Variants that are skipped are not checked for collisions. Writes
+use a temporary file and atomic replacement.
 
 ## Results
 
 Use `--json` for the versioned machine-readable result. Each variant reports one
 of `planned` (dry-run), `completed`, `skipped`, or `failed`. Planning or source
-validation errors appear as a command-level error; a failure while processing
-one variant is recorded for that variant while the others continue. Human output
+validation errors, and a failure to create the output directory, appear as a
+command-level error; a failure while decoding the source or processing one
+variant is recorded on the affected variants while the others continue. Human output
 lists planned or saved paths and reports skips and failures separately.
 
 Successful runs, dry-runs, and skip-only runs exit with status 0. Invalid
