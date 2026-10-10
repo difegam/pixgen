@@ -33,6 +33,7 @@ Run `just lint && just type-check && just test` before claiming done. Single tes
 - **Type checker is pyrefly**, not mypy. Config in `pyrefly.toml`.
 - **asyncio_mode = "auto"** — do not add `@pytest.mark.asyncio` decorators.
 - **Pre-commit runs via `prek`**, not `pre-commit`. Hooks defined in `.pre-commit-config.yaml`.
+- Detailed style rules live in the `python-style` skill — load it when writing Python. Where it conflicts with this file (`__future__` imports, enum value casing — enum values here are lowercase), this file wins.
 
 ## Architecture notes
 
