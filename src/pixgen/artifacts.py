@@ -16,8 +16,12 @@ if TYPE_CHECKING:
 __all__: list[str] = [
     "ArtifactWriteResult",
     "OutputPlan",
+    "check_directory",
+    "create_directory",
+    "default_output_directory",
     "plan_output",
     "save_artifact",
+    "suffix_matches",
     "write_atomic",
 ]
 
@@ -54,16 +58,25 @@ def _generate_name(
     return f"{timestamp}-{run_id}-{slug}-v{variant}.{ext}"
 
 
-def _ensure_directory(path: Path, *, mkdir: bool, explicit: bool, label: str) -> None:
-    """Validate and create a directory if needed."""
+def default_output_directory() -> Path:
+    """Return the output directory used when none is given or configured."""
+    return Path.cwd() / "pixgen"
 
+
+def check_directory(path: Path, *, mkdir: bool, explicit: bool, label: str) -> None:
+    """Validate that a directory exists or may be created, without writing.
+
+    Raises:
+        PixgenError: If the path is not a directory, or an explicit directory is
+            missing and ``mkdir`` was not given.
+    """
     if path.exists():
         if not path.is_dir():
             raise PixgenError(
                 ErrorCode.INVALID_REQUEST,
                 f"{label} is not a directory: {path}",
             )
-        return  # Directory already exists.
+        return
 
     if explicit and not mkdir:
         raise PixgenError(
@@ -71,13 +84,26 @@ def _ensure_directory(path: Path, *, mkdir: bool, explicit: bool, label: str) ->
             f"{label} does not exist: {path} (use --mkdir to create)",
         )
 
+
+def create_directory(path: Path, *, label: str) -> None:
+    """Create a directory and its parents if they are missing.
+
+    Raises:
+        PixgenError: With ``artifact_failure`` if the directory cannot be created.
+    """
     try:
         path.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
         raise PixgenError(
-            ErrorCode.INVALID_REQUEST,
+            ErrorCode.ARTIFACT_FAILURE,
             f"cannot create {label}: {path}",
         ) from exc
+
+
+def _ensure_directory(path: Path, *, mkdir: bool, explicit: bool, label: str) -> None:
+    """Validate and create a directory if needed."""
+    check_directory(path, mkdir=mkdir, explicit=explicit, label=label)
+    create_directory(path, label=label)
 
 
 def _plan_explicit_output(
@@ -90,7 +116,7 @@ def _plan_explicit_output(
 ) -> Path:
     """Validate and prepare an explicit output path."""
     input_media_type = (declared_media_types or {}).get(model_id)
-    if input_media_type is not None and not _suffix_matches(path, input_media_type):
+    if input_media_type is not None and not suffix_matches(path, input_media_type):
         raise PixgenError(
             ErrorCode.INVALID_REQUEST,
             f"output suffix {path.suffix!r} conflicts with declared media type {input_media_type}",
@@ -145,7 +171,7 @@ def plan_output(
                     declared_media_types=declared_media_types,
                 )
             else:
-                base_dir = output_dir or settings_output_dir or Path.cwd() / "pixgen"
+                base_dir = output_dir or settings_output_dir or default_output_directory()
                 explicit = output_dir is not None or settings_output_dir is not None
                 _ensure_directory(
                     base_dir,
@@ -172,7 +198,7 @@ def plan_output(
     return plans
 
 
-def _suffix_matches(path: Path, media_type: str) -> bool:
+def suffix_matches(path: Path, media_type: str) -> bool:
     """Return whether an explicit output suffix matches a media type."""
     suffix = path.suffix.lower().lstrip(".")
     if not suffix:
