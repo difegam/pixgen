@@ -22,6 +22,7 @@ class TestErrorCode:
             "INTERRUPTED",
             "PROVIDER_FAILURE",
             "ARTIFACT_FAILURE",
+            "OPTIMIZATION_FAILED",
         }
         actual = {member.name for member in ErrorCode}
         assert actual == expected
@@ -30,6 +31,7 @@ class TestErrorCode:
         assert ErrorCode.INVALID_REQUEST == "invalid_request"
         assert ErrorCode.CONTENT_REJECTED == "content_rejected"
         assert ErrorCode.PROVIDER_FAILURE == "provider_failure"
+        assert ErrorCode.OPTIMIZATION_FAILED == "optimization_failed"
 
 
 class TestPixgenError:

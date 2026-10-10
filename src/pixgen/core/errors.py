@@ -1,3 +1,5 @@
+"""Define public error codes and domain exceptions."""
+
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
@@ -26,6 +28,7 @@ class ErrorCode(StrEnum):
     INTERRUPTED = "interrupted"
     PROVIDER_FAILURE = "provider_failure"
     ARTIFACT_FAILURE = "artifact_failure"
+    OPTIMIZATION_FAILED = "optimization_failed"
 
 
 class PixgenError(Exception):

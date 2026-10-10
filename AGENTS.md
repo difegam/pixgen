@@ -16,9 +16,10 @@ Run `just lint && just type-check && just test` before claiming done. Single tes
 
 - `src/pixgen/cli/` — cyclopts commands, rendering, exit codes. Never imports providers.
 - `src/pixgen/core/` — provider-neutral types, intents, results, errors. No I/O.
-- `src/pixgen/images/` — reads local inputs, returns bytes + metadata.
+- `src/pixgen/images/` — reads local inputs, returns bytes + metadata; decodes, resizes, and encodes pixels with Pillow.
 - `src/pixgen/providers/` — OpenAI, Gemini, and OpenRouter adapters behind `ImageProvider` protocol.
 - `src/pixgen/application.py` — orchestration: preflight, variants, concurrency, results.
+- `src/pixgen/optimization/` — local `pixgen optimize`: request models, planning, and execution. Never imports providers.
 - `src/pixgen/artifacts.py` — atomic file writes via temp-file + rename.
 - `src/pixgen/runtime.py` — composition root. Builds everything, injects clients.
 - `src/pixgen/config/` — pydantic-settings, PlatformDirs, `pixgen.toml`.
@@ -26,13 +27,13 @@ Run `just lint && just type-check && just test` before claiming done. Single tes
 
 ## Conventions
 
-- **Python 3.14**. Use `X | Y` unions, `list[str]` generics, `from __future__ import annotations`.
+- **Python 3.14**. Use `X | Y` unions and `list[str]` generics. Annotations are lazily evaluated, so do not add `from __future__ import annotations`.
 - **British English** in docstrings ("Initialise", "Serialise").
 - **Google-style** docstrings. Frozen Pydantic models. `StrEnum` for enums.
 - **Type checker is pyrefly**, not mypy. Config in `pyrefly.toml`.
 - **asyncio_mode = "auto"** — do not add `@pytest.mark.asyncio` decorators.
 - **Pre-commit runs via `prek`**, not `pre-commit`. Hooks defined in `.pre-commit-config.yaml`.
-- Detailed style rules live in `.agents/skills/python-style/SKILL.md` — load it when writing Python.
+- Detailed style rules live in the `python-style` skill — load it when writing Python. Where it conflicts with this file (`__future__` imports, enum value casing — enum values here are lowercase), this file wins.
 
 ## Architecture notes
 
@@ -45,6 +46,4 @@ Run `just lint && just type-check && just test` before claiming done. Single tes
 ## Testing
 
 - `pythonpath = "src"` in pyproject — imports use `from pixgen...`, not relative paths.
-- Test files typically omit `from __future__ import annotations`.
 - Use `tmp_path`, monkeypatching, or fakes. No real network, credentials, or user files.
-- TDD workflow in `.agents/skills/tdd-workflow/SKILL.md` — red-green-refactor per behavior.

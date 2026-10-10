@@ -19,6 +19,8 @@ from pixgen.core.results import (
     CommandResult,
     ModelGetResult,
     ModelListResult,
+    OptimizeResult,
+    OptimizeVariantResult,
     PublicError,
     TargetResult,
 )
@@ -71,6 +73,66 @@ class TestExitStatus:
     def test_outcome_reports_returncode_to_cyclopts(self) -> None:
         outcome = CliOutcome(CommandResult(run_id=_RUN_ID, error=_ERROR), as_json=False)
         assert outcome.__cyclopts_returncode__() == 2
+
+
+class TestOptimizeOutcome:
+    """Count completed/failed variants while ignoring expected skips."""
+
+    @pytest.mark.parametrize(
+        ("statuses", "dry_run", "expected"),
+        [
+            (("planned", "skipped"), True, 0),
+            (("completed",), False, 0),
+            (("skipped",), False, 0),
+            (("failed",), False, 3),
+            (("failed", "skipped"), False, 3),
+            (("completed", "failed"), False, 4),
+            (("skipped", "completed", "failed"), False, 4),
+        ],
+        ids=[
+            "dry-run",
+            "completed",
+            "skip-only",
+            "all-failed",
+            "failed-and-skipped",
+            "partial-failure",
+            "partial-with-skip",
+        ],
+    )
+    def test_exit_mapping(self, statuses, dry_run, expected) -> None:
+        variants = []
+        for index, status in enumerate(statuses):
+            details = {}
+            if status in ("planned", "completed"):
+                details.update(output_path="out.webp", format="webp", width=12, height=6)
+                if status == "completed":
+                    details["output_bytes"] = 42
+            elif status == "skipped":
+                details["reason"] = "would upscale"
+            else:
+                details["error"] = _ERROR
+            variants.append(
+                OptimizeVariantResult.model_validate(
+                    {"name": f"variant-{index}", "status": status, **details}
+                )
+            )
+        result = OptimizeResult(
+            run_id=_RUN_ID, source_path="source.png", dry_run=dry_run, variants=tuple(variants)
+        )
+        assert exit_status(result) == expected
+        assert CliOutcome(result, as_json=False).__cyclopts_returncode__() == expected
+
+    def test_command_error_is_rejected(self) -> None:
+        result = OptimizeResult(run_id=_RUN_ID, source_path="missing.png", error=_ERROR)
+        assert exit_status(result) is ExitStatus.REJECTED
+
+    def test_json_render_dispatch(self, capsys) -> None:
+        result = OptimizeResult(run_id=_RUN_ID, source_path="missing.png", error=_ERROR)
+        outcome = CliOutcome(result, as_json=True)
+        assert render_outcome(outcome) is outcome
+        captured = capsys.readouterr()
+        assert json.loads(captured.out) == json.loads(result.model_dump_json())
+        assert captured.err == ""
 
 
 class TestRenderOutcome:

@@ -2,10 +2,13 @@
 
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from cyclopts import App
 from cyclopts.exceptions import UnknownCommandError, UnknownOptionError
+from PIL import Image
+from pydantic import SecretStr
 
 from pixgen.application import ImageApplication
 from pixgen.cli.app import build_app
@@ -14,6 +17,7 @@ from pixgen.config.models import Settings
 from pixgen.config.writer import ConfigRepository
 from pixgen.core.errors import ErrorCode, PixgenError
 from pixgen.core.models import ImageOperation, ModelSpec
+from pixgen.optimization.application import OptimizeApplication
 from pixgen.providers.gemini import GeminiProvider
 from pixgen.providers.gemini_cli import GeminiCliFactory
 from pixgen.providers.openai import OpenAIProvider
@@ -68,6 +72,7 @@ def app() -> App:
         registry,
         (OpenAICliFactory(), GeminiCliFactory()),
         _repository(),
+        OptimizeApplication(Settings()),
     )
 
 
@@ -90,6 +95,69 @@ def test_root_shared_create_accepts_repeated_models(app) -> None:
         "openai/gpt-image-2",
         "gemini/gemini-3.1-flash-image",
     ]
+
+
+class TestRootOptimize:
+    def test_registers_optimize_with_positional_source(self, app) -> None:
+        command, bound, _ = app.parse_args(
+            ["optimize", "source.png", "--width", "320", "--dry-run"],
+            print_error=False,
+            exit_on_error=False,
+        )
+        assert command.__name__ == "optimize"
+        assert bound.arguments["source"] == Path("source.png")
+        assert bound.arguments["width"] == [320]
+        assert bound.arguments["dry_run"] is True
+
+    def test_root_optimize_help_exits_successfully(self, app, capsys) -> None:
+        with pytest.raises(SystemExit) as exc_info:
+            app(["optimize", "--help"])
+        assert exc_info.value.code == 0
+        assert "--dry-run" in capsys.readouterr().out
+
+    def test_main_uses_runtime_optimization_without_provider_clients(
+        self, tmp_path, capsys, monkeypatch
+    ) -> None:
+        from pixgen.cli.app import main
+
+        source = tmp_path / "source.png"
+        with Image.new("RGB", (40, 20), "red") as image:
+            image.save(source)
+        settings = Settings.model_construct(
+            openai_api_key=SecretStr("openai-test"), gemini_api_key=SecretStr("gemini-test")
+        )
+        monkeypatch.setattr(
+            "sys.argv",
+            [
+                "pixgen",
+                "optimize",
+                str(source),
+                "--width",
+                "20",
+                "--output",
+                str(tmp_path / "output.png"),
+                "--dry-run",
+                "--json",
+            ],
+        )
+        with (
+            patch("pixgen.runtime.load_settings", return_value=settings),
+            patch(
+                "pixgen.providers.http.httpx2.AsyncClient.__init__", autospec=True
+            ) as http_client,
+            patch("google.genai.Client.__init__", autospec=True) as gemini_client,
+            pytest.warns(UserWarning, match="Cyclopts application invoked without tokens"),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            main()
+
+        assert exc_info.value.code == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["source_path"] == str(source)
+        assert payload["variants"][0]["status"] == "planned"
+        assert not Path(payload["variants"][0]["output_path"]).exists()
+        http_client.assert_not_called()
+        gemini_client.assert_not_called()
 
 
 def test_root_group_create_accepts_repeated_models_and_metadata(app) -> None:
@@ -177,6 +245,7 @@ def test_root_app_rejects_factory_without_registered_provider() -> None:
             registry,
             (OpenAICliFactory(), GeminiCliFactory(), UnregisteredFactory()),
             _repository(),
+            OptimizeApplication(Settings()),
         )
 
 
@@ -189,6 +258,7 @@ def test_root_app_rejects_missing_provider_factory() -> None:
             registry,
             (OpenAICliFactory(),),
             _repository(),
+            OptimizeApplication(Settings()),
         )
 
 
@@ -201,6 +271,7 @@ def test_root_app_rejects_duplicate_factory_names() -> None:
             registry,
             (OpenAICliFactory(), OpenAICliFactory(), GeminiCliFactory()),
             _repository(),
+            OptimizeApplication(Settings()),
         )
 
 
@@ -213,6 +284,7 @@ def test_root_app_rejects_factory_operation_absent_from_provider() -> None:
             registry,
             (EditOnlyFactory(),),
             _repository(),
+            OptimizeApplication(Settings()),
         )
 
 

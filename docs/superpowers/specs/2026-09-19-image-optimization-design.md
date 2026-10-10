@@ -1,9 +1,9 @@
-# Website Image Optimization Design
+# Website Image Optimization Design (original hybrid proposal)
 
-**Status:** Approved design
+**Status:** Superseded by `2026-10-08-pillow-image-optimization-design.md`
 
 **Date:** 2026-09-19
-**Scope:** `pixgen image optimize`, local Pillow processing, and optional Tinify processing
+**Scope:** Historical proposal for `pixgen image optimize`, local Pillow processing, and optional Tinify processing
 
 ## Summary
 

@@ -13,6 +13,7 @@ from rich.text import Text
 from rich.tree import Tree
 
 from pixgen.cli.progress import GenerationProgress
+from pixgen.core.results import VariantStatus
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -24,6 +25,7 @@ if TYPE_CHECKING:
         GroupListResult,
         ModelGetResult,
         ModelListResult,
+        OptimizeResult,
     )
 
 __all__: list[str] = [
@@ -33,10 +35,53 @@ __all__: list[str] = [
     "render_group_list_result",
     "render_model_get_result",
     "render_model_list_result",
+    "render_optimize_result",
 ]
 
 _stdout_console = Console(highlight=False, markup=False)
 _stderr_console = Console(stderr=True, highlight=False, markup=False)
+
+
+def render_optimize_result(
+    result: OptimizeResult,
+    *,
+    as_json: bool,
+    relative_output_paths: bool = False,
+) -> None:
+    """Render optimisation output paths or planning/failure details."""
+    if as_json:
+        sys.stdout.write(result.model_dump_json(indent=2) + "\n")
+        return
+    if result.error is not None:
+        _stderr_console.print(f"Error: {result.error.message}")
+        return
+
+    _stdout_console.print(f"Run ID: {result.run_id}")
+    for variant in result.variants:
+        match variant.status:
+            case VariantStatus.PLANNED | VariantStatus.COMPLETED:
+                if variant.output_path is None:
+                    raise RuntimeError("planned/completed variant is missing its output path")
+                path = _display_output_path(
+                    variant.output_path, relative_output_paths=relative_output_paths
+                )
+                label = "Planned" if variant.status is VariantStatus.PLANNED else "Saved"
+                byte_count = (
+                    "" if variant.output_bytes is None else f", {variant.output_bytes} bytes"
+                )
+                _stdout_console.print(
+                    f"  {label} {variant.name}: {path} "
+                    f"({variant.format}, {variant.width}x{variant.height}{byte_count})",
+                    soft_wrap=True,
+                )
+            case VariantStatus.SKIPPED:
+                _stderr_console.print(f"  Skipped {variant.name}: {variant.reason}")
+            case VariantStatus.FAILED:
+                if variant.error is None:
+                    raise RuntimeError("failed variant is missing its error")
+                _stderr_console.print(f"  Failed {variant.name}: {variant.error.message}")
+        for warning in variant.warnings:
+            _stderr_console.print(f"  Warning: {warning}")
 
 
 def render_command_result(

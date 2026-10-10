@@ -15,6 +15,7 @@ from pixgen.cli.render import (
     render_group_list_result,
     render_model_get_result,
     render_model_list_result,
+    render_optimize_result,
 )
 from pixgen.core.errors import ErrorCode, PixgenError, validation_message
 from pixgen.core.results import (
@@ -23,6 +24,7 @@ from pixgen.core.results import (
     GroupListResult,
     ModelGetResult,
     ModelListResult,
+    OptimizeResult,
     PublicError,
 )
 
@@ -33,6 +35,7 @@ __all__: list[str] = [
     "RESULT_ACTION",
     "CliOutcome",
     "ExitStatus",
+    "PublicResult",
     "cli_command",
     "command_error",
     "exit_status",
@@ -41,7 +44,12 @@ __all__: list[str] = [
 ]
 
 type PublicResult = (
-    CommandResult | GroupCreateResult | GroupListResult | ModelGetResult | ModelListResult
+    CommandResult
+    | GroupCreateResult
+    | GroupListResult
+    | ModelGetResult
+    | ModelListResult
+    | OptimizeResult
 )
 
 
@@ -58,12 +66,11 @@ def exit_status(result: PublicResult) -> ExitStatus:
     """Return the exit status a public result warrants."""
     if result.error is not None:
         return ExitStatus.REJECTED
-    if isinstance(result, CommandResult):
-        failures = sum(target.error is not None for target in result.results)
-        if failures == len(result.results):
-            return ExitStatus.ALL_FAILED
-        if failures:
-            return ExitStatus.PARTIAL_FAILURE
+    counts = result.outcome_counts()
+    if counts.failed and counts.failed == counts.attempted:
+        return ExitStatus.ALL_FAILED
+    if counts.failed:
+        return ExitStatus.PARTIAL_FAILURE
     return ExitStatus.SUCCESS
 
 
@@ -99,6 +106,12 @@ def render_outcome[T](outcome: T) -> T:
             render_model_get_result(result, as_json=outcome.as_json)
         case ModelListResult() as result:
             render_model_list_result(result, as_json=outcome.as_json, as_tree=outcome.as_tree)
+        case OptimizeResult() as result:
+            render_optimize_result(
+                result,
+                as_json=outcome.as_json,
+                relative_output_paths=outcome.relative_output_paths,
+            )
     return outcome
 
 

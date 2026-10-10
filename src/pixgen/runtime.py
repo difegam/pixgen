@@ -1,3 +1,5 @@
+"""Compose command applications and lazy provider clients."""
+
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -5,6 +7,7 @@ from pixgen.application import ImageApplication
 from pixgen.config.models import Settings, load_settings
 from pixgen.config.paths import resolve_config_path
 from pixgen.config.writer import ConfigRepository
+from pixgen.optimization.application import OptimizeApplication
 from pixgen.providers.gemini import GeminiProvider
 from pixgen.providers.gemini_cli import GeminiCliFactory
 from pixgen.providers.http import make_http_client_factory
@@ -34,6 +37,7 @@ class Runtime:
     """Hold application dependencies assembled for one CLI invocation."""
 
     application: ImageApplication
+    optimize_application: OptimizeApplication
     registry: ProviderRegistry
     settings: Settings
     group_repository: ConfigRepository
@@ -104,6 +108,7 @@ def build_runtime(*, require_config_file: bool = True) -> Runtime:
 
     return Runtime(
         application=application,
+        optimize_application=OptimizeApplication(settings),
         registry=registry,
         settings=settings,
         group_repository=ConfigRepository(resolve_config_path()),

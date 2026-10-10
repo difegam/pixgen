@@ -23,6 +23,7 @@
 <p align="center">
   <a href="#quickstart">Quickstart</a> ·
   <a href="#why-pixgen">Why Pixgen</a> ·
+  <a href="#agent-skill">Agent skill</a> ·
   <a href="#providers-and-models">Models</a> ·
   <a href="#usage">Usage</a> ·
   <a href="#configuration">Configuration</a> ·
@@ -64,6 +65,27 @@ That's it: `cabin.png` is on disk. Update later with `uv tool upgrade pixgen`.
 <p align="center">
   <img alt="pixgen --json returns a versioned result envelope with per-target artifacts and typed errors" src="docs/assets/demo/json.gif" width="880">
 </p>
+
+## Agent skill
+
+Install the `pixgen-cli` skill to teach Claude Code and Codex agents how to use
+Pixgen's CLI, including its JSON output and model groups:
+
+```bash
+npx skills add difegam/pixgen --skill pixgen-cli --agent claude-code --agent codex
+```
+
+Add `--global` to install it for your user account instead of this project:
+
+```bash
+npx skills add difegam/pixgen --skill pixgen-cli --agent claude-code --agent codex --global
+```
+
+For image requests, the skill prefers an image-generation tool exposed by the
+active agent harness when one is available. Pixgen provides the CLI workflow
+when you ask for Pixgen, need its provider and model choices, or want to compare
+models. Install Pixgen itself and configure a provider API key to run those CLI
+requests; installing the skill only adds agent instructions.
 
 ## Providers and models
 
@@ -121,6 +143,17 @@ pixgen create "Combine the product and visual style" \
 <p align="center">
   <img alt="pixgen edit removes the background from cabin.png and writes cabin-cutout.png" src="docs/assets/demo/edit.gif" width="880">
 </p>
+
+### Local image optimisation
+
+Create common website-ready variants from a local image with Pillow:
+
+```bash
+pixgen optimize photo.jpg --web
+```
+
+See the [image optimisation guide](docs/image-optimization.md) for custom sizes,
+format and quality options, dry runs, and output handling.
 
 ### Provider-native commands
 
