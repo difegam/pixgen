@@ -128,6 +128,15 @@ class TestPlanOutput:
         assert expected.read_bytes() == b"webp-bytes"
         assert not plan.path.exists()
 
+    def test_save_artifact_finalises_generated_avif_suffix(self, tmp_path: Path) -> None:
+        plan = OutputPlan(model_id="m", variant=1, path=tmp_path / "out-v1.png")
+
+        result = save_artifact(plan, b"avif-bytes", "image/avif")
+
+        assert result.path == tmp_path / "out-v1.avif"
+        assert result.path.read_bytes() == b"avif-bytes"
+        assert not plan.path.exists()
+
     def test_save_artifact_keeps_generated_suffix_for_unknown_media_type(
         self, tmp_path: Path
     ) -> None:
