@@ -39,7 +39,14 @@
 Pixgen requires Python 3.14 or newer.
 
 ```bash
-uv tool install pixgen               # or try it once: uvx pixgen --help
+uv tool install --python python3.14 pixgen   # or try it once: uvx --python python3.14 pixgen --help
+```
+
+`uv tool` installs Pixgen into its own isolated environment and puts `pixgen` on
+your `PATH`. `--python python3.14` makes uv use (or download) Python 3.14, so it
+works even if your default Python is older.
+
+```bash
 export OPENAI_API_KEY=sk-...         # bring your own key
 pixgen create "A modern cabin beside a Norwegian fjord" \
   --model openai/gpt-image-2 \
