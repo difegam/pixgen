@@ -13,6 +13,7 @@ from pixgen.cli.invoke import CommandInvoker
 from pixgen.cli.model import build_model_app
 from pixgen.cli.optimize import build_optimize_app
 from pixgen.cli.outcome import RESULT_ACTION, failure_outcome, render_outcome
+from pixgen.cli.providers import PROVIDER_CLIS
 from pixgen.core.errors import PixgenError
 from pixgen.core.models import ImageOperation
 
@@ -90,7 +91,7 @@ def main() -> None:
     app = build_app(
         runtime.application,
         runtime.registry,
-        runtime.cli_factories,
+        PROVIDER_CLIS,
         runtime.group_repository,
         runtime.optimize_application,
         groups=runtime.settings.groups,

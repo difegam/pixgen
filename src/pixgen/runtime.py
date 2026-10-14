@@ -9,12 +9,9 @@ from pixgen.config.paths import resolve_config_path
 from pixgen.config.writer import ConfigRepository
 from pixgen.optimization.application import OptimizeApplication
 from pixgen.providers.gemini import GeminiProvider
-from pixgen.providers.gemini_cli import GeminiCliFactory
 from pixgen.providers.http import make_http_client_factory
 from pixgen.providers.openai import OpenAIProvider
-from pixgen.providers.openai_cli import OpenAICliFactory
 from pixgen.providers.openrouter import OpenRouterProvider
-from pixgen.providers.openrouter_cli import OpenRouterCliFactory
 from pixgen.providers.registry import ProviderRegistry
 
 if TYPE_CHECKING:
@@ -24,7 +21,6 @@ if TYPE_CHECKING:
     from google.genai import Client
     from pydantic import SecretStr
 
-    from pixgen.cli.contracts import ProviderCliFactory
 
 __all__: list[str] = [
     "Runtime",
@@ -41,7 +37,6 @@ class Runtime:
     registry: ProviderRegistry
     settings: Settings
     group_repository: ConfigRepository
-    cli_factories: tuple[ProviderCliFactory, ...]
 
 
 def get_open_ai_factory(
@@ -112,5 +107,4 @@ def build_runtime(*, require_config_file: bool = True) -> Runtime:
         registry=registry,
         settings=settings,
         group_repository=ConfigRepository(resolve_config_path()),
-        cli_factories=(OpenAICliFactory(), GeminiCliFactory(), OpenRouterCliFactory()),
     )

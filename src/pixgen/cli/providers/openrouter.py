@@ -1,4 +1,4 @@
-"""Build OpenRouter-owned Cyclopts image commands."""
+"""Build OpenRouter native Cyclopts image commands."""
 
 from functools import partial
 from pathlib import Path  # noqa: TC003

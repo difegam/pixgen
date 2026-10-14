@@ -41,14 +41,23 @@ flowchart LR
 
 `src/pixgen/cli/` owns parsing, help, human rendering, JSON selection, and exit
 status. It builds root `create`, `edit`, and `model` sub-apps from injected
-dependencies and never imports a concrete provider module. Shared commands use
-canonical `provider/model` IDs and `SharedImageParams`; provider sub-apps own
-their native Pydantic options and target one provider-local model. The removed
+dependencies. Shared commands use canonical `provider/model` IDs and
+`SharedImageParams`. `cli/providers/` builds one native sub-app per provider
+from that provider's Pydantic params models and catalogue; each targets one
+provider-local model. The CLI may import those declarative provider exports,
+but never constructs provider adapters or vendor clients. The removed
 `image` group and generic `--param` option are not compatibility aliases.
 
-The CLI receives provider factories as explicit dependencies. It validates that
-the factory list exactly covers registered providers, has unique names, and
-does not declare unsupported operations before it mounts any provider app.
+`cli/providers/__init__.py` declares the ordered `PROVIDER_CLIS` factory tuple,
+which `main()` passes to `build_app`. `build_app` validates that the factory
+list exactly covers registered providers, has unique names, and does not
+declare unsupported operations before it mounts any provider app.
+
+### Providers
+
+`src/pixgen/providers/` never imports `cli` or Cyclopts. A provider module
+exposes its adapter, params models, and catalogue; how those become commands is
+the CLI's concern.
 
 ### Core
 
@@ -98,9 +107,9 @@ atomic replacement.
 ### Runtime
 
 `src/pixgen/runtime.py` is the explicit composition root. It builds settings,
-the three vendor client factories, adapters, registry, application, and ordered
-provider CLI factories. Its frozen `Runtime` value object carries those
-dependencies to `main()`, which passes factories to generic CLI assembly. It
+the three vendor client factories, adapters, registry, and application. Its
+frozen `Runtime` value object carries those dependencies to `main()`. It does
+not know about provider CLI factories. It
 creates clients only when a provider request needs them, so `model list` and
 `model get` need no credentials or network. Clients are injected rather than
 held as global singletons.
@@ -124,12 +133,13 @@ reassembles results in model-selection then variant order.
 ## Command composition and extension
 
 Cyclopts composes named sub-apps directly. Pixgen builds one root operation app
-for each shared operation, then mounts a fresh provider-owned app for every
+for each shared operation, then mounts a fresh provider-native app for every
 factory that supports that operation. A provider command can keep a typed
 default handler while the root app retains its shared default handler.
 
-Adding a provider is an internal change: implement the provider protocol and
-its CLI factory, register both in `runtime.py`, and add provider and assembly
+Adding a provider is an internal change: implement the provider protocol in
+`providers/` and register it in `runtime.py`, add its CLI factory in
+`cli/providers/` and list it in `PROVIDER_CLIS`, then add provider and assembly
 tests. It does not require a branch in the generic CLI or application code.
 
 Do not add decorator registration, import-time global registries, plugin
@@ -176,8 +186,8 @@ src/pixgen/
 ├── core/{definitions,models,parameters,requests,results,errors}.py
 ├── providers/{base,registry,http,shared}.py
 ├── providers/{openai,gemini,openrouter}.py
-├── providers/{openai_cli,gemini_cli,openrouter_cli}.py
-└── cli/{app,contracts,image,invoke,model,options,render}.py
+├── cli/{app,contracts,image,invoke,model,options,render}.py
+└── cli/providers/{openai,gemini,openrouter}.py
 ```
 
 Do not add repositories, generic services, plugin loaders, a transport
