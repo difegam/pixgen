@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import uuid
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
@@ -29,6 +30,8 @@ __all__: list[str] = [
     "GenerationObserver",
     "ImageApplication",
 ]
+
+logger = logging.getLogger(__name__)
 
 
 @runtime_checkable
@@ -292,7 +295,8 @@ async def _run_job(
                 code=ErrorCode.ARTIFACT_FAILURE,
                 message=f"could not write artifact: {exc.strerror or 'filesystem error'}",
             )
-        except Exception:  # noqa: BLE001
+        except Exception:
+            logger.exception("unexpected failure for %s v%s", plan.model_id, plan.variant)
             error = PublicError(
                 code=ErrorCode.PROVIDER_FAILURE,
                 message="unexpected provider failure",

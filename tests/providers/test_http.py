@@ -1,6 +1,7 @@
 """Tests for shared provider HTTP helpers."""
 
 import base64
+import logging
 
 import pytest
 from pydantic import SecretStr
@@ -83,3 +84,35 @@ class TestDecodeBase64Image:
 
         assert exc_info.value.code == ErrorCode.PROVIDER_FAILURE
         assert "secret-not-base64" not in str(exc_info.value)
+
+
+class _FakeResponse:
+    status_code = 429
+    text = "x" * 1000
+
+
+class _FakeStatusError(Exception):
+    response = _FakeResponse()
+
+
+class TestLogProviderError:
+    """Tests for provider failure logging."""
+
+    def test_logs_summary_at_info_without_body(self, caplog: pytest.LogCaptureFixture) -> None:
+        with caplog.at_level(logging.INFO, logger="pixgen.providers.http"):
+            http.log_provider_error("Example", _FakeStatusError())
+
+        assert [record.levelno for record in caplog.records] == [logging.INFO]
+        assert "_FakeStatusError" in caplog.text
+        assert "status=429" in caplog.text
+        assert "xxx" not in caplog.text
+
+    def test_logs_truncated_body_at_debug(self, caplog: pytest.LogCaptureFixture) -> None:
+        with caplog.at_level(logging.DEBUG, logger="pixgen.providers.http"):
+            http.log_provider_error("Example", _FakeStatusError())
+
+        detail = caplog.records[-1]
+        assert detail.levelno == logging.DEBUG
+        assert detail.exc_info is not None
+        assert "x" * 500 in detail.getMessage()
+        assert "x" * 501 not in detail.getMessage()

@@ -1,6 +1,7 @@
 """Tests for application orchestration."""
 
 import asyncio
+import logging
 from typing import TYPE_CHECKING
 
 import pytest
@@ -100,6 +101,30 @@ class RecordingObserver:
 
 class TestImageApplication:
     """Test application-level result handling."""
+
+    async def test_logs_unexpected_job_failure_and_returns_public_error(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        from tests.factories import make_model_spec
+
+        model = make_model_spec(model_id="fake/model")
+        registry = ProviderRegistry((ExplodingProvider(model),))
+        settings = Settings(
+            defaults=Defaults(image_create_models=("fake/model",)),
+            generation=GenerationSettings(output_dir=tmp_path, max_parallel_requests=1),
+        )
+
+        with caplog.at_level(logging.ERROR, logger="pixgen.application"):
+            result = await ImageApplication(registry, settings).run(ImageCreateIntent(prompt="x"))
+
+        error = result.results[0].error
+        assert error is not None
+        assert error.code == ErrorCode.PROVIDER_FAILURE
+        assert error.message == "unexpected provider failure"
+        record = caplog.records[0]
+        assert record.levelno == logging.ERROR
+        assert record.exc_info is not None
+        assert record.exc_info[0] is RuntimeError
 
     async def test_reports_each_serialised_job_lifecycle(self, tmp_path: Path) -> None:
         from tests.factories import make_model_spec
@@ -397,6 +422,16 @@ class TestImageApplication:
 
         assert exc_info.value.subgroup(FatalProviderError) is not None
         await asyncio.wait_for(slow_provider.cancelled.wait(), timeout=0.5)
+
+
+class ExplodingProvider(SlowProvider):
+    """Provider that fails with an exception the application does not recognise."""
+
+    def __init__(self, model: ModelSpec) -> None:
+        super().__init__(model, 0)
+
+    async def generate(self, request: PreparedImageRequest) -> ProviderImage:  # noqa: ARG002
+        raise RuntimeError("boom")
 
 
 class UnavailableProvider(SlowProvider):

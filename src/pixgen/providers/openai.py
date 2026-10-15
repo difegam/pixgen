@@ -21,7 +21,7 @@ from pixgen.core.requests import (
     ImageEditIntent,
     ValidatedImageRequest,
 )
-from pixgen.providers.http import decode_base64_image
+from pixgen.providers.http import decode_base64_image, log_provider_error
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -248,6 +248,7 @@ class OpenAIProvider:
         return _decode_image_response(response.json())
 
     def _map_error(self, exc: Exception) -> PixgenError:
+        log_provider_error("OpenAI", exc)
         from http import HTTPStatus
 
         import httpx2

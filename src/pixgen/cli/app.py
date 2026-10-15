@@ -2,14 +2,15 @@
 
 import importlib.metadata
 import sys
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Annotated
 
-from cyclopts import App
+from cyclopts import App, Parameter
 
 from pixgen.cli.group import build_group_app
 from pixgen.cli.image import build_operation_app
 from pixgen.cli.info import build_info_command
 from pixgen.cli.invoke import CommandInvoker
+from pixgen.cli.logs import configure_logging
 from pixgen.cli.model import build_model_app
 from pixgen.cli.optimize import build_optimize_app
 from pixgen.cli.outcome import RESULT_ACTION, failure_outcome, render_outcome
@@ -76,6 +77,22 @@ def build_app(
     app.command(build_info_command(release_checker), name="info")
     app.register_install_completion_command()
 
+    @app.meta.default
+    def launcher(
+        *tokens: Annotated[str, Parameter(show=False, allow_leading_hyphen=True)],
+        verbose: Annotated[int, Parameter(name=["--verbose", "-v"], count=True)] = 0,
+    ) -> object:
+        """Configure logging, then dispatch to the selected command.
+
+        Args:
+            tokens: Remaining command-line tokens.
+            verbose: Increase log detail on stderr: ``-v`` for info, ``-vv`` for debug.
+        """
+        configure_logging(verbose)
+        return app(tokens)
+
+    app.meta.help = ""
+
     return app
 
 
@@ -96,7 +113,7 @@ def main() -> None:
         runtime.optimize_application,
         groups=runtime.settings.groups,
     )
-    app()
+    app.meta()
 
 
 def _validate_factories(

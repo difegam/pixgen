@@ -15,6 +15,7 @@ from pixgen.core.models import (
 )
 from pixgen.core.parameters import ProviderParams
 from pixgen.providers.base import PreparedImageRequest, ProviderImage
+from pixgen.providers.http import log_provider_error
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -222,6 +223,7 @@ class GeminiProvider:
         raise ProviderError(ErrorCode.PROVIDER_FAILURE, "no image in response")
 
     def _map_error(self, exc: Exception) -> PixgenError:
+        log_provider_error("Gemini", exc)
         from http import HTTPStatus
 
         from google.genai import errors

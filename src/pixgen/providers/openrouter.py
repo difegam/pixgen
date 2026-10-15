@@ -10,7 +10,7 @@ from pixgen.core.definitions import ModelDefinition
 from pixgen.core.errors import ErrorCode, PixgenError, ProviderError
 from pixgen.core.models import ImageOperation, MediaRole, MediaRoleSpec, ModelSpec
 from pixgen.core.parameters import ProviderParams
-from pixgen.providers.http import decode_base64_image
+from pixgen.providers.http import decode_base64_image, log_provider_error
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -270,6 +270,7 @@ class OpenRouterProvider:
         return _decode_image_response(response_payload)
 
     def _map_error(self, exc: Exception) -> PixgenError:
+        log_provider_error("OpenRouter", exc)
         from http import HTTPStatus
 
         import httpx2
