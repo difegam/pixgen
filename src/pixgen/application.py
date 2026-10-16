@@ -4,7 +4,7 @@ import uuid
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from pixgen.artifacts import OutputPlan, plan_output, save_artifact
-from pixgen.core.errors import ErrorCode, PixgenError, ProviderError
+from pixgen.core.errors import ErrorCode, PixgenError
 from pixgen.core.parameters import ProviderParams, SharedImageParams
 from pixgen.core.requests import (
     ImageCreateIntent,
@@ -32,6 +32,7 @@ __all__: list[str] = [
 ]
 
 logger = logging.getLogger(__name__)
+_MAX_CAUSE_DEPTH = 8
 
 
 @runtime_checkable
@@ -113,6 +114,7 @@ class ImageApplication:
                 },
             )
         except PixgenError as exc:
+            logger.info("run rejected: %s (%s)", exc.code, _cause_chain(exc))
             return CommandResult(
                 run_id=run_id,
                 error=PublicError(code=exc.code, message=exc.message),
@@ -227,6 +229,19 @@ class ImageApplication:
         return results
 
 
+def _cause_chain(exc: BaseException) -> str:
+    """Name the exception types in ``exc``'s cause chain, without their messages.
+
+    Messages are left out because provider errors can echo prompts or response bodies.
+    """
+    names: list[str] = []
+    current: BaseException | None = exc
+    while current is not None and len(names) < _MAX_CAUSE_DEPTH:
+        names.append(type(current).__name__)
+        current = current.__cause__
+    return " <- ".join(names)
+
+
 def _load_images(paths: tuple[Path, ...]) -> tuple[LocalImage, ...]:
     try:
         return tuple(load_image(path) for path in paths)
@@ -287,15 +302,22 @@ async def _run_job(
                 image = await provider.generate(prepared)
             publication = save_artifact(plan, image.data, image.media_type)
         except TimeoutError:
+            logger.info("%s v%s timed out after %ss", plan.model_id, plan.variant, request_timeout)
             error = PublicError(code=ErrorCode.TIMEOUT, message="request timed out")
-        except ProviderError as exc:
+        except PixgenError as exc:
+            logger.info(
+                "%s v%s failed: %s (%s)", plan.model_id, plan.variant, exc.code, _cause_chain(exc)
+            )
             error = PublicError(code=exc.code, message=exc.message)
         except OSError as exc:
+            logger.info("%s v%s artifact write failed: %r", plan.model_id, plan.variant, exc)
             error = PublicError(
                 code=ErrorCode.ARTIFACT_FAILURE,
                 message=f"could not write artifact: {exc.strerror or 'filesystem error'}",
             )
         except Exception:
+            # Last-resort boundary: one variant's unforeseen failure must not abort its siblings.
+            # Provider clients map their own errors to ProviderError, so reaching here is a bug.
             logger.exception("unexpected failure for %s v%s", plan.model_id, plan.variant)
             error = PublicError(
                 code=ErrorCode.PROVIDER_FAILURE,

@@ -91,6 +91,7 @@ def build_app(
         configure_logging(verbose)
         return app(tokens)
 
+    # The launcher docstring documents ``--verbose``; keep it out of the root help summary.
     app.meta.help = ""
 
     return app

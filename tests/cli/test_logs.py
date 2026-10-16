@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from pixgen.cli.logs import configure_logging, level_for_verbosity
+from pixgen.cli.logs import configure_logging
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -25,8 +25,10 @@ def _restore_pixgen_logger() -> Iterator[None]:
     ("verbosity", "level"),
     [(0, logging.WARNING), (1, logging.INFO), (2, logging.DEBUG), (5, logging.DEBUG)],
 )
-def test_level_for_verbosity(verbosity: int, level: int) -> None:
-    assert level_for_verbosity(verbosity) == level
+def test_configure_logging_maps_verbosity_to_level(verbosity: int, level: int) -> None:
+    configure_logging(verbosity)
+
+    assert logging.getLogger("pixgen").level == level
 
 
 def test_configure_logging_writes_to_stderr_only(capsys: pytest.CaptureFixture[str]) -> None:
@@ -43,6 +45,32 @@ def test_configure_logging_is_idempotent() -> None:
     configure_logging(0)
     configure_logging(2)
 
-    logger = logging.getLogger("pixgen")
-    assert len(logger.handlers) == 1
-    assert logger.level == logging.DEBUG
+    stream_handlers = [
+        handler
+        for handler in logging.getLogger("pixgen").handlers
+        if not isinstance(handler, logging.NullHandler)
+    ]
+    assert len(stream_handlers) == 1
+
+
+@pytest.mark.parametrize("verbosity", [1, 2])
+def test_tracebacks_only_at_debug(verbosity: int, capsys: pytest.CaptureFixture[str]) -> None:
+    shown = verbosity >= 2
+    configure_logging(verbosity)
+
+    try:
+        raise RuntimeError("sensitive detail")
+    except RuntimeError:
+        logging.getLogger("pixgen.example").exception("failed")
+
+    err = capsys.readouterr().err
+    assert "ERROR pixgen.example: failed" in err
+    assert ("Traceback" in err) is shown
+    assert ("sensitive detail" in err) is shown
+
+
+def test_library_logger_has_null_handler() -> None:
+    import pixgen
+
+    assert pixgen.__name__
+    assert any(isinstance(h, logging.NullHandler) for h in logging.getLogger("pixgen").handlers)
