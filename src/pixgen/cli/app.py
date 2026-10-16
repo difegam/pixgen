@@ -102,7 +102,7 @@ def main() -> None:
     from pixgen.runtime import build_runtime
 
     try:
-        runtime = build_runtime(require_config_file=sys.argv[1:2] != ["group"])
+        runtime = build_runtime(require_config_file=_first_command(sys.argv[1:]) != "group")
     except PixgenError as exc:
         outcome = render_outcome(failure_outcome(exc, as_json="--json" in sys.argv[1:]))
         sys.exit(outcome.__cyclopts_returncode__())
@@ -115,6 +115,15 @@ def main() -> None:
         groups=runtime.settings.groups,
     )
     app.meta()
+
+
+def _first_command(args: list[str]) -> str | None:
+    """Return the first token after any leading ``-v``/``--verbose`` launcher flags."""
+    for arg in args:
+        if arg == "--verbose" or (arg.startswith("-v") and set(arg[1:]) == {"v"}):
+            continue
+        return arg
+    return None
 
 
 def _validate_factories(

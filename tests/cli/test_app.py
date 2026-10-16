@@ -420,8 +420,21 @@ def test_root_without_arguments_renders_help(app, capsys) -> None:
         (["pixgen", "group", "list"], False),
         (["pixgen", "model", "list"], True),
         (["pixgen", "create", "prompt"], True),
+        (["pixgen", "-v", "group", "list"], False),
+        (["pixgen", "-vv", "group", "create", "x"], False),
+        (["pixgen", "--verbose", "group", "list"], False),
+        (["pixgen", "-v", "create", "prompt"], True),
     ],
-    ids=["group-create", "group-list", "model-list", "create"],
+    ids=[
+        "group-create",
+        "group-list",
+        "model-list",
+        "create",
+        "verbose-group-list",
+        "double-verbose-group-create",
+        "long-verbose-group-list",
+        "verbose-create",
+    ],
 )
 def test_main_only_relaxes_config_file_requirement_for_group_commands(
     monkeypatch, argv, require_config_file
