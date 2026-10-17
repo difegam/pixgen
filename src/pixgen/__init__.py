@@ -2,6 +2,7 @@
 
 
 import importlib.metadata
+import logging
 
 __all__: list[str] = [
     "__version__",
@@ -16,3 +17,6 @@ def _get_version() -> str:
 
 
 __version__ = _get_version()
+
+# Library convention: stay silent unless the host application configures logging.
+logging.getLogger(__name__).addHandler(logging.NullHandler())

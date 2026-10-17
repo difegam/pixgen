@@ -1,5 +1,6 @@
 """Execute local optimisation plans and publish verified variants atomically."""
 
+import logging
 import uuid
 from contextlib import closing
 from io import BytesIO
@@ -24,6 +25,8 @@ if TYPE_CHECKING:
     from pixgen.optimization.models import OptimizePlan, OptimizeRequest, PlannedVariant
 
 __all__: list[str] = ["OptimizeApplication"]
+
+logger = logging.getLogger(__name__)
 
 
 def _public_error(code: ErrorCode, exc: Exception) -> PublicError:
@@ -65,10 +68,12 @@ def _execute_variant(
             )
         _verify_output(data, plan, variant.target)
     except (ImageTransformError, OSError, ValueError) as exc:
+        logger.info("optimize %s failed: %r", variant.output_path.name, exc)
         return variant.failed_result(_public_error(ErrorCode.OPTIMIZATION_FAILED, exc))
     try:
         write_atomic(variant.output_path, data, overwrite=plan.request.force)
     except OSError as exc:
+        logger.info("could not write %s: %r", variant.output_path.name, exc)
         return variant.failed_result(_public_error(ErrorCode.ARTIFACT_FAILURE, exc))
     return variant.completed_result(plan.format, output_bytes=len(data))
 
@@ -78,6 +83,7 @@ def _execute(plan: OptimizePlan) -> tuple[OptimizeVariantResult, ...]:
     try:
         source = load_normalized(plan.source.content, output_format=plan.format)
     except ImageTransformError as exc:
+        logger.info("could not decode source image: %s", exc.reason)
         error = PublicError(code=ErrorCode.OPTIMIZATION_FAILED, message=exc.reason)
         return tuple(
             variant.failed_result(error)
@@ -113,6 +119,7 @@ class OptimizeApplication:
                 variants=variants,
             )
         except PixgenError as exc:
+            logger.info("optimize rejected: %s", exc.code)
             return OptimizeResult(
                 run_id=run_id,
                 source_path=request.source,

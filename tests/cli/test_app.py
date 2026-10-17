@@ -1,5 +1,6 @@
 """Tests for the root Pixgen command tree."""
 
+import contextlib
 import json
 from pathlib import Path
 from unittest.mock import patch
@@ -95,6 +96,36 @@ def test_root_shared_create_accepts_repeated_models(app) -> None:
         "openai/gpt-image-2",
         "gemini/gemini-3.1-flash-image",
     ]
+
+
+class TestRootVerbose:
+    @pytest.mark.parametrize(
+        ("tokens", "verbose", "rest"),
+        [
+            (["model", "list"], 0, ("model", "list")),
+            (["-v", "model", "list"], 1, ("model", "list")),
+            (["model", "list", "-vv"], 2, ("model", "list")),
+            (
+                ["--verbose", "optimize", "a.png", "--width", "8"],
+                1,
+                ("optimize", "a.png", "--width", "8"),
+            ),
+        ],
+    )
+    def test_launcher_counts_verbose_and_forwards_tokens(self, app, tokens, verbose, rest) -> None:
+        _, bound, _ = app.meta.parse_args(tokens, print_error=False, exit_on_error=False)
+
+        assert bound.arguments["verbose"] == verbose
+        assert tuple(bound.arguments["tokens"]) == rest
+
+    def test_launcher_configures_logging_before_dispatch(self, app, monkeypatch) -> None:
+        calls: list[int] = []
+        monkeypatch.setattr("pixgen.cli.app.configure_logging", calls.append)
+
+        with contextlib.suppress(SystemExit):
+            app.meta(["-vv", "model", "list"])
+
+        assert calls == [2]
 
 
 class TestRootOptimize:
@@ -389,8 +420,21 @@ def test_root_without_arguments_renders_help(app, capsys) -> None:
         (["pixgen", "group", "list"], False),
         (["pixgen", "model", "list"], True),
         (["pixgen", "create", "prompt"], True),
+        (["pixgen", "-v", "group", "list"], False),
+        (["pixgen", "-vv", "group", "create", "x"], False),
+        (["pixgen", "--verbose", "group", "list"], False),
+        (["pixgen", "-v", "create", "prompt"], True),
     ],
-    ids=["group-create", "group-list", "model-list", "create"],
+    ids=[
+        "group-create",
+        "group-list",
+        "model-list",
+        "create",
+        "verbose-group-list",
+        "double-verbose-group-create",
+        "long-verbose-group-list",
+        "verbose-create",
+    ],
 )
 def test_main_only_relaxes_config_file_requirement_for_group_commands(
     monkeypatch, argv, require_config_file
