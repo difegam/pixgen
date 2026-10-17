@@ -1,5 +1,6 @@
 """Tests for provider-native Cyclopts commands."""
 
+from functools import partial
 from typing import TYPE_CHECKING
 
 import httpx2
@@ -16,11 +17,14 @@ from pixgen.core.models import ImageOperation
 
 if TYPE_CHECKING:
     from pixgen.core.parameters import ProviderParams
-from pixgen.cli.providers.gemini import build_gemini_app
-from pixgen.cli.providers.openai import build_openai_app
-from pixgen.cli.providers.openrouter import build_openrouter_app
+from pixgen.cli.providers import GEMINI_SPEC, OPENAI_SPEC, OPENROUTER_SPEC
+from pixgen.cli.providers.native import build_native_app
 from pixgen.providers.openrouter import OpenRouterGPTImageParams, OpenRouterProvider
 from pixgen.providers.registry import ProviderRegistry
+
+build_openai_app = partial(build_native_app, OPENAI_SPEC)
+build_gemini_app = partial(build_native_app, GEMINI_SPEC)
+build_openrouter_app = partial(build_native_app, OPENROUTER_SPEC)
 
 
 class DummyInvoker:
