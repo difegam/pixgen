@@ -228,3 +228,46 @@ async def test_openrouter_cli_rejects_muse_edit_before_provider_generation(tmp_p
     assert outcome.result.error.code is ErrorCode.INVALID_REQUEST
     assert "does not support image-edit" in outcome.result.error.message
     await client.aclose()
+
+
+async def test_execution_options_reach_the_invoker() -> None:
+    received = []
+
+    class CapturingInvoker:
+        async def invoke(self, _intent, _selection, options) -> None:
+            received.append(options)
+
+    app = build_openai_app(ImageOperation.IMAGE_CREATE, CapturingInvoker())
+    command, bound, _ = app.parse_args(
+        ["--model", "gpt-image-2", "--variants", "2", "--json", "A forest"],
+        print_error=False,
+        exit_on_error=False,
+    )
+
+    await command(*bound.args, **bound.kwargs)
+
+    assert received[0].variants == 2
+    assert received[0].as_json is True
+
+
+@pytest.mark.parametrize(
+    ("build_app", "operation", "flag"),
+    [
+        (build_openai_app, ImageOperation.IMAGE_CREATE, "--quality"),
+        (build_openai_app, ImageOperation.IMAGE_EDIT, "--quality"),
+        (build_gemini_app, ImageOperation.IMAGE_CREATE, "--aspect-ratio"),
+        (build_gemini_app, ImageOperation.IMAGE_EDIT, "--aspect-ratio"),
+        (build_openrouter_app, ImageOperation.IMAGE_CREATE, "--output-compression"),
+        (build_openrouter_app, ImageOperation.IMAGE_EDIT, "--output-compression"),
+    ],
+)
+def test_help_lists_flattened_native_flags(build_app, operation, flag, capsys) -> None:
+    app = build_app(operation, DummyInvoker())
+
+    with pytest.raises(SystemExit) as exit_info:
+        app(["--help"])
+    assert exit_info.value.code == 0
+
+    out = capsys.readouterr().out
+    assert flag in out
+    assert "--params" not in out
