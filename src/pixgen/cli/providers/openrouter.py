@@ -1,24 +1,17 @@
 """Build OpenRouter native Cyclopts image commands."""
 
 from functools import partial
-from pathlib import Path  # noqa: TC003
-from typing import TYPE_CHECKING, Annotated, Literal
+from typing import Literal
 
-from cyclopts import App, Parameter
 from pydantic import Field
 
-from pixgen.cli.options import ExecutionOptions
-from pixgen.cli.outcome import CliOutcome, cli_command
-from pixgen.core.models import ImageOperation
+from pixgen.cli.providers.native import NativeProviderSpec
 from pixgen.core.parameters import ProviderParams
-from pixgen.core.requests import ImageCreateIntent, ImageEditIntent, NativeSelection
+from pixgen.core.requests import NativeSelection
 from pixgen.providers.openrouter import OPENROUTER_CATALOGUE
 from pixgen.providers.shared import normalize_model_id
 
-if TYPE_CHECKING:
-    from pixgen.cli.invoke import CommandInvoker
-
-__all__: list[str] = ["OpenRouterCliFactory", "build_openrouter_app"]
+__all__: list[str] = ["OPENROUTER_SPEC", "OpenRouterCliParams"]
 
 OpenRouterCliAspectRatio = Literal[
     "auto",
@@ -49,16 +42,16 @@ class OpenRouterCliParams(ProviderParams):
     output_compression: int | None = Field(default=None, ge=0, le=100)
 
 
-_DEFAULT_OPENROUTER_PARAMS = OpenRouterCliParams()
+_MODEL_ERROR = "OpenRouter native commands require an OpenRouter model name"
 _model_id = partial(
     normalize_model_id,
     prefix="openrouter",
-    error_message="OpenRouter native commands require an OpenRouter model name",
+    error_message=_MODEL_ERROR,
     allow_nested=True,
 )
 
 
-def _native_selection(model: str, params: OpenRouterCliParams) -> NativeSelection:
+def _native_selection(model: str, params: ProviderParams) -> NativeSelection:
     model_id = _model_id(model)
     values = params.model_dump(exclude_none=True)
     definition = next(
@@ -72,86 +65,10 @@ def _native_selection(model: str, params: OpenRouterCliParams) -> NativeSelectio
     )
 
 
-def build_openrouter_app(operation: ImageOperation, invoker: CommandInvoker) -> App:
-    """Build one OpenRouter provider sub-app."""
-    app = App(name="openrouter", help="OpenRouter image generation options")
-
-    if operation is ImageOperation.IMAGE_CREATE:
-
-        @app.default
-        @cli_command()
-        async def create(
-            prompt: str,
-            *,
-            model: str,
-            params: Annotated[OpenRouterCliParams, Parameter(name="*")] = (
-                _DEFAULT_OPENROUTER_PARAMS
-            ),
-            variants: int = 1,
-            output: Path | None = None,
-            output_dir: Path | None = None,
-            mkdir: bool = False,
-            force: bool = False,
-            timeout_seconds: int | None = None,
-            json: bool = False,
-        ) -> CliOutcome:
-            """Create an image with OpenRouter native parameters."""
-            intent = ImageCreateIntent(prompt=prompt)
-            selection = _native_selection(model, params)
-            options = ExecutionOptions(
-                variants=variants,
-                output=output,
-                output_dir=output_dir,
-                mkdir=mkdir,
-                force=force,
-                timeout_seconds=timeout_seconds,
-                json=json,
-            )
-            return await invoker.invoke(intent, selection, options)
-
-    else:
-
-        @app.default
-        @cli_command()
-        async def edit(
-            prompt: str,
-            *,
-            image: list[Path],
-            model: str,
-            params: Annotated[OpenRouterCliParams, Parameter(name="*")] = (
-                _DEFAULT_OPENROUTER_PARAMS
-            ),
-            variants: int = 1,
-            output: Path | None = None,
-            output_dir: Path | None = None,
-            mkdir: bool = False,
-            force: bool = False,
-            timeout_seconds: int | None = None,
-            json: bool = False,
-        ) -> CliOutcome:
-            """Edit images with OpenRouter native parameters."""
-            intent = ImageEditIntent(prompt=prompt, images=tuple(image))
-            selection = _native_selection(model, params)
-            options = ExecutionOptions(
-                variants=variants,
-                output=output,
-                output_dir=output_dir,
-                mkdir=mkdir,
-                force=force,
-                timeout_seconds=timeout_seconds,
-                json=json,
-            )
-            return await invoker.invoke(intent, selection, options)
-
-    return app
-
-
-class OpenRouterCliFactory:
-    """Build OpenRouter provider commands."""
-
-    name = "openrouter"
-    operations = frozenset({ImageOperation.IMAGE_CREATE, ImageOperation.IMAGE_EDIT})
-
-    def build(self, operation: ImageOperation, invoker: CommandInvoker) -> App:
-        """Return an OpenRouter app for one operation."""
-        return build_openrouter_app(operation, invoker)
+OPENROUTER_SPEC = NativeProviderSpec(
+    name="openrouter",
+    display_name="OpenRouter",
+    params_type=OpenRouterCliParams,
+    model_error=_MODEL_ERROR,
+    select=_native_selection,
+)

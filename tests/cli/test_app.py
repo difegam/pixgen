@@ -14,8 +14,8 @@ from pydantic import SecretStr
 from pixgen.application import ImageApplication
 from pixgen.cli.app import build_app
 from pixgen.cli.model import build_model_app
-from pixgen.cli.providers.gemini import GeminiCliFactory
-from pixgen.cli.providers.openai import OpenAICliFactory
+from pixgen.cli.providers import GEMINI_SPEC, OPENAI_SPEC
+from pixgen.cli.providers.native import NativeCliFactory
 from pixgen.config.models import Settings
 from pixgen.config.writer import ConfigRepository
 from pixgen.core.errors import ErrorCode, PixgenError
@@ -71,7 +71,7 @@ def app() -> App:
     return build_app(
         ImageApplication(registry, Settings()),
         registry,
-        (OpenAICliFactory(), GeminiCliFactory()),
+        (NativeCliFactory(OPENAI_SPEC), NativeCliFactory(GEMINI_SPEC)),
         _repository(),
         OptimizeApplication(Settings()),
     )
@@ -274,7 +274,7 @@ def test_root_app_rejects_factory_without_registered_provider() -> None:
         build_app(
             ImageApplication(registry, Settings()),
             registry,
-            (OpenAICliFactory(), GeminiCliFactory(), UnregisteredFactory()),
+            (NativeCliFactory(OPENAI_SPEC), NativeCliFactory(GEMINI_SPEC), UnregisteredFactory()),
             _repository(),
             OptimizeApplication(Settings()),
         )
@@ -287,7 +287,7 @@ def test_root_app_rejects_missing_provider_factory() -> None:
         build_app(
             ImageApplication(registry, Settings()),
             registry,
-            (OpenAICliFactory(),),
+            (NativeCliFactory(OPENAI_SPEC),),
             _repository(),
             OptimizeApplication(Settings()),
         )
@@ -300,7 +300,11 @@ def test_root_app_rejects_duplicate_factory_names() -> None:
         build_app(
             ImageApplication(registry, Settings()),
             registry,
-            (OpenAICliFactory(), OpenAICliFactory(), GeminiCliFactory()),
+            (
+                NativeCliFactory(OPENAI_SPEC),
+                NativeCliFactory(OPENAI_SPEC),
+                NativeCliFactory(GEMINI_SPEC),
+            ),
             _repository(),
             OptimizeApplication(Settings()),
         )

@@ -48,8 +48,14 @@ provider-local model. The CLI may import those declarative provider exports,
 but never constructs provider adapters or vendor clients. The removed
 `image` group and generic `--param` option are not compatibility aliases.
 
-`cli/providers/__init__.py` declares the ordered `PROVIDER_CLIS` factory tuple,
-which `main()` passes to `build_app`. `build_app` validates that the factory
+`cli/providers/native.py` holds the one native command builder: a frozen
+`NativeProviderSpec` (name, display name, params type, model error, optional
+`select` hook) feeds `build_native_app` and `NativeCliFactory`. A provider needs
+a spec, not its own builder; OpenRouter supplies a `select` hook to resolve
+params against its catalogue.
+
+`cli/providers/__init__.py` declares the specs and the ordered `PROVIDER_CLIS`
+factory tuple, which `main()` passes to `build_app`. `build_app` validates that the factory
 list exactly covers registered providers, has unique names, and does not
 declare unsupported operations before it mounts any provider app.
 
@@ -138,8 +144,9 @@ factory that supports that operation. A provider command can keep a typed
 default handler while the root app retains its shared default handler.
 
 Adding a provider is an internal change: implement the provider protocol in
-`providers/` and register it in `runtime.py`, add its CLI factory in
-`cli/providers/` and list it in `PROVIDER_CLIS`, then add provider and assembly
+`providers/` and register it in `runtime.py`, add its
+`NativeProviderSpec` in `cli/providers/` and list a `NativeCliFactory` for it in
+`PROVIDER_CLIS`, then add provider and assembly
 tests. It does not require a branch in the generic CLI or application code.
 
 Do not add decorator registration, import-time global registries, plugin
@@ -187,7 +194,7 @@ src/pixgen/
 ├── providers/{base,registry,http,shared}.py
 ├── providers/{openai,gemini,openrouter}.py
 ├── cli/{app,contracts,image,invoke,model,options,render}.py
-└── cli/providers/{openai,gemini,openrouter}.py
+└── cli/providers/{native,openrouter}.py
 ```
 
 Do not add repositories, generic services, plugin loaders, a transport
