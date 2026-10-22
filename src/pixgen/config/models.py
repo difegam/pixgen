@@ -93,6 +93,9 @@ class GenerationSettings(BaseModel):
     request_timeout_seconds: int = Field(
         default=300, ge=1, description="Timeout per provider request"
     )
+    request_retries: int = Field(
+        default=0, ge=0, description="Retries per provider request (0 disables retries)"
+    )
     run_timeout_seconds: int | None = Field(
         default=None, ge=1, description="Optional whole-run deadline"
     )

@@ -6,10 +6,10 @@ import pytest
 from PIL import Image
 from pydantic import SecretStr
 
-from pixgen.config.models import Settings
+from pixgen.config.models import GenerationSettings, Settings
 from pixgen.optimization.application import OptimizeApplication
 from pixgen.optimization.models import OptimizeRequest
-from pixgen.runtime import build_runtime
+from pixgen.runtime import build_runtime, get_gemini_factory
 
 
 def test_build_runtime_does_not_construct_clients_for_catalogue_commands() -> None:
@@ -54,6 +54,46 @@ def test_build_runtime_keeps_openrouter_catalogue_available_without_credentials(
     assert (
         runtime.registry.provider_for("openrouter/google/gemini-3.1-flash-image").available is False
     )
+
+
+@pytest.mark.parametrize(
+    ("request_retries", "expected_attempts"),
+    [(0, 1), (2, 3)],
+    ids=["disabled", "configured"],
+)
+def test_gemini_factory_maps_retry_count_to_total_attempts(
+    request_retries: int, expected_attempts: int
+) -> None:
+    with patch("google.genai.Client", autospec=True) as client:
+        factory = get_gemini_factory(
+            SecretStr("gemini-test"),
+            request_timeout_seconds=30,
+            request_retries=request_retries,
+        )
+        assert factory is not None
+        factory()
+
+    options = client.call_args.kwargs["http_options"]
+    assert options.retry_options.attempts == expected_attempts
+
+
+def test_build_runtime_passes_retry_setting_to_provider_factories() -> None:
+    settings = Settings.model_construct(
+        generation=GenerationSettings(request_retries=2),
+        openai_api_key=SecretStr("openai-test"),
+        gemini_api_key=SecretStr("gemini-test"),
+        openrouter_api_key=SecretStr("openrouter-test"),
+    )
+
+    with (
+        patch("pixgen.runtime.load_settings", return_value=settings),
+        patch("pixgen.runtime.make_http_client_factory") as http_factory,
+        patch("pixgen.runtime.get_gemini_factory") as gemini_factory,
+    ):
+        build_runtime()
+
+    assert [call.kwargs["request_retries"] for call in http_factory.call_args_list] == [2, 2]
+    assert gemini_factory.call_args.args[2] == 2
 
 
 def test_build_runtime_composes_group_repository_for_resolved_config_path(

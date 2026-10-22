@@ -42,17 +42,20 @@ class Runtime:
 def get_open_ai_factory(
     openai_api_key: SecretStr | None,
     request_timeout_seconds: int,
+    request_retries: int = 0,
 ) -> Callable[[], httpx2.AsyncClient] | None:
     return make_http_client_factory(
         openai_api_key,
         base_url="https://api.openai.com/v1",
         request_timeout_seconds=request_timeout_seconds,
+        request_retries=request_retries,
     )
 
 
 def get_gemini_factory(
     gemini_api_key: SecretStr | None,
     request_timeout_seconds: int,
+    request_retries: int = 0,
 ) -> Callable[[], Client] | None:
     if not gemini_api_key:
         return None
@@ -65,7 +68,7 @@ def get_gemini_factory(
             api_key=gemini_api_key.get_secret_value(),
             http_options=HttpOptions(
                 timeout=request_timeout_seconds * 1000,
-                retry_options=HttpRetryOptions(attempts=1),
+                retry_options=HttpRetryOptions(attempts=request_retries + 1),
             ),
         )
 
@@ -80,6 +83,7 @@ def build_runtime(*, require_config_file: bool = True) -> Runtime:
     openai_factory = get_open_ai_factory(
         settings.openai_api_key,
         settings.generation.request_timeout_seconds,
+        settings.generation.request_retries,
     )
 
     # OpenRouter client factory - lazy initialization
@@ -87,12 +91,14 @@ def build_runtime(*, require_config_file: bool = True) -> Runtime:
         settings.openrouter_api_key,
         base_url="https://openrouter.ai/api/v1",
         request_timeout_seconds=settings.generation.request_timeout_seconds,
+        request_retries=settings.generation.request_retries,
     )
 
     # Gemini client factory - lazy initialization
     gemini_factory = get_gemini_factory(
         settings.gemini_api_key,
         settings.generation.request_timeout_seconds,
+        settings.generation.request_retries,
     )
 
     openai_provider = OpenAIProvider(None, client_factory=openai_factory)

@@ -271,8 +271,16 @@ PIXGEN_GENERATION__MAX_PARALLEL_REQUESTS=4
 PIXGEN_GENERATION__MAX_VARIANTS=10
 PIXGEN_GENERATION__MAX_JOBS=10
 PIXGEN_GENERATION__REQUEST_TIMEOUT_SECONDS=300
+PIXGEN_GENERATION__REQUEST_RETRIES=0
 PIXGEN_GENERATION__OUTPUT_DIR=./output
 ```
+
+`generation.request_retries` sets the number of automatic retries per provider
+request and defaults to `0`. Retrying timed-out image generation requests can
+produce duplicate images if a provider completed the request but its response
+was lost. Retry behaviour depends on the provider's transport; for example,
+OpenAI and OpenRouter retry connection errors, while Gemini also retries
+transient API errors and timeouts.
 
 Reusable create-only model groups live in the TOML configuration:
 
