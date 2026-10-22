@@ -8,10 +8,9 @@ from cyclopts import App, Parameter
 
 from pixgen.cli.options import ExecutionOptions
 from pixgen.cli.outcome import CliOutcome, cli_command
-from pixgen.core.models import ImageOperation
+from pixgen.core.models import ImageOperation, ModelId, normalise_model_id
 from pixgen.core.parameters import ProviderParams  # noqa: TC001  (read when annotations are set)
 from pixgen.core.requests import ImageCreateIntent, ImageEditIntent, NativeSelection
-from pixgen.providers.shared import normalize_model_id
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -40,11 +39,11 @@ class NativeProviderSpec:
     params_type: type[ProviderParams]
     model_error: str
     allow_nested_model: bool = False
-    resolve_params: Callable[[str, ProviderParams], ProviderParams] | None = None
+    resolve_params: Callable[[ModelId, ProviderParams], ProviderParams] | None = None
 
     def select(self, model: str, params: ProviderParams) -> NativeSelection:
         """Normalise the model name and resolve parameters into a native selection."""
-        model_id = normalize_model_id(
+        model_id = normalise_model_id(
             model,
             prefix=self.name,
             error_message=self.model_error,
@@ -154,7 +153,7 @@ class NativeCliFactory:
     def __init__(self, spec: NativeProviderSpec) -> None:
         """Initialise the factory for one provider spec."""
         self.spec = spec
-        self.name: str = spec.name
+        self.name = spec.name
 
     def build(self, operation: ImageOperation, invoker: CommandInvoker) -> App:
         """Return the provider app for one operation."""

@@ -12,13 +12,17 @@ from pixgen.application import ImageApplication
 from pixgen.cli.invoke import CommandInvoker
 from pixgen.cli.outcome import ExitStatus, exit_status
 from pixgen.config.models import Defaults, GenerationSettings, Settings
-from pixgen.core.errors import ErrorCode
+from pixgen.core.errors import ErrorCode, PixgenError
 from pixgen.core.models import ImageOperation
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
+    from pixgen.cli.options import ExecutionOptions
     from pixgen.core.parameters import ProviderParams
 from pixgen.cli.providers import GEMINI_SPEC, OPENAI_SPEC, OPENROUTER_SPEC
 from pixgen.cli.providers.native import build_native_app
+from pixgen.cli.providers.openrouter import OpenRouterCliParams
 from pixgen.providers.openrouter import OpenRouterGPTImageParams, OpenRouterProvider
 from pixgen.providers.registry import ProviderRegistry
 
@@ -110,15 +114,17 @@ async def test_provider_apps_reject_foreign_model_without_invoking(build_app, ar
 
 
 class RecordingInvoker:
-    """Capture native selections without running image generation."""
+    """Capture native selections and execution options without running generation."""
 
     def __init__(self) -> None:
         self.models: list[str] = []
         self.parameters: list[ProviderParams] = []
+        self.options: list[ExecutionOptions] = []
 
-    async def invoke(self, _intent, selection, _options) -> None:
+    async def invoke(self, _intent, selection, options) -> None:
         self.models.append(selection.model)
         self.parameters.append(selection.parameters)
+        self.options.append(options)
 
 
 @pytest.mark.parametrize(
@@ -230,24 +236,53 @@ async def test_openrouter_cli_rejects_muse_edit_before_provider_generation(tmp_p
     await client.aclose()
 
 
-async def test_execution_options_reach_the_invoker() -> None:
-    received = []
-
-    class CapturingInvoker:
-        async def invoke(self, _intent, _selection, options) -> None:
-            received.append(options)
-
-    app = build_openai_app(ImageOperation.IMAGE_CREATE, CapturingInvoker())
+@pytest.mark.parametrize(
+    ("operation", "operation_args"),
+    [
+        (ImageOperation.IMAGE_CREATE, []),
+        (ImageOperation.IMAGE_EDIT, ["--image", "input.png"]),
+    ],
+    ids=["create", "edit"],
+)
+async def test_execution_options_reach_the_invoker(
+    operation: ImageOperation, operation_args: list[str], tmp_path: Path
+) -> None:
+    invoker = RecordingInvoker()
+    app = build_openai_app(operation, invoker)
     command, bound, _ = app.parse_args(
-        ["--model", "gpt-image-2", "--variants", "2", "--json", "A forest"],
+        [
+            *operation_args,
+            "--model",
+            "gpt-image-2",
+            "--variants",
+            "2",
+            "--output",
+            str(tmp_path / "out.png"),
+            "--output-dir",
+            str(tmp_path),
+            "--mkdir",
+            "--force",
+            "--timeout-seconds",
+            "30",
+            "--json",
+            "A forest",
+        ],
         print_error=False,
         exit_on_error=False,
     )
 
     await command(*bound.args, **bound.kwargs)
 
-    assert received[0].variants == 2
-    assert received[0].as_json is True
+    assert invoker.models == ["openai/gpt-image-2"]
+    assert invoker.options[0].model_dump() == {
+        "variants": 2,
+        "output": tmp_path / "out.png",
+        "output_dir": tmp_path,
+        "mkdir": True,
+        "force": True,
+        "timeout_seconds": 30,
+        "as_json": True,
+    }
 
 
 @pytest.mark.parametrize(
@@ -260,6 +295,14 @@ async def test_execution_options_reach_the_invoker() -> None:
         (build_openrouter_app, ImageOperation.IMAGE_CREATE, "--output-compression"),
         (build_openrouter_app, ImageOperation.IMAGE_EDIT, "--output-compression"),
     ],
+    ids=[
+        "openai-create",
+        "openai-edit",
+        "gemini-create",
+        "gemini-edit",
+        "openrouter-create",
+        "openrouter-edit",
+    ],
 )
 def test_help_lists_flattened_native_flags(build_app, operation, flag, capsys) -> None:
     app = build_app(operation, DummyInvoker())
@@ -271,3 +314,43 @@ def test_help_lists_flattened_native_flags(build_app, operation, flag, capsys) -
     out = capsys.readouterr().out
     assert flag in out
     assert "--params" not in out
+
+
+@pytest.mark.parametrize(
+    ("model", "expected"),
+    [
+        ("gpt-image-2", "openai/gpt-image-2"),
+        ("openai/gpt-image-2", "openai/gpt-image-2"),
+    ],
+    ids=["local", "already-prefixed"],
+)
+def test_select_normalises_model_and_passes_params_through(model: str, expected: str) -> None:
+    params = OPENAI_SPEC.params_type()
+
+    selection = OPENAI_SPEC.select(model, params)
+
+    assert selection.model == expected
+    assert selection.parameters is params
+
+
+def test_select_rejects_nested_model_when_not_allowed() -> None:
+    with pytest.raises(PixgenError) as exc_info:
+        OPENAI_SPEC.select("google/gemini-3.1-flash-image", OPENAI_SPEC.params_type())
+
+    assert exc_info.value.code is ErrorCode.INVALID_REQUEST
+    assert exc_info.value.message == OPENAI_SPEC.model_error
+
+
+@pytest.mark.parametrize(
+    ("model", "expected_type"),
+    [
+        ("openai/gpt-image-2.5-sunburst", OpenRouterGPTImageParams),
+        ("example/unlisted-model", OpenRouterCliParams),
+    ],
+    ids=["catalogue", "unlisted"],
+)
+def test_openrouter_select_resolves_params_for_model(model: str, expected_type: type) -> None:
+    selection = OPENROUTER_SPEC.select(model, OpenRouterCliParams(quality="high"))
+
+    assert type(selection.parameters) is expected_type
+    assert selection.parameters.model_dump(exclude_none=True)["quality"] == "high"

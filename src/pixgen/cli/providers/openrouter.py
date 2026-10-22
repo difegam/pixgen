@@ -1,12 +1,15 @@
 """Build OpenRouter native Cyclopts image commands."""
 
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import Field
 
 from pixgen.cli.providers.native import NativeProviderSpec
 from pixgen.core.parameters import ProviderParams
 from pixgen.providers.openrouter import OPENROUTER_CATALOGUE
+
+if TYPE_CHECKING:
+    from pixgen.core.models import ModelId
 
 __all__: list[str] = ["OPENROUTER_SPEC", "OpenRouterCliParams"]
 
@@ -39,13 +42,14 @@ class OpenRouterCliParams(ProviderParams):
     output_compression: int | None = Field(default=None, ge=0, le=100)
 
 
-def _resolve_params(model_id: str, params: ProviderParams) -> ProviderParams:
+_CATALOGUE_PARAMETER_TYPES: dict[ModelId, type[ProviderParams]] = {
+    definition.spec.id: definition.parameter_type for definition in OPENROUTER_CATALOGUE
+}
+
+
+def _resolve_params(model_id: ModelId, params: ProviderParams) -> ProviderParams:
     """Validate the collected flags against the selected catalogue model's parameters."""
-    definition = next(
-        (item for item in OPENROUTER_CATALOGUE if item.spec.id == model_id),
-        None,
-    )
-    parameter_type = definition.parameter_type if definition is not None else OpenRouterCliParams
+    parameter_type = _CATALOGUE_PARAMETER_TYPES.get(model_id, OpenRouterCliParams)
     return parameter_type.model_validate(params.model_dump(exclude_none=True))
 
 
