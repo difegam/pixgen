@@ -22,6 +22,7 @@
 
 <p align="center">
   <a href="#quickstart">Quickstart</a> ·
+  <a href="docs/demo-commands.md">Tutorial</a> ·
   <a href="#why-pixgen">Why Pixgen</a> ·
   <a href="#agent-skill">Agent skill</a> ·
   <a href="#providers-and-models">Models</a> ·
@@ -54,6 +55,10 @@ pixgen create "A modern cabin beside a Norwegian fjord" \
 ```
 
 That's it: `cabin.png` is on disk. Update later with `uv tool upgrade pixgen`.
+For a walkthrough that uses Claude Code or Codex to analyse this repository,
+then sends the resulting prompts to Pixgen, see the
+[image generation tutorial](docs/demo-commands.md). It also covers model groups
+and all three providers.
 
 ## Why Pixgen
 
