@@ -1,18 +1,16 @@
 """Build provider-native Cyclopts image commands from a provider spec."""
 
 from dataclasses import dataclass
-from functools import partial
 from pathlib import Path  # noqa: TC003
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import TYPE_CHECKING, Annotated
 
 from cyclopts import App, Parameter
 
 from pixgen.cli.options import ExecutionOptions
 from pixgen.cli.outcome import CliOutcome, cli_command
-from pixgen.core.models import ImageOperation
+from pixgen.core.models import ImageOperation, ModelId, normalise_model_id
 from pixgen.core.parameters import ProviderParams  # noqa: TC001  (read when annotations are set)
 from pixgen.core.requests import ImageCreateIntent, ImageEditIntent, NativeSelection
-from pixgen.providers.shared import normalize_model_id
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -31,27 +29,36 @@ class NativeProviderSpec:
         display_name: Provider name used in help and docstrings.
         params_type: Flattened native parameter model exposed as CLI flags.
         model_error: Message raised when the model name is not for this provider.
-        select: Builds the selection from the model name and parsed parameters.
-            Defaults to normalising the model name and wrapping the parameters.
+        allow_nested_model: Whether model names may contain further ``/`` segments.
+        resolve_params: Maps the normalised model ID and parsed parameters to the
+            parameters sent to the provider. Defaults to passing them through.
     """
 
     name: str
     display_name: str
     params_type: type[ProviderParams]
     model_error: str
-    select: Callable[[str, ProviderParams], NativeSelection] | None = None
+    allow_nested_model: bool = False
+    resolve_params: Callable[[ModelId, ProviderParams], ProviderParams] | None = None
+
+    def select(self, model: str, params: ProviderParams) -> NativeSelection:
+        """Normalise the model name and resolve parameters into a native selection."""
+        model_id = normalise_model_id(
+            model,
+            prefix=self.name,
+            error_message=self.model_error,
+            allow_nested=self.allow_nested_model,
+        )
+        if self.resolve_params is not None:
+            params = self.resolve_params(model_id, params)
+        return NativeSelection(model=model_id, parameters=params)
 
 
-def _default_select(
-    spec: NativeProviderSpec, model: str, params: ProviderParams
-) -> NativeSelection:
-    model_id = normalize_model_id(model, prefix=spec.name, error_message=spec.model_error)
-    return NativeSelection(model=model_id, parameters=params)
-
-
-def _register(app: App, command: Callable[..., Any], params_annotation: Any) -> None:
+def _register(app: App, command: Callable[..., object], params_annotation: object) -> None:
     """Register a command whose ``params`` type is only known at runtime.
 
+    Cyclopts reads the annotation to flatten the provider's parameter model into CLI
+    flags, and that model differs per provider, so it cannot be written statically.
     The annotation goes on the wrapped command because on 3.14 ``functools.wraps``
     copies lazy annotations, so setting it before wrapping would be lost.
     """
@@ -67,17 +74,8 @@ def build_native_app(
 ) -> App:
     """Build one provider-native sub-app for an operation."""
     app = App(name=spec.name, help=f"{spec.display_name} image generation options")
-    select = spec.select or partial(_default_select, spec)
     default_params = spec.params_type()
     params_annotation = Annotated[spec.params_type, Parameter(name="*")]
-
-    async def run(
-        intent: ImageCreateIntent | ImageEditIntent,
-        model: str,
-        params: ProviderParams,
-        **options: Any,
-    ) -> CliOutcome:
-        return await invoker.invoke(intent, select(model, params), ExecutionOptions(**options))
 
     if operation is ImageOperation.IMAGE_CREATE:
 
@@ -94,17 +92,18 @@ def build_native_app(
             timeout_seconds: int | None = None,
             json: bool = False,
         ) -> CliOutcome:
-            return await run(
+            return await invoker.invoke(
                 ImageCreateIntent(prompt=prompt),
-                model,
-                params,
-                variants=variants,
-                output=output,
-                output_dir=output_dir,
-                mkdir=mkdir,
-                force=force,
-                timeout_seconds=timeout_seconds,
-                json=json,
+                spec.select(model, params),
+                ExecutionOptions(
+                    variants=variants,
+                    output=output,
+                    output_dir=output_dir,
+                    mkdir=mkdir,
+                    force=force,
+                    timeout_seconds=timeout_seconds,
+                    json=json,
+                ),
             )
 
         create.__doc__ = f"Create an image with {spec.display_name} native parameters."
@@ -126,17 +125,18 @@ def build_native_app(
             timeout_seconds: int | None = None,
             json: bool = False,
         ) -> CliOutcome:
-            return await run(
+            return await invoker.invoke(
                 ImageEditIntent(prompt=prompt, images=tuple(image)),
-                model,
-                params,
-                variants=variants,
-                output=output,
-                output_dir=output_dir,
-                mkdir=mkdir,
-                force=force,
-                timeout_seconds=timeout_seconds,
-                json=json,
+                spec.select(model, params),
+                ExecutionOptions(
+                    variants=variants,
+                    output=output,
+                    output_dir=output_dir,
+                    mkdir=mkdir,
+                    force=force,
+                    timeout_seconds=timeout_seconds,
+                    json=json,
+                ),
             )
 
         edit.__doc__ = f"Edit images with {spec.display_name} native parameters."

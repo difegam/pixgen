@@ -3,12 +3,14 @@
 import pytest
 from pydantic import ValidationError
 
+from pixgen.core.errors import ErrorCode, PixgenError
 from pixgen.core.models import (
     ImageOperation,
     MediaRole,
     MediaRoleSpec,
     ModelId,
     ModelSpec,
+    normalise_model_id,
 )
 
 
@@ -142,3 +144,41 @@ class TestModelSpec:
     def test_frozen_raises_on_assignment(self, model_spec: ModelSpec) -> None:
         with pytest.raises(ValidationError):
             model_spec.display_name = "changed"
+
+
+class TestNormaliseModelId:
+    """Tests for normalise_model_id."""
+
+    @pytest.mark.parametrize(
+        ("value", "allow_nested", "expected"),
+        [
+            ("gpt-image-2", False, "openai/gpt-image-2"),
+            ("openai/gpt-image-2", False, "openai/gpt-image-2"),
+            ("google/gemini-3.1-flash-image", True, "openai/google/gemini-3.1-flash-image"),
+            ("openai/google/gemini-3.1-flash-image", True, "openai/google/gemini-3.1-flash-image"),
+        ],
+        ids=["local", "prefixed", "nested", "nested-prefixed"],
+    )
+    def test_prefixes_provider_local_names(
+        self, value: str, *, allow_nested: bool, expected: str
+    ) -> None:
+        assert (
+            normalise_model_id(
+                value, prefix="openai", error_message="bad model", allow_nested=allow_nested
+            )
+            == expected
+        )
+
+    @pytest.mark.parametrize(
+        ("value", "allow_nested"),
+        [("google/gemini-3.1-flash-image", False), ("Not A Model", True)],
+        ids=["nested-not-allowed", "invalid-nested"],
+    )
+    def test_rejects_invalid_names(self, value: str, *, allow_nested: bool) -> None:
+        with pytest.raises(PixgenError) as exc_info:
+            normalise_model_id(
+                value, prefix="openai", error_message="bad model", allow_nested=allow_nested
+            )
+
+        assert exc_info.value.code is ErrorCode.INVALID_REQUEST
+        assert exc_info.value.message == "bad model"

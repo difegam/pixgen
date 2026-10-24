@@ -1,15 +1,15 @@
 """Build OpenRouter native Cyclopts image commands."""
 
-from functools import partial
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import Field
 
 from pixgen.cli.providers.native import NativeProviderSpec
 from pixgen.core.parameters import ProviderParams
-from pixgen.core.requests import NativeSelection
 from pixgen.providers.openrouter import OPENROUTER_CATALOGUE
-from pixgen.providers.shared import normalize_model_id
+
+if TYPE_CHECKING:
+    from pixgen.core.models import ModelId
 
 __all__: list[str] = ["OPENROUTER_SPEC", "OpenRouterCliParams"]
 
@@ -42,33 +42,22 @@ class OpenRouterCliParams(ProviderParams):
     output_compression: int | None = Field(default=None, ge=0, le=100)
 
 
-_MODEL_ERROR = "OpenRouter native commands require an OpenRouter model name"
-_model_id = partial(
-    normalize_model_id,
-    prefix="openrouter",
-    error_message=_MODEL_ERROR,
-    allow_nested=True,
-)
+_CATALOGUE_PARAMETER_TYPES: dict[ModelId, type[ProviderParams]] = {
+    definition.spec.id: definition.parameter_type for definition in OPENROUTER_CATALOGUE
+}
 
 
-def _native_selection(model: str, params: ProviderParams) -> NativeSelection:
-    model_id = _model_id(model)
-    values = params.model_dump(exclude_none=True)
-    definition = next(
-        (item for item in OPENROUTER_CATALOGUE if item.spec.id == model_id),
-        None,
-    )
-    parameter_type = definition.parameter_type if definition is not None else OpenRouterCliParams
-    return NativeSelection(
-        model=model_id,
-        parameters=parameter_type.model_validate(values),
-    )
+def _resolve_params(model_id: ModelId, params: ProviderParams) -> ProviderParams:
+    """Validate the collected flags against the selected catalogue model's parameters."""
+    parameter_type = _CATALOGUE_PARAMETER_TYPES.get(model_id, OpenRouterCliParams)
+    return parameter_type.model_validate(params.model_dump(exclude_none=True))
 
 
 OPENROUTER_SPEC = NativeProviderSpec(
     name="openrouter",
     display_name="OpenRouter",
     params_type=OpenRouterCliParams,
-    model_error=_MODEL_ERROR,
-    select=_native_selection,
+    model_error="OpenRouter native commands require an OpenRouter model name",
+    allow_nested_model=True,
+    resolve_params=_resolve_params,
 )
