@@ -94,6 +94,7 @@ class CatalogueOnlyProvider:
 
     def __init__(self, *definitions: ModelDefinition) -> None:
         self.catalogue = definitions
+        self.closed = False
 
     @property
     def available(self) -> bool:
@@ -173,19 +174,20 @@ class TestRegistryCatalogue:
 
 
 class TestRegistryAclose:
-    async def test_closes_every_provider_despite_failures(self) -> None:
-        from tests.factories import make_model_definition
-
+    async def test_closes_every_provider_despite_failures(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
         class Boom(CatalogueOnlyProvider):
             name = "boom"
 
             async def aclose(self) -> None:
-                raise RuntimeError("nope")
+                raise RuntimeError("secret prompt")
 
         boom = Boom(make_model_definition(spec=make_model_spec(model_id="boom/m")))
         ok = CatalogueOnlyProvider(make_model_definition(spec=make_model_spec(model_id="fake/m")))
-        ok.closed = False
 
         await ProviderRegistry((boom, ok)).aclose()
 
         assert ok.closed is True
+        assert "failed to close boom client: RuntimeError" in caplog.text
+        assert "secret prompt" not in caplog.text

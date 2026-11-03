@@ -10,6 +10,7 @@ from pixgen.core.definitions import ModelDefinition
 from pixgen.core.errors import ErrorCode, PixgenError, ProviderError
 from pixgen.core.models import ImageOperation, MediaRole, MediaRoleSpec, ModelSpec
 from pixgen.core.parameters import ProviderParams
+from pixgen.providers.clients import LazyClient
 from pixgen.providers.http import decode_base64_image
 
 if TYPE_CHECKING:
@@ -218,37 +219,26 @@ class OpenRouterProvider:
         client: httpx2.AsyncClient | None,
         client_factory: Callable[[], httpx2.AsyncClient] | None = None,
     ) -> None:
-        self._client = client
-        self._client_factory = client_factory
+        self._client = LazyClient(
+            client,
+            client_factory,
+            close=lambda http_client: http_client.aclose(),
+            label="OpenRouter",
+        )
 
     @property
     def available(self) -> bool:
-        return self._client is not None or self._client_factory is not None
+        return self._client.available
 
     def declared_media_type(self, request: ValidatedImageRequest) -> str | None:  # noqa: ARG002
         return None
 
-    def _get_client(self) -> httpx2.AsyncClient:
-        if self._client is None:
-            if self._client_factory is None:
-                raise ProviderError(
-                    ErrorCode.CREDENTIAL_UNAVAILABLE,
-                    "OpenRouter API key not configured",
-                )
-            self._client = self._client_factory()
-        return self._client
-
     async def aclose(self) -> None:
-        """Close the HTTP client; a later call recreates it from the factory."""
-        client = self._client
-        if client is None:
-            return
-        if self._client_factory is not None:
-            self._client = None
-        await client.aclose()
+        """Close the client this provider built; an injected client stays open."""
+        await self._client.aclose()
 
     async def generate(self, request: PreparedImageRequest) -> ProviderImage:
-        client = self._get_client()
+        client = self._client.get()
         intent = request.request.intent
         payload: dict[str, object] = {
             "model": request.request.model.model,

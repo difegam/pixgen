@@ -15,6 +15,7 @@ from pixgen.core.models import (
 )
 from pixgen.core.parameters import ProviderParams
 from pixgen.providers.base import PreparedImageRequest, ProviderImage
+from pixgen.providers.clients import LazyClient
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -130,6 +131,14 @@ GEMINI_CATALOGUE: tuple[ModelDefinition[GeminiParams], ...] = (
 GEMINI_MODELS: tuple[ModelSpec, ...] = tuple(definition.spec for definition in GEMINI_CATALOGUE)
 
 
+async def _close_gemini_client(client: Client) -> None:
+    """Close the async transport, then the sync one, even if the first close fails."""
+    try:
+        await client.aio.aclose()
+    finally:
+        client.close()
+
+
 class GeminiProvider:
     """Gemini image generation provider."""
 
@@ -141,40 +150,26 @@ class GeminiProvider:
         client: Client | None,
         client_factory: Callable[[], Client] | None = None,
     ) -> None:
-        self._client = client
-        self._client_factory = client_factory
+        self._client = LazyClient(
+            client,
+            client_factory,
+            close=_close_gemini_client,
+            label="Gemini",
+        )
 
     @property
     def available(self) -> bool:
-        return self._client is not None or self._client_factory is not None
-
-    def _get_client(self) -> Client:
-        if self._client is None:
-            if self._client_factory is None:
-                raise ProviderError(
-                    ErrorCode.CREDENTIAL_UNAVAILABLE,
-                    "Gemini API key not configured",
-                )
-            self._client = self._client_factory()
-        return self._client
+        return self._client.available
 
     async def aclose(self) -> None:
-        """Close the async and sync transports; a later call recreates the client."""
-        client = self._client
-        if client is None:
-            return
-        if self._client_factory is not None:
-            self._client = None
-        try:
-            await client.aio.aclose()
-        finally:
-            client.close()
+        """Close the client this provider built; an injected client stays open."""
+        await self._client.aclose()
 
     def declared_media_type(self, request: ValidatedImageRequest) -> str | None:  # noqa: ARG002
         return None
 
     async def generate(self, request: PreparedImageRequest) -> ProviderImage:
-        client = self._get_client()
+        client = self._client.get()
 
         from google.genai import types
 

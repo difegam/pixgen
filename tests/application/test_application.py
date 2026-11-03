@@ -2,10 +2,13 @@
 
 import asyncio
 import logging
+import threading
+import time
 from typing import TYPE_CHECKING
 
 import pytest
 
+from pixgen import application
 from pixgen.application import ImageApplication
 from pixgen.config.models import Defaults, GenerationSettings, Settings
 from pixgen.core.errors import ErrorCode, ProviderError
@@ -14,11 +17,12 @@ from pixgen.core.requests import ImageCreateIntent, NativeSelection, SharedSelec
 from pixgen.providers.base import PreparedImageRequest, ProviderImage
 from pixgen.providers.openai import OpenAIProvider
 from pixgen.providers.registry import ProviderRegistry
-from tests.factories import make_model_definition
+from tests.factories import make_model_definition, make_model_spec
 
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from pixgen.artifacts import ArtifactWriteResult, OutputPlan
     from pixgen.core.models import ModelSpec
 
 
@@ -33,10 +37,10 @@ class SlowProvider:
 
     name = "fake"
 
-    def __init__(self, model: ModelSpec, delay: float) -> None:
+    def __init__(self, model: ModelSpec, delay: float = 0) -> None:
         self.catalogue = (make_model_definition(spec=model),)
         self._delay = delay
-        self.closed = 0
+        self.close_calls = 0
 
     @property
     def available(self) -> bool:
@@ -50,7 +54,7 @@ class SlowProvider:
         return ProviderImage(b"png", "image/png")
 
     async def aclose(self) -> None:
-        self.closed += 1
+        self.close_calls += 1
 
 
 class CancellableProvider(SlowProvider):
@@ -109,8 +113,6 @@ class TestImageApplication:
     async def test_logs_unexpected_job_failure_and_returns_public_error(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
-        from tests.factories import make_model_spec
-
         model = make_model_spec(model_id="fake/model")
         registry = ProviderRegistry((ExplodingProvider(model),))
         settings = Settings(
@@ -133,8 +135,6 @@ class TestImageApplication:
     async def test_logs_provider_failure_without_leaking_messages(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
-        from tests.factories import make_model_spec
-
         model = make_model_spec(model_id="fake/model")
         registry = ProviderRegistry((FailingProvider(model),))
         settings = Settings(
@@ -155,8 +155,6 @@ class TestImageApplication:
         assert caplog.records[0].exc_info is None
 
     async def test_reports_each_serialised_job_lifecycle(self, tmp_path: Path) -> None:
-        from tests.factories import make_model_spec
-
         model = make_model_spec(model_id="fake/model")
         registry = ProviderRegistry((SlowProvider(model, 0),))
         settings = Settings(
@@ -186,8 +184,6 @@ class TestImageApplication:
         )
 
     async def test_reports_synthetic_run_timeout_result(self, tmp_path: Path) -> None:
-        from tests.factories import make_model_spec
-
         model = make_model_spec(model_id="fake/model")
         registry = ProviderRegistry((SlowProvider(model, 0.6),))
         settings = Settings(
@@ -215,8 +211,6 @@ class TestImageApplication:
         assert timed_out[2].error.message == "run deadline exceeded"
 
     async def test_does_not_report_preflight_failure(self, tmp_path: Path) -> None:
-        from tests.factories import make_model_spec
-
         model = make_model_spec(model_id="fake/model")
         registry = ProviderRegistry((UnavailableProvider(model),))
         settings = Settings(
@@ -235,8 +229,6 @@ class TestImageApplication:
 
     @pytest.mark.asyncio
     async def test_preserves_preflight_error_code(self, tmp_path: Path) -> None:
-        from tests.factories import make_model_spec
-
         model = make_model_spec(model_id="fake/model")
         registry = ProviderRegistry((UnavailableProvider(model),))
         settings = Settings(
@@ -282,8 +274,6 @@ class TestImageApplication:
 
     @pytest.mark.asyncio
     async def test_rejects_duplicate_models_before_submission(self, tmp_path: Path) -> None:
-        from tests.factories import make_model_spec
-
         model = make_model_spec(model_id="fake/model")
         provider = SlowProvider(model, 0)
         registry = ProviderRegistry((provider,))
@@ -320,8 +310,6 @@ class TestImageApplication:
     async def test_provider_generates_with_resolved_selection_parameters(
         self, tmp_path: Path, selection, expected
     ) -> None:
-        from tests.factories import make_model_spec
-
         model = make_model_spec(model_id="fake/model")
         provider = ParameterCapturingProvider(model)
         registry = ProviderRegistry((provider,))
@@ -341,8 +329,6 @@ class TestImageApplication:
 
     @pytest.mark.asyncio
     async def test_rejects_nonpositive_timeout_before_submission(self, tmp_path: Path) -> None:
-        from tests.factories import make_model_spec
-
         model = make_model_spec(model_id="fake/model")
         provider = SlowProvider(model, 0)
         registry = ProviderRegistry((provider,))
@@ -361,8 +347,6 @@ class TestImageApplication:
 
     @pytest.mark.asyncio
     async def test_run_timeout_is_shared_by_all_jobs(self, tmp_path: Path) -> None:
-        from tests.factories import make_model_spec
-
         model = make_model_spec(model_id="fake/model")
         registry = ProviderRegistry((SlowProvider(model, 0.6),))
         settings = Settings(
@@ -386,8 +370,6 @@ class TestImageApplication:
 
     @pytest.mark.asyncio
     async def test_request_timeout_cancels_provider_job(self, tmp_path: Path) -> None:
-        from tests.factories import make_model_spec
-
         model = make_model_spec(model_id="fake/model")
         provider = CancellableProvider(model)
         registry = ProviderRegistry((provider,))
@@ -409,8 +391,6 @@ class TestImageApplication:
 
     @pytest.mark.asyncio
     async def test_cancelling_run_cancels_provider_jobs(self, tmp_path: Path) -> None:
-        from tests.factories import make_model_spec
-
         model = make_model_spec(model_id="fake/model")
         provider = CancellableProvider(model)
         registry = ProviderRegistry((provider,))
@@ -431,8 +411,6 @@ class TestImageApplication:
 
     @pytest.mark.asyncio
     async def test_fatal_job_failure_cancels_sibling_jobs(self, tmp_path: Path) -> None:
-        from tests.factories import make_model_spec
-
         fatal_model = make_model_spec(model_id="fatal/fatal")
         slow_model = make_model_spec(model_id="slow/slow")
         slow_provider = CancellableProvider(slow_model)
@@ -454,9 +432,6 @@ class TestImageApplication:
 
 class ExplodingProvider(SlowProvider):
     """Provider that fails with an exception the application does not recognise."""
-
-    def __init__(self, model: ModelSpec) -> None:
-        super().__init__(model, 0)
 
     async def generate(self, request: PreparedImageRequest) -> ProviderImage:  # noqa: ARG002
         raise RuntimeError("boom")
@@ -506,12 +481,16 @@ class ParameterCapturingProvider(SlowProvider):
 class TestProviderCleanup:
     """Tests that a run releases provider clients."""
 
-    @pytest.mark.parametrize("provider_cls", [SlowProvider, ExplodingProvider])
-    async def test_closes_providers_after_run(self, tmp_path: Path, provider_cls) -> None:
-        from tests.factories import make_model_spec
-
+    @pytest.mark.parametrize(
+        "provider_cls",
+        [ExplodingProvider, SlowProvider],
+        ids=["failed-run", "successful-run"],
+    )
+    async def test_closes_providers_after_run(
+        self, tmp_path: Path, provider_cls: type[SlowProvider]
+    ) -> None:
         model = make_model_spec(model_id="fake/model")
-        provider = provider_cls(model, 0) if provider_cls is SlowProvider else provider_cls(model)
+        provider = provider_cls(model)
         settings = Settings(
             defaults=Defaults(image_create_models=("fake/model",)),
             generation=GenerationSettings(output_dir=tmp_path),
@@ -521,4 +500,56 @@ class TestProviderCleanup:
             ImageCreateIntent(prompt="test"),
         )
 
-        assert provider.closed == 1
+        assert provider.close_calls == 1
+
+
+class TestArtifactWriteCancellation:
+    """Tests that a write already in its thread is reported, not orphaned."""
+
+    async def test_cancelled_write_still_returns_its_result(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        started = threading.Event()
+        release = threading.Event()
+        written = object()
+
+        def slow_save(_plan: object, _data: bytes, _media_type: str) -> object:
+            started.set()
+            release.wait()
+            return written
+
+        monkeypatch.setattr(application, "save_artifact", slow_save)
+        task = asyncio.create_task(
+            application._write_artifact(object(), ProviderImage(b"png", "image/png"))
+        )
+        await asyncio.to_thread(started.wait)
+
+        task.cancel()
+        await asyncio.sleep(0)
+        release.set()
+
+        assert await task is written
+        assert not task.cancelled()
+
+    async def test_run_deadline_during_write_reports_the_artifact(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        save_artifact = application.save_artifact
+
+        def slow_save(plan: OutputPlan, data: bytes, media_type: str) -> ArtifactWriteResult:
+            time.sleep(1.2)
+            return save_artifact(plan, data, media_type)
+
+        monkeypatch.setattr(application, "save_artifact", slow_save)
+        registry = ProviderRegistry((SlowProvider(make_model_spec(model_id="fake/model")),))
+        settings = Settings(
+            defaults=Defaults(image_create_models=("fake/model",)),
+            generation=GenerationSettings(output_dir=tmp_path, run_timeout_seconds=1),
+        )
+
+        result = await ImageApplication(registry, settings).run(ImageCreateIntent(prompt="x"))
+
+        target = result.results[0]
+        assert target.error is None
+        assert target.artifact_path is not None
+        assert target.artifact_path.exists()

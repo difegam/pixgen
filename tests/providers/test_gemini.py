@@ -183,15 +183,23 @@ class TestGeminiProvider:
 
 class TestGeminiProviderAclose:
     async def test_closes_async_and_sync_transports(self) -> None:
-        from unittest.mock import AsyncMock, MagicMock
-
         client = MagicMock()
         client.aio.aclose = AsyncMock()
         provider = GeminiProvider(None, client_factory=lambda: client)
-        provider._get_client()
+        provider._client.get()
 
         await provider.aclose()
 
         client.aio.aclose.assert_awaited_once()
         client.close.assert_called_once()
-        assert provider._client is None
+
+    async def test_closes_sync_transport_when_async_close_fails(self) -> None:
+        client = MagicMock()
+        client.aio.aclose = AsyncMock(side_effect=RuntimeError("boom"))
+        provider = GeminiProvider(None, client_factory=lambda: client)
+        provider._client.get()
+
+        with pytest.raises(RuntimeError):
+            await provider.aclose()
+
+        client.close.assert_called_once()

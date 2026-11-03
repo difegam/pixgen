@@ -3,7 +3,7 @@ import logging
 import uuid
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from pixgen.artifacts import OutputPlan, plan_output, save_artifact
+from pixgen.artifacts import ArtifactWriteResult, OutputPlan, plan_output, save_artifact
 from pixgen.core.errors import ErrorCode, PixgenError
 from pixgen.core.parameters import ProviderParams, SharedImageParams
 from pixgen.core.requests import (
@@ -17,7 +17,12 @@ from pixgen.core.requests import (
 from pixgen.core.results import CommandResult, PublicError, TargetResult
 from pixgen.images.inspect import load_image
 from pixgen.images.models import ImageInputError, LocalImage
-from pixgen.providers.base import ImageProvider, PreparedImageRequest, PreparedMedia
+from pixgen.providers.base import (
+    ImageProvider,
+    PreparedImageRequest,
+    PreparedMedia,
+    ProviderImage,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -291,6 +296,30 @@ def _validate_media(request: ValidatedImageRequest, images: tuple[LocalImage, ..
             )
 
 
+async def _write_artifact(plan: OutputPlan, image: ProviderImage) -> ArtifactWriteResult:
+    """Write an artifact off the event loop, finishing the write even if the job is cancelled.
+
+    Cancelling an await cannot stop the worker thread, so the file would land regardless.
+    Shielding the write, waiting it out, and suppressing the cancellation lets the job
+    report the artifact it wrote instead of a timeout for a file that exists.
+    """
+    # Hold a strong reference so the shielded write is not garbage collected.
+    write = asyncio.create_task(
+        asyncio.to_thread(save_artifact, plan, image.data, image.media_type)
+    )
+    while not write.done():
+        try:
+            await asyncio.shield(write)
+        except asyncio.CancelledError:
+            if write.cancelled():
+                raise
+            # The asyncio docs require uncancel() whenever a cancellation is suppressed.
+            task = asyncio.current_task()
+            if task is not None:
+                task.uncancel()
+    return write.result()
+
+
 async def _run_job(
     plan: OutputPlan,
     prepared: PreparedImageRequest,
@@ -305,10 +334,7 @@ async def _run_job(
         try:
             async with asyncio.timeout(request_timeout):
                 image = await provider.generate(prepared)
-            # Off the event loop so disk I/O does not stall sibling requests. A run-deadline
-            # cancellation cannot stop a write already in the thread; the atomic write means
-            # no partial artifact is ever published.
-            publication = await asyncio.to_thread(save_artifact, plan, image.data, image.media_type)
+            publication = await _write_artifact(plan, image)
         except TimeoutError:
             logger.info("%s v%s timed out after %ss", plan.model_id, plan.variant, request_timeout)
             error = PublicError(code=ErrorCode.TIMEOUT, message="request timed out")

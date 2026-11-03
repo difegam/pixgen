@@ -56,7 +56,10 @@ class ProviderRegistry:
         )
         for provider, outcome in zip(self._providers, outcomes, strict=True):
             if isinstance(outcome, BaseException):
-                logger.warning("failed to close %s client: %r", provider.name, outcome)
+                # Type only: provider errors can echo prompts or response bodies.
+                logger.warning(
+                    "failed to close %s client: %s", provider.name, type(outcome).__name__
+                )
 
     def models(self) -> tuple[ModelSpec, ...]:
         """Return all curated model specifications in composition order."""

@@ -262,19 +262,3 @@ class TestOpenAIProvider:
         with pytest.raises(Exception) as exc_info:  # noqa: PT011
             await provider.generate(prepared)
         assert exc_info.value.code == ErrorCode.AUTHENTICATION_FAILED
-
-
-class TestOpenAIProviderAclose:
-    async def test_closes_lazily_created_client_and_recreates(self) -> None:
-        clients = [httpx2.AsyncClient(), httpx2.AsyncClient()]
-        provider = OpenAIProvider(None, client_factory=lambda: clients.pop(0))
-        first = provider._get_client()
-
-        await provider.aclose()
-        await provider.aclose()
-
-        assert first.is_closed
-        assert provider._get_client() is not first
-
-    async def test_noop_without_client(self) -> None:
-        await OpenAIProvider(None).aclose()

@@ -21,6 +21,7 @@ from pixgen.core.requests import (
     ImageEditIntent,
     ValidatedImageRequest,
 )
+from pixgen.providers.clients import LazyClient
 from pixgen.providers.http import decode_base64_image
 
 if TYPE_CHECKING:
@@ -163,31 +164,20 @@ class OpenAIProvider:
         client: httpx2.AsyncClient | None,
         client_factory: Callable[[], httpx2.AsyncClient] | None = None,
     ) -> None:
-        self._client = client
-        self._client_factory = client_factory
+        self._client = LazyClient(
+            client,
+            client_factory,
+            close=lambda http_client: http_client.aclose(),
+            label="OpenAI",
+        )
 
     @property
     def available(self) -> bool:
-        return self._client is not None or self._client_factory is not None
-
-    def _get_client(self) -> httpx2.AsyncClient:
-        if self._client is None:
-            if self._client_factory is None:
-                raise ProviderError(
-                    ErrorCode.CREDENTIAL_UNAVAILABLE,
-                    "OpenAI API key not configured",
-                )
-            self._client = self._client_factory()
-        return self._client
+        return self._client.available
 
     async def aclose(self) -> None:
-        """Close the HTTP client; a later call recreates it from the factory."""
-        client = self._client
-        if client is None:
-            return
-        if self._client_factory is not None:
-            self._client = None
-        await client.aclose()
+        """Close the client this provider built; an injected client stays open."""
+        await self._client.aclose()
 
     def declared_media_type(self, request: ValidatedImageRequest) -> str | None:
         output_format = request.parameters.model_dump().get("output_format")
@@ -210,7 +200,7 @@ class OpenAIProvider:
         prompt: str,
         params: JsonObject,
     ) -> ProviderImage:
-        client = self._get_client()
+        client = self._client.get()
         payload = {"model": model_id, "prompt": prompt, **params}
         try:
             response = await client.post(
@@ -224,7 +214,7 @@ class OpenAIProvider:
         return _decode_image_response(response.json())
 
     async def _generate_multipart(self, request: PreparedImageRequest) -> ProviderImage:
-        client = self._get_client()
+        client = self._client.get()
         intent = request.request.intent
         params = request.request.parameters.model_dump(exclude_none=True)
 
