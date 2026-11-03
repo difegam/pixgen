@@ -360,3 +360,15 @@ class TestOpenRouterErrorMapping:
         assert exc_info.value.code == expected
         assert "private" not in str(exc_info.value)
         await client.aclose()
+
+
+class TestOpenRouterProviderAclose:
+    async def test_closes_lazily_created_client(self) -> None:
+        client = httpx2.AsyncClient()
+        provider = OpenRouterProvider(None, client_factory=lambda: client)
+        provider._get_client()
+
+        await provider.aclose()
+
+        assert client.is_closed
+        assert provider._client is None

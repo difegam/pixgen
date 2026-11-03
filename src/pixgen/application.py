@@ -122,7 +122,12 @@ class ImageApplication:
 
         if observer is not None:
             observer.run_started(tuple(plans))
-        results = await self._execute_jobs(plans, prepared, providers, timeout_seconds, observer)
+        try:
+            results = await self._execute_jobs(
+                plans, prepared, providers, timeout_seconds, observer
+            )
+        finally:
+            await self._registry.aclose()
         return CommandResult(run_id=run_id, results=tuple(results))
 
     def _resolve_models(self, intent: ImageIntent, explicit: list[str] | None) -> list[str]:

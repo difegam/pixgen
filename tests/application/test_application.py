@@ -36,6 +36,7 @@ class SlowProvider:
     def __init__(self, model: ModelSpec, delay: float) -> None:
         self.catalogue = (make_model_definition(spec=model),)
         self._delay = delay
+        self.closed = 0
 
     @property
     def available(self) -> bool:
@@ -47,6 +48,9 @@ class SlowProvider:
     async def generate(self, request: PreparedImageRequest) -> ProviderImage:  # noqa: ARG002
         await asyncio.sleep(self._delay)
         return ProviderImage(b"png", "image/png")
+
+    async def aclose(self) -> None:
+        self.closed += 1
 
 
 class CancellableProvider(SlowProvider):
@@ -497,3 +501,24 @@ class ParameterCapturingProvider(SlowProvider):
     async def generate(self, request: PreparedImageRequest) -> ProviderImage:
         self.parameters = request.request.parameters
         return await super().generate(request)
+
+
+class TestProviderCleanup:
+    """Tests that a run releases provider clients."""
+
+    @pytest.mark.parametrize("provider_cls", [SlowProvider, ExplodingProvider])
+    async def test_closes_providers_after_run(self, tmp_path: Path, provider_cls) -> None:
+        from tests.factories import make_model_spec
+
+        model = make_model_spec(model_id="fake/model")
+        provider = provider_cls(model, 0) if provider_cls is SlowProvider else provider_cls(model)
+        settings = Settings(
+            defaults=Defaults(image_create_models=("fake/model",)),
+            generation=GenerationSettings(output_dir=tmp_path),
+        )
+
+        await ImageApplication(ProviderRegistry((provider,)), settings).run(
+            ImageCreateIntent(prompt="test"),
+        )
+
+        assert provider.closed == 1

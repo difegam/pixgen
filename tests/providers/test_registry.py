@@ -105,6 +105,9 @@ class CatalogueOnlyProvider:
     async def generate(self, _request: object) -> ProviderImage:
         return ProviderImage(b"png", "image/png")
 
+    async def aclose(self) -> None:
+        self.closed = True
+
 
 class RatioParams(ProviderParams):
     """Native parameters with one ratio-controlled field."""
@@ -167,3 +170,22 @@ class TestRegistryCatalogue:
         with pytest.raises(PixgenError) as exc_info:
             _fake_registry().validate(intent=ImageCreateIntent(prompt="test"), model_id="fake/nope")
         assert exc_info.value.code == ErrorCode.MODEL_NOT_FOUND
+
+
+class TestRegistryAclose:
+    async def test_closes_every_provider_despite_failures(self) -> None:
+        from tests.factories import make_model_definition
+
+        class Boom(CatalogueOnlyProvider):
+            name = "boom"
+
+            async def aclose(self) -> None:
+                raise RuntimeError("nope")
+
+        boom = Boom(make_model_definition(spec=make_model_spec(model_id="boom/m")))
+        ok = CatalogueOnlyProvider(make_model_definition(spec=make_model_spec(model_id="fake/m")))
+        ok.closed = False
+
+        await ProviderRegistry((boom, ok)).aclose()
+
+        assert ok.closed is True

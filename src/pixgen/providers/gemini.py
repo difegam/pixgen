@@ -158,6 +158,18 @@ class GeminiProvider:
             self._client = self._client_factory()
         return self._client
 
+    async def aclose(self) -> None:
+        """Close the async and sync transports; a later call recreates the client."""
+        client = self._client
+        if client is None:
+            return
+        if self._client_factory is not None:
+            self._client = None
+        try:
+            await client.aio.aclose()
+        finally:
+            client.close()
+
     def declared_media_type(self, request: ValidatedImageRequest) -> str | None:  # noqa: ARG002
         return None
 

@@ -180,6 +180,15 @@ class OpenAIProvider:
             self._client = self._client_factory()
         return self._client
 
+    async def aclose(self) -> None:
+        """Close the HTTP client; a later call recreates it from the factory."""
+        client = self._client
+        if client is None:
+            return
+        if self._client_factory is not None:
+            self._client = None
+        await client.aclose()
+
     def declared_media_type(self, request: ValidatedImageRequest) -> str | None:
         output_format = request.parameters.model_dump().get("output_format")
         if output_format:
