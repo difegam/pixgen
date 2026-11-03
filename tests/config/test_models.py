@@ -84,6 +84,7 @@ class TestGenerationSettings:
         assert settings.max_variants == 10
         assert settings.max_jobs == 10
         assert settings.request_timeout_seconds == 300
+        assert settings.request_retries == 0
         assert settings.run_timeout_seconds is None
 
     def test_custom_values(self, tmp_path: Path) -> None:
@@ -94,10 +95,16 @@ class TestGenerationSettings:
             max_variants=5,
             max_jobs=20,
             request_timeout_seconds=600,
+            request_retries=2,
             run_timeout_seconds=120,
         )
         assert settings.output_dir == output_dir
         assert settings.max_parallel_requests == 8
+        assert settings.request_retries == 2
+
+    def test_request_retries_rejects_negative_values(self) -> None:
+        with pytest.raises(ValueError, match="request_retries"):
+            GenerationSettings(request_retries=-1)
 
 
 class TestSettings:

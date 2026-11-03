@@ -25,6 +25,7 @@ def make_http_client_factory(
     *,
     base_url: str,
     request_timeout_seconds: int,
+    request_retries: int = 0,
 ) -> Callable[[], httpx2.AsyncClient] | None:
     """Create a lazy factory for an authenticated HTTP client."""
     if not api_key:
@@ -35,6 +36,7 @@ def make_http_client_factory(
             base_url=base_url,
             headers={"Authorization": f"Bearer {api_key.get_secret_value()}"},
             timeout=httpx2.Timeout(request_timeout_seconds),
+            transport=httpx2.AsyncHTTPTransport(retries=request_retries),
         )
 
     return make_client

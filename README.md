@@ -22,6 +22,7 @@
 
 <p align="center">
   <a href="#quickstart">Quickstart</a> ·
+  <a href="docs/demo-commands.md">Tutorial</a> ·
   <a href="#why-pixgen">Why Pixgen</a> ·
   <a href="#agent-skill">Agent skill</a> ·
   <a href="#providers-and-models">Models</a> ·
@@ -54,6 +55,10 @@ pixgen create "A modern cabin beside a Norwegian fjord" \
 ```
 
 That's it: `cabin.png` is on disk. Update later with `uv tool upgrade pixgen`.
+For a walkthrough that uses Claude Code or Codex to analyse this repository,
+then sends the resulting prompts to Pixgen, see the
+[image generation tutorial](docs/demo-commands.md). It also covers model groups
+and all three providers.
 
 ## Why Pixgen
 
@@ -271,8 +276,16 @@ PIXGEN_GENERATION__MAX_PARALLEL_REQUESTS=4
 PIXGEN_GENERATION__MAX_VARIANTS=10
 PIXGEN_GENERATION__MAX_JOBS=10
 PIXGEN_GENERATION__REQUEST_TIMEOUT_SECONDS=300
+PIXGEN_GENERATION__REQUEST_RETRIES=0
 PIXGEN_GENERATION__OUTPUT_DIR=./output
 ```
+
+`generation.request_retries` sets the number of automatic retries per provider
+request and defaults to `0`. Retrying timed-out image generation requests can
+produce duplicate images if a provider completed the request but its response
+was lost. Retry behaviour depends on the provider's transport; for example,
+OpenAI and OpenRouter retry connection errors, while Gemini also retries
+transient API errors and timeouts.
 
 Reusable create-only model groups live in the TOML configuration:
 
