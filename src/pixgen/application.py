@@ -305,7 +305,10 @@ async def _run_job(
         try:
             async with asyncio.timeout(request_timeout):
                 image = await provider.generate(prepared)
-            publication = save_artifact(plan, image.data, image.media_type)
+            # Off the event loop so disk I/O does not stall sibling requests. A run-deadline
+            # cancellation cannot stop a write already in the thread; the atomic write means
+            # no partial artifact is ever published.
+            publication = await asyncio.to_thread(save_artifact, plan, image.data, image.media_type)
         except TimeoutError:
             logger.info("%s v%s timed out after %ss", plan.model_id, plan.variant, request_timeout)
             error = PublicError(code=ErrorCode.TIMEOUT, message="request timed out")
