@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo-dark.svg">
-    <img alt="pixgen" src="docs/assets/logo.svg" width="360">
+    <img alt="pixgen" src="https://raw.githubusercontent.com/difegam/pixgen/main/docs/assets/logo.svg" width="360">
   </picture>
 </p>
 
@@ -17,12 +17,12 @@
   <a href="https://pypi.org/project/pixgen/"><img alt="PyPI" src="https://img.shields.io/pypi/v/pixgen?color=00A6E2"></a>
   <a href="https://pypi.org/project/pixgen/"><img alt="Python 3.14+" src="https://img.shields.io/badge/python-3.14%2B-EC008C"></a>
   <a href="https://github.com/difegam/pixgen/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/difegam/pixgen/actions/workflows/ci.yml/badge.svg"></a>
-  <a href="LICENSE"><img alt="MIT licence" src="https://img.shields.io/badge/license-MIT-FFD500"></a>
+  <a href="https://github.com/difegam/pixgen/blob/main/LICENSE"><img alt="MIT licence" src="https://img.shields.io/badge/license-MIT-FFD500"></a>
 </p>
 
 <p align="center">
   <a href="#quickstart">Quickstart</a> ·
-  <a href="docs/demo-commands.md">Tutorial</a> ·
+  <a href="https://github.com/difegam/pixgen/blob/main/docs/demo-commands.md">Tutorial</a> ·
   <a href="#why-pixgen">Why Pixgen</a> ·
   <a href="#agent-skill">Agent skill</a> ·
   <a href="#providers-and-models">Models</a> ·
@@ -32,7 +32,7 @@
 </p>
 
 <p align="center">
-  <img alt="pixgen fanning one prompt out to OpenAI, Google, and OpenRouter models, writing files atomically, and returning JSON" src="docs/assets/demo.gif" width="720">
+  <img alt="pixgen fanning one prompt out to OpenAI, Google, and OpenRouter models, writing files atomically, and returning JSON" src="https://raw.githubusercontent.com/difegam/pixgen/main/docs/assets/demo.gif" width="720">
 </p>
 
 ## Quickstart
@@ -57,7 +57,7 @@ pixgen create "A modern cabin beside a Norwegian fjord" \
 That's it: `cabin.png` is on disk. Update later with `uv tool upgrade pixgen`.
 For a walkthrough that uses Claude Code or Codex to analyse this repository,
 then sends the resulting prompts to Pixgen, see the
-[image generation tutorial](docs/demo-commands.md). It also covers model groups
+[image generation tutorial](https://github.com/difegam/pixgen/blob/main/docs/demo-commands.md). It also covers model groups
 and all three providers.
 
 ## Why Pixgen
@@ -75,7 +75,7 @@ and all three providers.
 - **Bring your own keys.** Not tied to any single provider, account or subscription; pay for what you use with your own API keys.
 
 <p align="center">
-  <img alt="pixgen --json returns a versioned result envelope with per-target artifacts and typed errors" src="docs/assets/demo/json.gif" width="880">
+  <img alt="pixgen --json returns a versioned result envelope with per-target artifacts and typed errors" src="https://raw.githubusercontent.com/difegam/pixgen/main/docs/assets/demo/json.gif" width="880">
 </p>
 
 ## Agent skill
@@ -139,7 +139,7 @@ pixgen edit "Remove the background" \
 ```
 
 <p align="center">
-  <img alt="pixgen create sends one prompt to OpenAI, Gemini, and OpenRouter at once and saves each result locally" src="docs/assets/demo/create.gif" width="880">
+  <img alt="pixgen create sends one prompt to OpenAI, Gemini, and OpenRouter at once and saves each result locally" src="https://raw.githubusercontent.com/difegam/pixgen/main/docs/assets/demo/create.gif" width="880">
 </p>
 
 Combine reference images with a prompt:
@@ -153,7 +153,7 @@ pixgen create "Combine the product and visual style" \
 ```
 
 <p align="center">
-  <img alt="pixgen edit removes the background from cabin.png and writes cabin-cutout.png" src="docs/assets/demo/edit.gif" width="880">
+  <img alt="pixgen edit removes the background from cabin.png and writes cabin-cutout.png" src="https://raw.githubusercontent.com/difegam/pixgen/main/docs/assets/demo/edit.gif" width="880">
 </p>
 
 ### Local image optimisation
@@ -164,7 +164,7 @@ Create common website-ready variants from a local image with Pillow:
 pixgen optimize photo.jpg --web
 ```
 
-See the [image optimisation guide](docs/image-optimization.md) for custom sizes,
+See the [image optimisation guide](https://github.com/difegam/pixgen/blob/main/docs/image-optimization.md) for custom sizes,
 format and quality options, dry runs, and output handling.
 
 ### Provider-native commands
@@ -235,7 +235,7 @@ or machine-readable output with `--json`. `model get` reports native parameter
 schemas and supported shared aspect ratios.
 
 <p align="center">
-  <img alt="pixgen model list --tree works offline, then pixgen group create and group ls save and show a model group" src="docs/assets/demo/models.gif" width="880">
+  <img alt="pixgen model list --tree works offline, then pixgen group create and group ls save and show a model group" src="https://raw.githubusercontent.com/difegam/pixgen/main/docs/assets/demo/models.gif" width="880">
 </p>
 
 <details>
@@ -327,7 +327,7 @@ just check       # full hook suite
 ```
 
 The terminal animations in this README are rendered by
-[`docs/demo/render_demos.py`](docs/demo/render_demos.py). It needs no API keys
+[`docs/demo/render_demos.py`](https://github.com/difegam/pixgen/blob/main/docs/demo/render_demos.py). It needs no API keys
 and requires `ffmpeg`:
 
 ```bash
@@ -352,7 +352,7 @@ The workflow runs the CI checks, builds with `uv build --no-sources`, smoke
 tests the wheel and source distribution, then publishes from the `pypi`
 environment once it is approved. The tag must match the version in
 `pyproject.toml`, or the workflow fails before building. See
-[Releasing](docs/releasing.md) for the one-time PyPI setup and troubleshooting.
+[Releasing](https://github.com/difegam/pixgen/blob/main/docs/releasing.md) for the one-time PyPI setup and troubleshooting.
 
 </details>
 
@@ -362,8 +362,8 @@ environment once it is approved. The tag must match the version in
 - [Project scope](.knowledge/PROJECT.md)
 - [Architecture](.knowledge/ARCHITECTURE.md)
 - [Future ideas](.knowledge/IDEA.md)
-- [Releasing](docs/releasing.md)
+- [Releasing](https://github.com/difegam/pixgen/blob/main/docs/releasing.md)
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](https://github.com/difegam/pixgen/blob/main/LICENSE).
