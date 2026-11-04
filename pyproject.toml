@@ -1,6 +1,6 @@
 [project]
 name = "pixgen"
-version = "0.2.0"
+version = "0.2.1"
 description = "A command-line tool for generating and managing images."
 readme = { file = "README.md", content-type = "text/markdown" }
 authors = [{ name = "Diego Gamboa", email = "difegam3@gmail.com" }]
