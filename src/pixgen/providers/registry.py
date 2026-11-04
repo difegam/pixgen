@@ -1,5 +1,7 @@
 """Index provider catalogues and answer model catalogue questions."""
 
+import asyncio
+import logging
 from typing import TYPE_CHECKING
 
 from pixgen.core.errors import ErrorCode, PixgenError
@@ -15,6 +17,8 @@ if TYPE_CHECKING:
 __all__: list[str] = [
     "ProviderRegistry",
 ]
+
+logger = logging.getLogger(__name__)
 
 
 class ProviderRegistry:
@@ -43,6 +47,19 @@ class ProviderRegistry:
     def providers(self) -> tuple[ImageProvider, ...]:
         """Return the registered providers in composition order."""
         return self._providers
+
+    async def aclose(self) -> None:
+        """Close every provider's client, logging failures instead of raising."""
+        outcomes = await asyncio.gather(
+            *(provider.aclose() for provider in self._providers),
+            return_exceptions=True,
+        )
+        for provider, outcome in zip(self._providers, outcomes, strict=True):
+            if isinstance(outcome, BaseException):
+                # Type only: provider errors can echo prompts or response bodies.
+                logger.warning(
+                    "failed to close %s client: %s", provider.name, type(outcome).__name__
+                )
 
     def models(self) -> tuple[ModelSpec, ...]:
         """Return all curated model specifications in composition order."""

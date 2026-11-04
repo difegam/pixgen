@@ -64,3 +64,7 @@ class ImageProvider(Protocol):
     async def generate(self, request: PreparedImageRequest) -> ProviderImage:
         """Generate an image from a prepared request."""
         ...
+
+    async def aclose(self) -> None:
+        """Release any client the provider created. Safe to call repeatedly."""
+        ...

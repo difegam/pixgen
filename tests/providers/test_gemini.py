@@ -179,3 +179,27 @@ class TestGeminiProvider:
 
         with pytest.raises(Exception, match="no image"):
             await provider.generate(prepared)
+
+
+class TestGeminiProviderAclose:
+    async def test_closes_async_and_sync_transports(self) -> None:
+        client = MagicMock()
+        client.aio.aclose = AsyncMock()
+        provider = GeminiProvider(None, client_factory=lambda: client)
+        provider._client.get()
+
+        await provider.aclose()
+
+        client.aio.aclose.assert_awaited_once()
+        client.close.assert_called_once()
+
+    async def test_closes_sync_transport_when_async_close_fails(self) -> None:
+        client = MagicMock()
+        client.aio.aclose = AsyncMock(side_effect=RuntimeError("boom"))
+        provider = GeminiProvider(None, client_factory=lambda: client)
+        provider._client.get()
+
+        with pytest.raises(RuntimeError):
+            await provider.aclose()
+
+        client.close.assert_called_once()

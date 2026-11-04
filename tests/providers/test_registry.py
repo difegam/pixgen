@@ -94,6 +94,7 @@ class CatalogueOnlyProvider:
 
     def __init__(self, *definitions: ModelDefinition) -> None:
         self.catalogue = definitions
+        self.closed = False
 
     @property
     def available(self) -> bool:
@@ -104,6 +105,9 @@ class CatalogueOnlyProvider:
 
     async def generate(self, _request: object) -> ProviderImage:
         return ProviderImage(b"png", "image/png")
+
+    async def aclose(self) -> None:
+        self.closed = True
 
 
 class RatioParams(ProviderParams):
@@ -167,3 +171,23 @@ class TestRegistryCatalogue:
         with pytest.raises(PixgenError) as exc_info:
             _fake_registry().validate(intent=ImageCreateIntent(prompt="test"), model_id="fake/nope")
         assert exc_info.value.code == ErrorCode.MODEL_NOT_FOUND
+
+
+class TestRegistryAclose:
+    async def test_closes_every_provider_despite_failures(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        class Boom(CatalogueOnlyProvider):
+            name = "boom"
+
+            async def aclose(self) -> None:
+                raise RuntimeError("secret prompt")
+
+        boom = Boom(make_model_definition(spec=make_model_spec(model_id="boom/m")))
+        ok = CatalogueOnlyProvider(make_model_definition(spec=make_model_spec(model_id="fake/m")))
+
+        await ProviderRegistry((boom, ok)).aclose()
+
+        assert ok.closed is True
+        assert "failed to close boom client: RuntimeError" in caplog.text
+        assert "secret prompt" not in caplog.text
